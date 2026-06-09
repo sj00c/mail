@@ -6,6 +6,7 @@ import {
   type Label,
   type CalEvent,
   type Calendar,
+  type CalEventDetail,
   type MessageFull,
   type MessageSummary,
 } from "./api.ts";
@@ -734,6 +735,18 @@ function CalendarView({
   hiddenCals: Set<string>;
 }) {
   const [mode, setMode] = useState<"month" | "agenda">("month");
+  const [detailEv, setDetailEv] = useState<CalEvent | null>(null);
+  const [dayModal, setDayModal] = useState<{
+    key: string;
+    events: CalEvent[];
+  } | null>(null);
+
+  const openEvent = useCallback((e: CalEvent) => setDetailEv(e), []);
+  const openDay = useCallback(
+    (key: string, events: CalEvent[]) => setDayModal({ key, events }),
+    [],
+  );
+
   return (
     <div className="calendar">
       <div className="cal-head">
@@ -754,9 +767,36 @@ function CalendarView({
         </div>
       </div>
       {mode === "month" ? (
-        <MonthGrid onLogout={onLogout} hiddenCals={hiddenCals} />
+        <MonthGrid
+          onLogout={onLogout}
+          hiddenCals={hiddenCals}
+          onEvent={openEvent}
+          onDay={openDay}
+        />
       ) : (
-        <AgendaList onLogout={onLogout} hiddenCals={hiddenCals} />
+        <AgendaList
+          onLogout={onLogout}
+          hiddenCals={hiddenCals}
+          onEvent={openEvent}
+        />
+      )}
+      {dayModal && (
+        <DayEventsModal
+          dayKey={dayModal.key}
+          events={dayModal.events}
+          onEvent={(e) => {
+            setDayModal(null);
+            setDetailEv(e);
+          }}
+          onClose={() => setDayModal(null)}
+        />
+      )}
+      {detailEv && (
+        <EventDetailModal
+          ev={detailEv}
+          onLogout={onLogout}
+          onClose={() => setDetailEv(null)}
+        />
       )}
     </div>
   );
@@ -822,9 +862,13 @@ function CalReauth({ err }: { err: string }) {
 function MonthGrid({
   onLogout,
   hiddenCals,
+  onEvent,
+  onDay,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
+  onEvent: (e: CalEvent) => void;
+  onDay: (key: string, events: CalEvent[]) => void;
 }) {
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -907,13 +951,12 @@ function MonthGrid({
                 className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}`}
               >
                 <div className="month-daynum">{d.getDate()}</div>
-                {evs.slice(0, 4).map((e) => (
-                  <a
+                {evs.slice(0, 3).map((e) => (
+                  <button
                     key={e.id + e.start}
+                    type="button"
                     className="month-ev"
-                    href={e.htmlLink}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={() => onEvent(e)}
                     title={`${e.allDay ? "종일" : formatTime(e.start)} ${e.summary}`}
                   >
                     <span
@@ -924,10 +967,16 @@ function MonthGrid({
                       {e.allDay ? "" : `${formatTime(e.start)} `}
                       {e.summary}
                     </span>
-                  </a>
+                  </button>
                 ))}
-                {evs.length > 4 && (
-                  <div className="month-more">+{evs.length - 4}</div>
+                {evs.length > 3 && (
+                  <button
+                    type="button"
+                    className="month-more"
+                    onClick={() => onDay(key, evs)}
+                  >
+                    +{evs.length - 3}개 더보기
+                  </button>
                 )}
               </div>
             );
@@ -941,9 +990,11 @@ function MonthGrid({
 function AgendaList({
   onLogout,
   hiddenCals,
+  onEvent,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
+  onEvent: (e: CalEvent) => void;
 }) {
   const [days, setDays] = useState(30);
   const { events, err } = useCalendarEvents({ days }, [days, onLogout], onLogout);
@@ -990,12 +1041,11 @@ function AgendaList({
           <div key={key} className="cal-day">
             <div className="cal-date">{formatDayHeader(key)}</div>
             {evs.map((e) => (
-              <a
+              <button
                 key={e.id + e.start}
+                type="button"
                 className="cal-event"
-                href={e.htmlLink}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => onEvent(e)}
               >
                 <span
                   className="cal-dot"
@@ -1007,7 +1057,7 @@ function AgendaList({
                 <span className="cal-title">{e.summary}</span>
                 {e.location && <span className="cal-loc">📍 {e.location}</span>}
                 <span className="cal-cal">{e.calendarSummary}</span>
-              </a>
+              </button>
             ))}
           </div>
         ))
@@ -1070,4 +1120,176 @@ function formatDayHeader(key: string): string {
   if (isToday) return `오늘 · ${base}`;
   if (isTomorrow) return `내일 · ${base}`;
   return base;
+}
+
+function DayEventsModal({
+  dayKey,
+  events,
+  onEvent,
+  onClose,
+}: {
+  dayKey: string;
+  events: CalEvent[];
+  onEvent: (e: CalEvent) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <strong>{formatDayHeader(dayKey)}</strong>
+          <button className="clear" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <div className="day-list">
+          {events.map((e) => (
+            <button
+              key={e.id + e.start}
+              type="button"
+              className="cal-event"
+              onClick={() => onEvent(e)}
+            >
+              <span
+                className="cal-dot"
+                style={{ background: e.color ?? "#1a73e8" }}
+              />
+              <span className="cal-time">
+                {e.allDay ? "종일" : formatTime(e.start)}
+              </span>
+              <span className="cal-title">{e.summary}</span>
+              {e.location && <span className="cal-loc">📍 {e.location}</span>}
+              <span className="cal-cal">{e.calendarSummary}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EventDetailModal({
+  ev,
+  onLogout,
+  onClose,
+}: {
+  ev: CalEvent;
+  onLogout: () => void;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<CalEventDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetail(null);
+    setErr(null);
+    api
+      .calendarEvent(ev.calendarId, ev.id)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof AuthError) onLogout();
+        else setErr((e as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ev.calendarId, ev.id, onLogout]);
+
+  const d = detail;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <strong>일정</strong>
+          <button className="clear" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <div className="ev-detail">
+          <h3 className="ev-title">
+            <span
+              className="ev-dot"
+              style={{ background: ev.color ?? "#1a73e8" }}
+            />
+            {ev.summary}
+          </h3>
+          <div className="ev-row">🕒 {formatEventWhen(ev)}</div>
+          {ev.calendarSummary && (
+            <div className="ev-row muted">🗂 {ev.calendarSummary}</div>
+          )}
+          {(d?.location || ev.location) && (
+            <div className="ev-row">📍 {d?.location || ev.location}</div>
+          )}
+          {d?.hangoutLink && (
+            <div className="ev-row">
+              🎥{" "}
+              <a href={d.hangoutLink} target="_blank" rel="noreferrer">
+                화상회의 참여
+              </a>
+            </div>
+          )}
+          {d?.organizer && <div className="ev-row muted">주최: {d.organizer}</div>}
+          {d && d.attendees.length > 0 && (
+            <div className="ev-row">
+              👥 참석자 {d.attendees.length}명
+              <div className="ev-attendees">
+                {d.attendees.map((a) => (
+                  <span key={a.email} className="ev-att">
+                    {a.name || a.email}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {!d && !err && <div className="ev-row muted">불러오는 중…</div>}
+          {err && (
+            <div className="ev-row muted">상세를 불러오지 못했습니다: {err}</div>
+          )}
+          {d?.description && (
+            <iframe
+              title="event-description"
+              sandbox=""
+              className="ev-desc"
+              srcDoc={`<body style="font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word">${d.description}</body>`}
+            />
+          )}
+        </div>
+        <div className="modal-foot">
+          <span className="modal-spacer" />
+          <a className="btn" href={ev.htmlLink} target="_blank" rel="noreferrer">
+            Google 캘린더에서 열기
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatEventWhen(e: CalEvent): string {
+  if (e.allDay) {
+    const s = new Date(`${e.start}T00:00:00`);
+    return `${s.toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      weekday: "short",
+    })} · 종일`;
+  }
+  const s = new Date(e.start);
+  const date = s.toLocaleDateString("ko-KR", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
+  const st = s.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  if (!e.end) return `${date} ${st}`;
+  const en = new Date(e.end);
+  const et = en.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  if (s.toDateString() === en.toDateString()) return `${date} ${st} – ${et}`;
+  const ed = en.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
+  return `${date} ${st} – ${ed} ${et}`;
 }

@@ -19,6 +19,43 @@ export type CalEvent = {
   color: string | null; // calendar's backgroundColor (hex)
 };
 
+export type CalEventDetail = CalEvent & {
+  description: string;
+  organizer: string;
+  hangoutLink: string;
+  attendees: { name: string; email: string; status: string }[];
+};
+
+/** Full detail for a single event (lazy-loaded on click). */
+export async function getEvent(
+  calendarId: string,
+  eventId: string,
+): Promise<CalEventDetail> {
+  const cal = await api();
+  const res = await cal.events.get({ calendarId, eventId });
+  const e = res.data;
+  return {
+    id: e.id ?? "",
+    summary: e.summary?.trim() || "(제목 없음)",
+    start: e.start?.dateTime ?? e.start?.date ?? "",
+    end: e.end?.dateTime ?? e.end?.date ?? "",
+    allDay: !e.start?.dateTime,
+    location: e.location ?? "",
+    htmlLink: e.htmlLink ?? "",
+    calendarId,
+    calendarSummary: "",
+    color: null,
+    description: e.description ?? "",
+    organizer: e.organizer?.displayName || e.organizer?.email || "",
+    hangoutLink: e.hangoutLink ?? "",
+    attendees: (e.attendees ?? []).map((a) => ({
+      name: a.displayName ?? "",
+      email: a.email ?? "",
+      status: a.responseStatus ?? "",
+    })),
+  };
+}
+
 /**
  * Upcoming events across all of the user's selected calendars,
  * from now to now + `days`, expanded (recurring -> single instances), sorted by start.

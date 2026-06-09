@@ -33,6 +33,13 @@ export type CalEvent = {
   color: string | null;
 };
 
+export type CalEventDetail = CalEvent & {
+  description: string;
+  organizer: string;
+  hangoutLink: string;
+  attendees: { name: string; email: string; status: string }[];
+};
+
 export type Calendar = {
   id: string;
   summary: string;
@@ -70,6 +77,10 @@ export const api = {
     return req<CalEvent[]>(`/api/calendar/events?${u.toString()}`);
   },
   calendars: () => req<Calendar[]>("/api/calendar/calendars"),
+  calendarEvent: (calendarId: string, eventId: string) =>
+    req<CalEventDetail>(
+      `/api/calendar/event?calendarId=${encodeURIComponent(calendarId)}&eventId=${encodeURIComponent(eventId)}`,
+    ),
   messages: (params: { q?: string; label?: string; pageToken?: string }) => {
     const u = new URLSearchParams();
     if (params.q) u.set("q", params.q);

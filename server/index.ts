@@ -18,7 +18,7 @@ import {
   sendMessage,
   trashMessage,
 } from "./gmail.ts";
-import { listCalendars, listEvents } from "./calendar.ts";
+import { getEvent, listCalendars, listEvents } from "./calendar.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -82,6 +82,14 @@ api.get("/calendar/events", async (c) => {
 });
 
 api.get("/calendar/calendars", async (c) => c.json(await listCalendars()));
+
+api.get("/calendar/event", async (c) => {
+  const calendarId = c.req.query("calendarId");
+  const eventId = c.req.query("eventId");
+  if (!calendarId || !eventId)
+    return c.json({ error: "calendarId, eventId required" }, 400);
+  return c.json(await getEvent(calendarId, eventId));
+});
 
 api.get("/messages", async (c) => {
   const q = c.req.query("q") || undefined;
