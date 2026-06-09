@@ -9,7 +9,10 @@
 - 메일: 라벨/받은편지함 조회, 검색(Gmail 문법), 본문/첨부 보기, 읽음·보관·삭제, 작성·답장·발송(첨부 포함)
 - 캘린더: 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 60초 자동 갱신 (Google 캘린더 읽기 전용)
 
-> OAuth 셋업을 처음부터 다시 할 땐 [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 참고 (실제로 헤맨 함정 정리됨).
+> **클론했다면 → [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 를 그대로 따라하면 끝.**
+> 각자 자기 Google 계정/프로젝트로 5분 셋업한다. (아래 1~4번은 그 가이드의 요약이다.)
+>
+> 인증 정보(Client ID/Secret, 토큰)는 **사람마다 다르고 레포에 안 올라간다** — 클론해도 본인 것을 새로 만들어야 한다.
 
 토큰은 `server/.data/token.json` 에만 저장되며 `.gitignore` 처리되어 있다.
 
