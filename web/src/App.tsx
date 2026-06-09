@@ -554,7 +554,7 @@ function Reader({
           <iframe
             title="message"
             sandbox="allow-popups allow-popups-to-escape-sandbox"
-            srcDoc={`<base target="_blank"><meta charset="utf-8">${msg.bodyHtml}`}
+            srcDoc={prepareEmailHtml(msg.bodyHtml)}
             className="html-frame"
           />
         ) : (
@@ -1269,7 +1269,10 @@ function EventDetailModal({
               title="event-description"
               sandbox="allow-popups allow-popups-to-escape-sandbox"
               className="ev-desc"
-              srcDoc={`<base target="_blank"><meta charset="utf-8"><body style="font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word">${d.description}</body>`}
+              srcDoc={prepareEmailHtml(
+                d.description,
+                "font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word",
+              )}
             />
           )}
         </div>
@@ -1307,4 +1310,34 @@ function formatEventWhen(e: CalEvent): string {
   if (s.toDateString() === en.toDateString()) return `${date} ${st} – ${et}`;
   const ed = en.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
   return `${date} ${st} – ${ed} ${et}`;
+}
+
+// Rendered email/description HTML lives in a sandboxed iframe (no scripts).
+// Rewrite every link to open in a new top-level tab and drop the referrer,
+// so links actually work (instead of navigating inside the sandboxed frame -> 403).
+function prepareEmailHtml(html: string, bodyStyle?: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    let base = doc.querySelector("base");
+    if (!base) {
+      base = doc.createElement("base");
+      doc.head.prepend(base);
+    }
+    base.setAttribute("target", "_blank");
+    const meta = doc.createElement("meta");
+    meta.setAttribute("name", "referrer");
+    meta.setAttribute("content", "no-referrer");
+    doc.head.prepend(meta);
+    doc.querySelectorAll("a[href]").forEach((a) => {
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer");
+    });
+    if (bodyStyle) {
+      const prev = doc.body.getAttribute("style") ?? "";
+      doc.body.setAttribute("style", `${bodyStyle};${prev}`);
+    }
+    return `<!doctype html>${doc.documentElement.outerHTML}`;
+  } catch {
+    return `<base target="_blank">${html}`;
+  }
 }
