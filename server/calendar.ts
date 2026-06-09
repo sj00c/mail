@@ -1,0 +1,117 @@
+import { calendar as calendarApi, type calendar_v3 } from "@googleapis/calendar";
+import { getAuthedClient } from "./auth.ts";
+
+async function api(): Promise<calendar_v3.Calendar> {
+  const auth = await getAuthedClient();
+  return calendarApi({ version: "v3", auth });
+}
+
+export type CalEvent = {
+  id: string;
+  summary: string;
+  start: string; // ISO datetime, or YYYY-MM-DD for all-day
+  end: string;
+  allDay: boolean;
+  location: string;
+  htmlLink: string;
+  calendarId: string;
+  calendarSummary: string;
+  color: string | null; // calendar's backgroundColor (hex)
+};
+
+/**
+ * Upcoming events across all of the user's selected calendars,
+ * from now to now + `days`, expanded (recurring -> single instances), sorted by start.
+ */
+export async function listEvents(
+  opts: { days?: number; timeMin?: string; timeMax?: string } = {},
+): Promise<CalEvent[]> {
+  const cal = await api();
+  let timeMin: string;
+  let timeMax: string;
+  if (opts.timeMin && opts.timeMax) {
+    timeMin = new Date(opts.timeMin).toISOString();
+    timeMax = new Date(opts.timeMax).toISOString();
+  } else {
+    const days = Math.min(Math.max(opts.days ?? 30, 1), 365);
+    const now = new Date();
+    timeMin = now.toISOString();
+    timeMax = new Date(now.getTime() + days * 86_400_000).toISOString();
+  }
+
+  const list = await cal.calendarList.list({
+    maxResults: 250,
+    fields: "items(id,summary,summaryOverride,backgroundColor)",
+  });
+  const calendars = (list.data.items ?? []).filter((c) => c.id);
+
+  const perCalendar = await Promise.all(
+    calendars.map(async (c) => {
+      try {
+        const res = await cal.events.list({
+          calendarId: c.id!,
+          timeMin,
+          timeMax,
+          singleEvents: true,
+          orderBy: "startTime",
+          maxResults: 250,
+          fields:
+            "items(id,summary,location,htmlLink,status,start,end),nextPageToken",
+        });
+        const out: CalEvent[] = [];
+        for (const e of res.data.items ?? []) {
+          if (e.status === "cancelled") continue;
+          const startDt = e.start?.dateTime ?? e.start?.date ?? "";
+          if (!startDt) continue;
+          out.push({
+            id: e.id ?? "",
+            summary: e.summary?.trim() || "(제목 없음)",
+            start: startDt,
+            end: e.end?.dateTime ?? e.end?.date ?? "",
+            allDay: !e.start?.dateTime,
+            location: e.location ?? "",
+            htmlLink: e.htmlLink ?? "",
+            calendarId: c.id ?? "",
+            calendarSummary: c.summaryOverride || c.summary || c.id || "",
+            color: c.backgroundColor ?? null,
+          });
+        }
+        return out;
+      } catch (err) {
+        // One bad calendar shouldn't sink the whole view.
+        console.error(`[calendar] ${c.id} failed:`, (err as Error).message);
+        return [] as CalEvent[];
+      }
+    }),
+  );
+
+  return perCalendar.flat().sort((a, b) => a.start.localeCompare(b.start));
+}
+export type CalendarMeta = {
+  id: string;
+  summary: string;
+  primary: boolean;
+  backgroundColor: string | null;
+  selected: boolean; // shown by default (Google "표시" toggle)
+  accessRole: string; // owner | writer | reader | freeBusyReader
+};
+
+/** All calendars in the user's list (subscribed + own). */
+export async function listCalendars(): Promise<CalendarMeta[]> {
+  const cal = await api();
+  const list = await cal.calendarList.list({
+    maxResults: 250,
+    fields:
+      "items(id,summary,summaryOverride,primary,backgroundColor,selected,accessRole)",
+  });
+  return (list.data.items ?? [])
+    .filter((c) => c.id)
+    .map((c) => ({
+      id: c.id!,
+      summary: c.summaryOverride || c.summary || c.id!,
+      primary: !!c.primary,
+      backgroundColor: c.backgroundColor ?? null,
+      selected: c.selected !== false,
+      accessRole: c.accessRole ?? "",
+    }));
+}
