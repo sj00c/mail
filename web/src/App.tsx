@@ -553,8 +553,8 @@ function Reader({
         {msg.bodyHtml ? (
           <iframe
             title="message"
-            sandbox=""
-            srcDoc={msg.bodyHtml}
+            sandbox="allow-popups allow-popups-to-escape-sandbox"
+            srcDoc={`<base target="_blank"><meta charset="utf-8">${msg.bodyHtml}`}
             className="html-frame"
           />
         ) : (
@@ -1267,9 +1267,9 @@ function EventDetailModal({
           {d?.description && (
             <iframe
               title="event-description"
-              sandbox=""
+              sandbox="allow-popups allow-popups-to-escape-sandbox"
               className="ev-desc"
-              srcDoc={`<body style="font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word">${d.description}</body>`}
+              srcDoc={`<base target="_blank"><meta charset="utf-8"><body style="font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word">${d.description}</body>`}
             />
           )}
         </div>
