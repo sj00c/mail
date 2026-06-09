@@ -76,6 +76,25 @@ bun run start
 
 → 브라우저에서 http://localhost:8787
 
+프로덕션 모드(`NODE_ENV=production`)에선 단일 서버가 SPA까지 서빙하고, 응답을 gzip 압축하며,
+해시된 정적 자산엔 장기 캐시 헤더를 붙인다.
+
+### Docker
+
+```sh
+docker build -t mail .
+docker run --rm -p 8787:8787 \
+  --env-file .env \
+  -v "$PWD/server/.data:/app/server/.data" \
+  mail
+```
+
+- `--env-file .env` 로 `GOOGLE_CLIENT_ID` 등을 주입한다.
+- `-v ...server/.data` 볼륨으로 refresh token(`token.json`)을 컨테이너 재시작 후에도 유지한다.
+- OAuth redirect URI 는 그대로 `http://localhost:8787/auth/callback` (호스트 포트 매핑 8787:8787).
+
+> CI: `.github/workflows/ci.yml` 가 push/PR 마다 `typecheck` + `build` 를 검증한다.
+
 ## 4. 첫 로그인
 
 1. 화면의 **"Gmail 연결하기"** 클릭

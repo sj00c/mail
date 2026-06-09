@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { serveStatic } from "hono/bun";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -31,6 +32,7 @@ const APP_URL =
   process.env.APP_URL ?? (SERVE_STATIC ? "/" : "http://localhost:5173/");
 
 const app = new Hono();
+app.use(compress());
 
 // ---- helpers ----
 function needAuthError(err: unknown): boolean {
@@ -147,6 +149,11 @@ app.route("/api", api);
 
 // ---- static (production: serve built SPA) ----
 if (SERVE_STATIC) {
+  // Content-hashed assets are immutable — cache hard.
+  app.use("/assets/*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "public, max-age=31536000, immutable");
+  });
   app.use("/*", serveStatic({ root: "./dist" }));
   app.get("/*", serveStatic({ path: "./dist/index.html" }));
 }

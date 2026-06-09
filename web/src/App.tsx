@@ -802,37 +802,52 @@ function CalendarView({
   );
 }
 
+type CalRange = { days?: number; from?: string; to?: string };
+
+// Module-level stale-while-revalidate cache so flipping between months
+// (or mail<->calendar) is instant and avoids redundant API fan-out.
+const calCache = new Map<string, { events: CalEvent[]; ts: number }>();
+const CAL_FRESH_MS = 30_000;
+const rangeKey = (r: CalRange) => `${r.days ?? ""}|${r.from ?? ""}|${r.to ?? ""}`;
+
 function useCalendarEvents(
-  range: { days?: number; from?: string; to?: string },
+  range: CalRange,
   deps: unknown[],
   onLogout: () => void,
 ) {
   const [events, setEvents] = useState<CalEvent[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
+    const key = rangeKey(range);
     let cancelled = false;
-    const fetchEvents = (silent: boolean) => {
-      if (!silent) setEvents(null);
+    const cached = calCache.get(key);
+    setEvents(cached?.events ?? null);
+    setErr(null);
+
+    const refresh = () => {
       api
         .calendarEvents(range)
         .then((evs) => {
           if (cancelled) return;
+          calCache.set(key, { events: evs, ts: Date.now() });
           setEvents(evs);
           setErr(null);
         })
         .catch((e) => {
           if (cancelled) return;
           if (e instanceof AuthError) onLogout();
-          else if (!silent) setErr((e as Error).message);
+          else if (!calCache.has(key)) setErr((e as Error).message);
         });
     };
-    fetchEvents(false);
-    // Auto-refresh every 60s while the tab is visible, and whenever it regains focus.
+
+    // Use cache if fresh; otherwise revalidate immediately.
+    if (!cached || Date.now() - cached.ts > CAL_FRESH_MS) refresh();
+
     const iv = setInterval(() => {
-      if (document.visibilityState === "visible") fetchEvents(true);
+      if (document.visibilityState === "visible") refresh();
     }, 60_000);
     const onFocus = () => {
-      if (document.visibilityState === "visible") fetchEvents(true);
+      if (document.visibilityState === "visible") refresh();
     };
     document.addEventListener("visibilitychange", onFocus);
     window.addEventListener("focus", onFocus);
