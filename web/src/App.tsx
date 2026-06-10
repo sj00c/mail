@@ -62,6 +62,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [composeInit, setComposeInit] = useState<ComposeInit | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
@@ -303,6 +304,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           <span className="email">{email}</span>
           <button
             className="btn"
+            title="설정 (서명)"
+            onClick={() => setSettingsOpen(true)}
+          >
+            ⚙
+          </button>
+          <button
+            className="btn"
             onClick={() =>
               guard(async () => {
                 await api.logout();
@@ -465,6 +473,62 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           }}
         />
       )}
+
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+    </div>
+  );
+}
+
+// ---- local settings (서명) ----
+// Stored locally — pulling the Gmail server-side signature would need the
+// gmail.settings.basic scope and a re-login; a local signature avoids both.
+const SIGNATURE_KEY = "mail.signature";
+
+export function getSignature(): string {
+  try {
+    return localStorage.getItem(SIGNATURE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function SettingsModal({ onClose }: { onClose: () => void }) {
+  const [sig, setSig] = useState(getSignature());
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <strong>설정</strong>
+          <button className="clear" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <div className="muted settings-label">
+          서명 — 새 메일·답장 본문 끝에 자동 삽입 (비워두면 사용 안 함)
+        </div>
+        <textarea
+          className="signature-input"
+          placeholder={"예)\n홍길동 드림\n010-0000-0000"}
+          value={sig}
+          onChange={(e) => setSig(e.target.value)}
+        />
+        <div className="modal-foot">
+          <span className="modal-spacer" />
+          <button
+            className="btn primary"
+            onClick={() => {
+              try {
+                localStorage.setItem(SIGNATURE_KEY, sig);
+              } catch {
+                // private mode etc: nothing to persist to
+              }
+              onClose();
+            }}
+          >
+            저장
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1001,11 +1065,26 @@ function Compose({
   const [to, setTo] = useState(init?.to ?? "");
   const [cc, setCc] = useState(init?.cc ?? "");
   const [subject, setSubject] = useState(init?.subject ?? "");
-  const [body, setBody] = useState(init?.body ?? quoted);
+  // 서명: 새 작성/답장에만 자동 삽입 — 드래프트 이어쓰기(init.body)는 이미
+  // 저장된 본문이므로 건드리지 않는다.
+  const signature = init?.body !== undefined ? "" : getSignature();
+  const sigBlock = signature ? `\n\n--\n${signature}` : "";
+  const [body, setBody] = useState(init?.body ?? `${sigBlock}${quoted}`);
   const [sending, setSending] = useState(false);
   const [files, setFiles] = useState<ComposeAttachment[]>(
     init?.attachments ?? [],
   );
+
+  // One funnel for every attach path (버튼/드래그앤드롭/붙여넣기) — managed
+  // Chrome can block the file-selection dialog outright, so DnD/paste must
+  // work too; guard surfaces FileReader failures instead of silent drops.
+  const addFiles = (picked: File[]) => {
+    if (picked.length === 0) return;
+    void guard(async () => {
+      const read = await Promise.all(picked.map(fileToBase64));
+      setFiles((p) => [...p, ...read]);
+    });
+  };
 
   const send = () =>
     guard(async () => {
@@ -1068,7 +1147,15 @@ function Compose({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        onClick={(e) => e.stopPropagation()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          addFiles(Array.from(e.dataTransfer.files));
+        }}
+      >
         <div className="modal-head">
           <strong>새 메일</strong>
           <button className="clear" onClick={onClose}>
@@ -1094,6 +1181,13 @@ function Compose({
           placeholder="내용"
           value={body}
           onChange={(e) => setBody(e.target.value)}
+          onPaste={(e) => {
+            const pasted = Array.from(e.clipboardData.files);
+            if (pasted.length) {
+              e.preventDefault(); // file paste (스크린샷 등) → attach
+              addFiles(pasted);
+            }
+          }}
         />
         {files.length > 0 && (
           <div className="compose-atts">
@@ -1120,14 +1214,16 @@ function Compose({
               type="file"
               multiple
               hidden
-              onChange={async (e) => {
+              onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
                 e.target.value = "";
-                const read = await Promise.all(picked.map(fileToBase64));
-                setFiles((p) => [...p, ...read]);
+                addFiles(picked);
               }}
             />
           </label>
+          <span className="muted attach-hint">
+            끌어다 놓기 · 붙여넣기로도 첨부됩니다
+          </span>
           <span className="modal-spacer" />
           <button
             className="btn"

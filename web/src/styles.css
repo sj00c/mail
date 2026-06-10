@@ -793,3 +793,17 @@ textarea.ev-input {
 .thread-msg .html-frame {
   min-height: 80px;
 }
+
+/* settings modal (서명) */
+.settings-label {
+  font-size: 12px;
+  margin: 4px 0 6px;
+}
+.signature-input {
+  min-height: 120px;
+  resize: vertical;
+}
+.attach-hint {
+  font-size: 11px;
+  align-self: center;
+}
