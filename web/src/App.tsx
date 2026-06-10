@@ -741,17 +741,17 @@ function HtmlBody({ html, id }: { html: string; id: string }) {
     });
     setTimeout(resize, 400);
     setTimeout(resize, 1200);
-    // Intercept link clicks in the parent context so they always open a new
-    // tab (bypasses sandbox popup quirks / popup blockers).
+    // Handle only mailto/# clicks here. http(s) links are left to the
+    // browser's NATIVE anchor navigation (prepareEmailHtml guarantees
+    // target=_blank + rel on every anchor): real link clicks are exempt from
+    // popup blocking, whereas window.open() from this handler is silently
+    // blocked by managed/strict-policy browsers (corporate Chrome).
     doc.addEventListener("click", (e) => {
       const target = e.target as HTMLElement | null;
       const a = target?.closest?.("a[href]") as HTMLAnchorElement | null;
       if (!a) return;
       const href = a.getAttribute("href") || "";
-      if (/^https?:/i.test(href)) {
-        e.preventDefault();
-        window.open(href, "_blank", "noopener,noreferrer");
-      } else if (/^mailto:/i.test(href)) {
+      if (/^mailto:/i.test(href)) {
         e.preventDefault();
         window.location.href = href;
       } else if (href.startsWith("#")) {
