@@ -35,58 +35,108 @@
 
 ## 설치
 
-> 전 과정은 **클론 → OAuth 클라이언트 발급 → 실행** 3단계다.
-> Client ID / Secret / 토큰은 사람마다 다르고 레포에 올라가지 않는다 — 클론한 사람 각자 본인 것을 만든다.
+> 순서: **Bun 설치 → 클론 → OAuth 클라이언트 발급 → `.env` 작성 → 실행.** 한 번만 하면 된다.
 
-### 요구사항
+시작 전에, **무엇을 발급받아 어디에 넣는지**부터. 직접 챙겨야 하는 값은 단 두 개다:
 
-- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
-- Google 계정 (Google Cloud 콘솔 접근, 무료)
+| 값 | 어떻게 얻나 | 어디에 넣나 | 비고 |
+|---|---|---|---|
+| **Client ID** | Google 콘솔에서 OAuth 클라이언트 생성 (아래 3단계) | `.env` → `GOOGLE_CLIENT_ID=` | 사람마다 다름, 레포에 안 올라감 |
+| **Client Secret** | 위와 동시에 발급됨 | `.env` → `GOOGLE_CLIENT_SECRET=` | `GOCSPX-`로 시작 |
+| 리디렉션 URI | ~~발급 아님~~ — 레포가 정해둔 고정값 | 반대로 **Google 콘솔에 등록**한다 | `http://localhost:8787/auth/callback` |
+| 토큰 (refresh token) | 첫 로그인 때 자동 발급 | 자동 — `server/.data/token.json` | 직접 만질 일 없음 |
 
-### 1. 클론 & 의존성
+레포가 이미 해둔 것: `.env.example`(채우기만 하면 되는 틀), OAuth 콜백 처리·토큰 저장/갱신(서버가 알아서), 빌드/실행 스크립트. **즉 할 일은 "콘솔에서 ID/Secret 발급 → `.env`에 붙여넣기 → 실행"이 전부다.**
+
+### 1. Bun 설치
+
+| OS | 설치 명령 |
+|---|---|
+| macOS / Linux | `curl -fsSL https://bun.sh/install \| bash` |
+| Windows (PowerShell) | `powershell -c "irm bun.sh/install.ps1 \| iex"` |
+
+설치 후 **터미널을 새로 열고** 확인:
 
 ```sh
-git clone <repo-url> && cd mail
+bun --version        # 1.x 가 출력되면 OK
+```
+
+### 2. 클론 & 의존성
+
+```sh
+git clone https://github.com/SeokjuCh0/mail.git
+cd mail
 bun install
 ```
 
-### 2. Google OAuth 클라이언트 발급 — 최초 1회, 약 5분
+### 3. Google OAuth 클라이언트 발급 — 최초 1회, 약 5분
 
-**[`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 를 그대로 따라가면 된다.** 요약:
+이 앱은 "각자 자기가 만든 Google 앱"으로 본인 계정에 붙는 구조다. [console.cloud.google.com](https://console.cloud.google.com)에 본인 Google 계정으로 로그인한 뒤, 아래 표를 위에서부터 순서대로:
 
-1. [console.cloud.google.com](https://console.cloud.google.com) → 새 프로젝트
-2. **Gmail API** + **Google Calendar API** 사용 설정
-3. OAuth 동의 화면: 유형 **외부**, **테스트 사용자에 본인 Gmail 추가** *(빠뜨리면 403)*, 앱은 "테스트" 상태 유지
-4. OAuth 클라이언트 ID 생성: 유형 **웹 애플리케이션**, 승인된 리디렉션 URI에 정확히
-   ```
-   http://localhost:8787/auth/callback
-   ```
-5. 발급된 **Client ID / Client Secret** 복사
+| # | 콘솔에서 가는 곳 | 할 일 |
+|---|---|---|
+| ① | 상단 프로젝트 선택 → **새 프로젝트** | 이름 아무거나(예: `mail`) → 만들기 |
+| ② | **API 및 서비스 → 라이브러리** | `Gmail API` 검색 → **사용**, `Google Calendar API` 검색 → **사용** *("CalDAV API" 아님)* |
+| ③ | **API 및 서비스 → OAuth 동의 화면** | 사용자 유형 **외부** → 앱 이름·지원 이메일만 입력 → **테스트 사용자(Test users)에 본인 Gmail 주소 추가** → 게시 상태는 **"테스트"** 그대로 둠 |
+| ④ | **API 및 서비스 → 사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID** | 애플리케이션 유형 **웹 애플리케이션** → **승인된 리디렉션 URI**에 아래 값을 정확히 추가 → 만들기 |
+| ⑤ | 생성 직후 뜨는 창 | **클라이언트 ID**와 **클라이언트 보안 비밀번호(Secret)** 복사해 두기 |
 
-```sh
-cp .env.example .env    # 복사한 두 값 채우기 (따옴표 없이)
+④에 넣을 리디렉션 URI (한 글자도 다르면 안 됨 — `http`, 끝에 `/` 없음):
+
+```
+http://localhost:8787/auth/callback
 ```
 
-### 3. 실행
+> ⚠️ 여기서 빠뜨리면 나는 에러 3종 — ② 안 켬: `403 ... has not been used in project` / ③ 테스트 사용자 안 넣음: `403 access_denied` / ④ URI 불일치: `redirect_uri_mismatch`.
+> 화면이 다르거나 막히면 스텝별 상세 가이드: [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md)
+
+### 4. `.env` 작성
 
 ```sh
-bun run dev             # → http://localhost:5173 열기
+cp .env.example .env
 ```
 
-첫 화면에서 **"Gmail 연결하기"** → 본인 계정 선택 → 권한 허용.
-*"앱이 확인되지 않았습니다"* 경고가 뜨면 **고급 → 이동** (본인이 만든 앱이라 정상이다).
-받은편지함이 뜨면 끝 — 이후 재시작해도 로그인은 유지된다.
+`.env`를 열어 **윗줄 두 개만** ⑤에서 복사한 값으로 바꾼다. 완성 예시:
 
----
+```dotenv
+GOOGLE_CLIENT_ID=1234567890-abcdefg.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
+OAUTH_REDIRECT=http://localhost:8787/auth/callback
+PORT=8787
+```
 
-## 실행 모드
+> 따옴표·앞뒤 공백 없이 붙여넣는다. 정상 Secret은 `GOCSPX-`로 시작한다. 아래 두 줄은 그대로 둔다.
 
-| 모드 | 명령 | 주소 | 설명 |
+### 5. 실행 & 첫 로그인
+
+```sh
+bun run dev
+```
+
+브라우저에서 **http://localhost:5173** 접속 → **"Gmail 연결하기"** → 본인 계정 선택 → 허용.
+
+- *"Google에서 확인하지 않은 앱"* 경고가 뜨면 → **고급 → 이동(안전하지 않음)**. ③에서 직접 만든 테스트 앱이라 정상이다.
+- **받은편지함이 보이면 설치 끝.** 토큰이 `server/.data/token.json`에 저장돼 재시작해도 로그인이 유지된다.
+
+잘 됐는지 터미널로도 확인할 수 있다:
+
+```sh
+curl -s localhost:8787/auth/status     # {"authed":true} 면 성공
+```
+
+### 6. 평소 사용 — 프로덕션 모드 권장
+
+| 모드 | 명령 | 주소 | 용도 |
 |---|---|---|---|
-| 개발 | `bun run dev` | `localhost:5173` | Vite 핫리로드 + API 서버(8787) 동시 기동 |
-| 프로덕션 | `bun run build && bun run start` | `localhost:8787` | 단일 서버가 빌드된 SPA까지 서빙 (gzip, 장기 캐시) |
+| 개발 | `bun run dev` | `localhost:5173` | 코드 수정·핫리로드 (Vite + API 서버 2개 프로세스) |
+| **프로덕션** | `bun run build && bun run start` | `localhost:8787` | **일상 사용** — 프로세스 하나가 SPA까지 서빙 (gzip, 장기 캐시) |
 
-평소에 쓸 때는 **프로덕션 모드**를 권장한다 — 프로세스 하나, 포트 하나.
+터미널을 닫아도 켜두고 싶다면 (macOS / Linux):
+
+```sh
+bun run build
+nohup bun run start > /tmp/mail.log 2>&1 &     # 끄기: lsof -ti:8787 | xargs kill
+```
 
 ## 환경 변수 (`.env`)
 
