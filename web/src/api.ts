@@ -136,6 +136,7 @@ export const api = {
     bcc?: string;
     subject: string;
     body: string;
+    bodyHtml?: string;
     threadId?: string;
     inReplyTo?: string;
     references?: string;
@@ -182,6 +183,7 @@ export const api = {
     req<{ ok: boolean }>(`/api/drafts/${encodeURIComponent(draftId)}/delete`, {
       method: "POST",
     }),
+  signature: () => req<{ html: string }>("/api/signature"),
   attachmentUrl: (id: string, aid: string, filename: string) =>
     `/api/messages/${id}/attachments/${aid}?filename=${encodeURIComponent(filename)}`,
 };

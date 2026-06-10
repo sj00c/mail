@@ -480,9 +480,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 }
 
 // ---- local settings (서명) ----
-// Stored locally — pulling the Gmail server-side signature would need the
-// gmail.settings.basic scope and a re-login; a local signature avoids both.
+// Text signature rides in the text/plain part; an HTML signature (imported
+// from Gmail — readable with gmail.modify, no extra scope) is sent verbatim
+// as a text/html alternative so images/styles survive.
 const SIGNATURE_KEY = "mail.signature";
+const SIGNATURE_HTML_KEY = "mail.signature.html";
 
 export function getSignature(): string {
   try {
@@ -492,8 +494,46 @@ export function getSignature(): string {
   }
 }
 
+export function getSignatureHtml(): string {
+  try {
+    return localStorage.getItem(SIGNATURE_HTML_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function textToHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>");
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const [sig, setSig] = useState(getSignature());
+  const [sigHtml, setSigHtml] = useState(getSignatureHtml());
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const importedTextRef = useRef<string | null>(null);
+
+  const importFromGmail = async () => {
+    setImportMsg(null);
+    try {
+      const { html } = await api.signature();
+      if (!html) {
+        setImportMsg("Gmail에 저장된 서명이 없습니다.");
+        return;
+      }
+      const text = htmlToText(html);
+      importedTextRef.current = text;
+      setSig(text);
+      setSigHtml(html);
+      setImportMsg("가져왔습니다 — 이미지·서식은 발송 시 원본 그대로 포함됩니다.");
+    } catch (e) {
+      setImportMsg(`가져오기 실패: ${(e as Error).message}`);
+    }
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -504,7 +544,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="muted settings-label">
-          서명 — 새 메일·답장 본문 끝에 자동 삽입 (비워두면 사용 안 함)
+          서명 — 발송 시 본문 끝에 자동 추가 (비워두면 사용 안 함)
         </div>
         <textarea
           className="signature-input"
@@ -512,13 +552,35 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           value={sig}
           onChange={(e) => setSig(e.target.value)}
         />
+        {sigHtml && (
+          <>
+            <div className="muted settings-label">
+              서식 서명 미리보기 (Gmail 원본 — 발송 시 이 모습 그대로)
+            </div>
+            <div
+              className="signature-preview"
+              // own signature from the user's Gmail settings — trusted content
+              dangerouslySetInnerHTML={{ __html: sigHtml }}
+            />
+          </>
+        )}
+        {importMsg && <div className="muted settings-label">{importMsg}</div>}
         <div className="modal-foot">
+          <button className="btn" onClick={() => void importFromGmail()}>
+            Gmail 서명 가져오기
+          </button>
           <span className="modal-spacer" />
           <button
             className="btn primary"
             onClick={() => {
               try {
                 localStorage.setItem(SIGNATURE_KEY, sig);
+                // Manual edits after import diverge from the HTML original —
+                // text becomes the single source of truth again.
+                const keepHtml =
+                  sigHtml && sig.trim() === (importedTextRef.current ?? htmlToText(sigHtml)).trim();
+                if (keepHtml) localStorage.setItem(SIGNATURE_HTML_KEY, sigHtml);
+                else localStorage.removeItem(SIGNATURE_HTML_KEY);
               } catch {
                 // private mode etc: nothing to persist to
               }
@@ -1065,11 +1127,7 @@ function Compose({
   const [to, setTo] = useState(init?.to ?? "");
   const [cc, setCc] = useState(init?.cc ?? "");
   const [subject, setSubject] = useState(init?.subject ?? "");
-  // 서명: 새 작성/답장에만 자동 삽입 — 드래프트 이어쓰기(init.body)는 이미
-  // 저장된 본문이므로 건드리지 않는다.
-  const signature = init?.body !== undefined ? "" : getSignature();
-  const sigBlock = signature ? `\n\n--\n${signature}` : "";
-  const [body, setBody] = useState(init?.body ?? `${sigBlock}${quoted}`);
+  const [body, setBody] = useState(init?.body ?? quoted);
   const [sending, setSending] = useState(false);
   const [files, setFiles] = useState<ComposeAttachment[]>(
     init?.attachments ?? [],
@@ -1090,11 +1148,18 @@ function Compose({
     guard(async () => {
       setSending(true);
       try {
+        // 서명은 발송 시점에 합성: 텍스트 본문 + (서식 서명이 있으면) HTML
+        // alternative — 이미지/스타일이 원본 그대로 나간다.
+        const sigText = getSignature();
+        const sigHtml = getSignatureHtml();
         await api.send({
           to,
           cc: cc || undefined,
           subject,
-          body,
+          body: sigText ? `${body}\n\n--\n${sigText}` : body,
+          bodyHtml: sigHtml
+            ? `${textToHtml(body)}<br><br>--<br>${sigHtml}`
+            : undefined,
           threadId: init?.threadId,
           inReplyTo: init?.inReplyTo,
           references: init?.inReplyTo,
@@ -1223,6 +1288,7 @@ function Compose({
           </label>
           <span className="muted attach-hint">
             끌어다 놓기 · 붙여넣기로도 첨부됩니다
+            {getSignature() && " · ✍ 서명 자동 추가"}
           </span>
           <span className="modal-spacer" />
           <button
@@ -1962,29 +2028,34 @@ function formatEventWhen(e: CalEvent): string {
   return `${date} ${st} – ${ed} ${et}`;
 }
 
+// HTML → readable plain text: entities decoded, <br>/block tags become line
+// breaks. Used for reply quotes and Gmail signature import.
+function htmlToText(html: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("style,script").forEach((n) => n.remove());
+    doc.querySelectorAll("br").forEach((n) => n.replaceWith("\n"));
+    doc.body
+      ?.querySelectorAll("p,div,li,tr,h1,h2,h3,h4,h5,h6,blockquote,table")
+      .forEach((n) => n.append("\n"));
+    const text = doc.body?.textContent ?? "";
+    return text
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
 // Reply-quote text. Prefer extracting from the HTML part: some senders
 // (Dooray 등) leak raw entities ("&nbsp;") and tag-mashed text into their
-// text/plain part, and HTML-only mails have no text part at all. DOM
-// extraction decodes entities and turns block boundaries into line breaks.
+// text/plain part, and HTML-only mails have no text part at all.
 function quoteText(m: MessageFull): string {
   if (m.bodyHtml) {
-    try {
-      const doc = new DOMParser().parseFromString(m.bodyHtml, "text/html");
-      doc.querySelectorAll("style,script").forEach((n) => n.remove());
-      doc.querySelectorAll("br").forEach((n) => n.replaceWith("\n"));
-      doc.body
-        ?.querySelectorAll("p,div,li,tr,h1,h2,h3,h4,h5,h6,blockquote,table")
-        .forEach((n) => n.append("\n"));
-      const text = doc.body?.textContent ?? "";
-      const cleaned = text
-        .replace(/\u00a0/g, " ")
-        .replace(/[ \t]+\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-      if (cleaned) return cleaned;
-    } catch {
-      // fall through to the text part
-    }
+    const cleaned = htmlToText(m.bodyHtml);
+    if (cleaned) return cleaned;
   }
   return m.bodyText ?? "";
 }

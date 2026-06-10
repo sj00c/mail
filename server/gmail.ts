@@ -228,6 +228,7 @@ export type MailInput = {
   inReplyTo?: string;
   references?: string;
   attachments?: OutAttachment[];
+  bodyHtml?: string; // optional HTML alternative (서식 있는 서명 등)
 };
 
 function buildRaw(input: MailInput): string {
@@ -241,30 +242,42 @@ function buildRaw(input: MailInput): string {
     "MIME-Version: 1.0",
   ].filter((l) => l !== "");
 
+  const boundary = (tag: string) =>
+    `${tag}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  const b64Part = (contentType: string, data: string) => [
+    `Content-Type: ${contentType}`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap76(Buffer.from(data, "utf-8").toString("base64")),
+  ];
+
+  // Body: text/plain, or multipart/alternative(text, html) when HTML exists.
+  let bodyLines = b64Part('text/plain; charset="UTF-8"', input.body);
+  if (input.bodyHtml) {
+    const alt = boundary("alt");
+    bodyLines = [
+      `Content-Type: multipart/alternative; boundary="${alt}"`,
+      "",
+      `--${alt}`,
+      ...b64Part('text/plain; charset="UTF-8"', input.body),
+      `--${alt}`,
+      ...b64Part('text/html; charset="UTF-8"', input.bodyHtml),
+      `--${alt}--`,
+    ];
+  }
+
   const atts = input.attachments ?? [];
-  const bodyB64 = wrap76(Buffer.from(input.body, "utf-8").toString("base64"));
   let mime: string;
   if (atts.length === 0) {
-    mime = [
-      ...headers,
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
-      "",
-      bodyB64,
-    ].join("\r\n");
+    mime = [...headers, ...bodyLines].join("\r\n");
   } else {
-    const boundary = `b_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2)}`;
+    const mixed = boundary("b");
     const parts: string[] = [
       ...headers,
-      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      `Content-Type: multipart/mixed; boundary="${mixed}"`,
       "",
-      `--${boundary}`,
-      'Content-Type: text/plain; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
-      "",
-      bodyB64,
+      `--${mixed}`,
+      ...bodyLines,
     ];
     for (const a of atts) {
       // RFC 2047 encoded-word inside quoted filename/name params — universally
@@ -272,7 +285,7 @@ function buildRaw(input: MailInput): string {
       // RFC 5987-illegal chars (parens) unencoded, which garbled the name.
       const fname = encodeHeaderWord(a.filename.replace(/[\r\n"]/g, "_"));
       parts.push(
-        `--${boundary}`,
+        `--${mixed}`,
         `Content-Type: ${a.mimeType || "application/octet-stream"}; name="${fname}"`,
         "Content-Transfer-Encoding: base64",
         `Content-Disposition: attachment; filename="${fname}"`,
@@ -280,7 +293,7 @@ function buildRaw(input: MailInput): string {
         wrap76(a.data),
       );
     }
-    parts.push(`--${boundary}--`);
+    parts.push(`--${mixed}--`);
     mime = parts.join("\r\n");
   }
   return Buffer.from(mime, "utf-8").toString("base64url");
@@ -341,6 +354,17 @@ export async function updateDraft(
 export async function deleteDraft(draftId: string): Promise<void> {
   const g = await api();
   await g.users.drafts.delete({ userId: "me", id: draftId });
+}
+
+/** Primary send-as signature (HTML) — readable with gmail.modify, no extra scope. */
+export async function getGmailSignature(): Promise<{ html: string }> {
+  const g = await api();
+  const res = await g.users.settings.sendAs.list({
+    userId: "me",
+    fields: "sendAs(isPrimary,signature)",
+  });
+  const primary = (res.data.sendAs ?? []).find((s) => s.isPrimary);
+  return { html: primary?.signature ?? "" };
 }
 
 export async function modifyMessage(
