@@ -13,6 +13,7 @@ import {
   HttpError,
   parseAddr,
   splitAddrList,
+  type AccountSettings,
   type Label,
   type CalEvent,
   type Calendar,
@@ -20,6 +21,7 @@ import {
   type EventInput,
   type MessageFull,
   type MessageSummary,
+  type SendAsInfo,
 } from "./api.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
@@ -98,6 +100,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [composeKey, setComposeKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
+  // Gmail 계정 설정(별칭/답장주소/휴가응답) — 로그인 시 자동으로 딸려온다.
+  const [acctSettings, setAcctSettings] = useState<AccountSettings | null>(null);
   const [hiddenCals, setHiddenCals] = useState<Set<string>>(new Set());
   const [calLoading, setCalLoading] = useState(false);
   const [calErr, setCalErr] = useState<string | null>(null);
@@ -115,6 +119,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   );
 
   useEffect(() => {
+    // Account settings ride along with login — non-fatal if unavailable.
+    api.accountSettings().then(setAcctSettings).catch(() => {});
     void guard(async () => {
       const [p, ls] = await Promise.all([api.profile(), api.labels()]);
       setEmail(p.email);
@@ -535,6 +541,15 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </div>
       )}
 
+      {acctSettings?.vacation.enabled && (
+        <div className="vacation-note">
+          🏖 Gmail 휴가 자동응답이 켜져 있습니다
+          {acctSettings.vacation.subject && ` — “${acctSettings.vacation.subject}”`}
+          {acctSettings.vacation.endTime &&
+            ` (${new Date(acctSettings.vacation.endTime).toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}까지)`}
+        </div>
+      )}
+
       <div className="body">
         <nav className="sidebar">
           <button
@@ -664,6 +679,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         <Compose
           key={composeKey}
           init={composeInit}
+          sendAs={acctSettings?.sendAs}
           onClose={() => {
             setComposeOpen(false);
             setComposeInit(undefined); // drop retained attachments (up to 25MB)
@@ -1410,15 +1426,32 @@ type ComposeInit = {
 
 function Compose({
   init,
+  sendAs,
   onClose,
   onSaved,
   onSent,
 }: {
   init?: ComposeInit;
+  sendAs?: SendAsInfo[];
   onClose: () => void;
   onSaved: () => void;
   onSent: () => void;
 }) {
+  // 보내는 주소: 검증된 별칭이 둘 이상일 때만 선택 UI가 뜬다. Gmail은
+  // 미검증 별칭의 From을 기본 주소로 강제 재작성하므로 verified만 노출.
+  const aliases = (sendAs ?? []).filter((s) => s.verified);
+  const [fromEmail, setFromEmail] = useState(
+    () =>
+      (aliases.find((s) => s.isDefault) ?? aliases.find((s) => s.isPrimary))?.email ??
+      aliases[0]?.email ??
+      "",
+  );
+  const chosenAlias = aliases.find((s) => s.email === fromEmail);
+  const fromHeader = chosenAlias
+    ? chosenAlias.displayName
+      ? `"${chosenAlias.displayName.replace(/"/g, "")}" <${chosenAlias.email}>`
+      : chosenAlias.email
+    : undefined;
   const quoted = init?.quote
     ? `\n\n\n--- ${init.quoteFrom ?? ""} 작성 ---\n` +
       init.quote
@@ -1522,6 +1555,9 @@ function Compose({
           to,
           cc: cc || undefined,
           bcc: bcc || undefined,
+          // 별칭이 하나뿐이면 Gmail 기본값에 맡긴다 (보내는 이름 자동 적용)
+          from: aliases.length > 1 ? fromHeader : undefined,
+          replyTo: chosenAlias?.replyTo || undefined,
           subject,
           body: appendSig ? `${body}\n\n--\n${sigText}` : body,
           bodyHtml:
@@ -1559,6 +1595,8 @@ function Compose({
           to,
           cc: cc || undefined,
           bcc: bcc || undefined,
+          from: aliases.length > 1 ? fromHeader : undefined,
+          replyTo: chosenAlias?.replyTo || undefined,
           subject,
           body,
           threadId: init?.threadId,
@@ -1626,6 +1664,20 @@ function Compose({
           <div className="muted settings-label">
             ⚠️ 서식 있는 임시보관 메일입니다 — 저장/발송 시 텍스트로 변환됩니다.
           </div>
+        )}
+        {aliases.length > 1 && (
+          <select
+            className="from-select"
+            value={fromEmail}
+            onChange={(e) => setFromEmail(e.target.value)}
+            title="보내는 주소 (Gmail 별칭)"
+          >
+            {aliases.map((a) => (
+              <option key={a.email} value={a.email}>
+                보내는 주소: {a.displayName ? `${a.displayName} <${a.email}>` : a.email}
+              </option>
+            ))}
+          </select>
         )}
         <input
           placeholder="받는사람"

@@ -14,6 +14,7 @@ import {
   createDraft,
   deleteDraft,
   findDraftByMessageId,
+  getAccountSettings,
   getAttachment,
   getGmailSignature,
   updateDraft,
@@ -263,6 +264,8 @@ api.post("/drafts/:id/delete", async (c) => {
 });
 
 api.get("/signature", async (c) => c.json(await getGmailSignature()));
+
+api.get("/settings/account", async (c) => c.json(await getAccountSettings()));
 
 // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).
 api.onError((e, c) => {

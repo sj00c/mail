@@ -380,6 +380,8 @@ export type MailInput = {
   to: string;
   cc?: string;
   bcc?: string;
+  from?: string; // send-as alias ("Name <alias@x>"); Gmail rewrites unauthorized ones
+  replyTo?: string; // account default Reply-To (sendAs.replyToAddress)
   subject: string;
   body: string; // plain text
   threadId?: string;
@@ -391,9 +393,11 @@ export type MailInput = {
 
 function buildMime(input: MailInput): string {
   const headers = [
+    input.from ? `From: ${formatAddrList(input.from)}` : "",
     `To: ${formatAddrList(input.to)}`,
     input.cc ? `Cc: ${formatAddrList(input.cc)}` : "",
     input.bcc ? `Bcc: ${formatAddrList(input.bcc)}` : "",
+    input.replyTo ? `Reply-To: ${formatAddrList(input.replyTo)}` : "",
     `Subject: ${encodeHeaderWord(stripCrlf(input.subject))}`,
     input.inReplyTo ? `In-Reply-To: ${stripCrlf(input.inReplyTo)}` : "",
     input.references ? `References: ${foldIdList(input.references)}` : "",
@@ -564,6 +568,55 @@ export async function getGmailSignature(): Promise<{ html: string }> {
   });
   const primary = (res.data.sendAs ?? []).find((s) => s.isPrimary);
   return { html: primary?.signature ?? "" };
+}
+
+export type SendAsInfo = {
+  email: string;
+  displayName: string;
+  replyTo: string; // account-level default Reply-To for this alias
+  isPrimary: boolean;
+  isDefault: boolean;
+  verified: boolean; // unverified aliases get rewritten to primary by Gmail
+};
+
+export type AccountSettings = {
+  sendAs: SendAsInfo[];
+  vacation: { enabled: boolean; subject: string; endTime: string | null };
+};
+
+/** Account settings that should "ride along" with login — send-as aliases
+ *  (표시명/답장주소 포함) and vacation-responder state. All readable with
+ *  gmail.modify; writing them would need gmail.settings.* scopes. */
+export async function getAccountSettings(): Promise<AccountSettings> {
+  const g = await api();
+  const [sa, vac] = await Promise.all([
+    g.users.settings.sendAs.list({
+      userId: "me",
+      fields:
+        "sendAs(sendAsEmail,displayName,replyToAddress,isPrimary,isDefault,verificationStatus)",
+    }),
+    g.users.settings.getVacation({ userId: "me" }),
+  ]);
+  return {
+    sendAs: (sa.data.sendAs ?? [])
+      .filter((s) => s.sendAsEmail)
+      .map((s) => ({
+        email: s.sendAsEmail!,
+        displayName: s.displayName ?? "",
+        replyTo: s.replyToAddress ?? "",
+        isPrimary: !!s.isPrimary,
+        isDefault: !!s.isDefault,
+        // primary has no verificationStatus; treat anything not "pending" as usable
+        verified: s.verificationStatus !== "pending",
+      })),
+    vacation: {
+      enabled: !!vac.data.enableAutoReply,
+      subject: vac.data.responseSubject ?? "",
+      endTime: vac.data.endTime
+        ? new Date(Number(vac.data.endTime)).toISOString()
+        : null,
+    },
+  };
 }
 
 export async function modifyMessage(

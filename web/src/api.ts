@@ -70,6 +70,20 @@ export type Calendar = {
   accessRole: string;
 };
 
+export type SendAsInfo = {
+  email: string;
+  displayName: string;
+  replyTo: string;
+  isPrimary: boolean;
+  isDefault: boolean;
+  verified: boolean;
+};
+
+export type AccountSettings = {
+  sendAs: SendAsInfo[];
+  vacation: { enabled: boolean; subject: string; endTime: string | null };
+};
+
 export class AuthError extends Error {}
 
 export class HttpError extends Error {
@@ -164,6 +178,8 @@ export const api = {
     to: string;
     cc?: string;
     bcc?: string;
+    from?: string;
+    replyTo?: string;
     subject: string;
     body: string;
     bodyHtml?: string;
@@ -180,6 +196,8 @@ export const api = {
     to: string;
     cc?: string;
     bcc?: string;
+    from?: string;
+    replyTo?: string;
     subject: string;
     body: string;
     threadId?: string;
@@ -199,6 +217,8 @@ export const api = {
       to: string;
       cc?: string;
       bcc?: string;
+      from?: string;
+      replyTo?: string;
       subject: string;
       body: string;
       threadId?: string;
@@ -216,6 +236,7 @@ export const api = {
       method: "POST",
     }),
   signature: () => req<{ html: string }>("/api/signature"),
+  accountSettings: () => req<AccountSettings>("/api/settings/account"),
   attachmentUrl: (id: string, aid: string, filename: string) =>
     `/api/messages/${id}/attachments/${aid}?filename=${encodeURIComponent(filename)}`,
 };
