@@ -35,41 +35,23 @@
 
 ## 설치
 
-> 순서: **Bun 설치 → 클론 → OAuth 클라이언트 발급 → `.env` 작성 → 실행.** 한 번만 하면 된다.
+> 순서: **OAuth 클라이언트 발급 → Bun 설치 → 클론 → `.env` 작성 → 실행.** 한 번만 하면 된다.
+> 발급(1단계)은 로컬에 코드가 없어도 되는 외부 작업이라 **먼저 해두고**, 받은 두 값을 4단계에서 `.env`에 붙여넣는 흐름이다.
 
 시작 전에, **무엇을 발급받아 어디에 넣는지**부터. 직접 챙겨야 하는 값은 단 두 개다:
 
 | 값 | 어떻게 얻나 | 어디에 넣나 | 비고 |
 |---|---|---|---|
-| **Client ID** | Google 콘솔에서 OAuth 클라이언트 생성 (아래 3단계) | `.env` → `GOOGLE_CLIENT_ID=` | 사람마다 다름, 레포에 안 올라감 |
+| **Client ID** | Google 콘솔에서 OAuth 클라이언트 생성 (아래 1단계) | `.env` → `GOOGLE_CLIENT_ID=` | 사람마다 다름, 레포에 안 올라감 |
 | **Client Secret** | 위와 동시에 발급됨 | `.env` → `GOOGLE_CLIENT_SECRET=` | `GOCSPX-`로 시작 |
 | 리디렉션 URI | ~~발급 아님~~ — 레포가 정해둔 고정값 | 반대로 **Google 콘솔에 등록**한다 | `http://localhost:8787/auth/callback` |
 | 토큰 (refresh token) | 첫 로그인 때 자동 발급 | 자동 — `server/.data/token.json` | 직접 만질 일 없음 |
 
 레포가 이미 해둔 것: `.env.example`(채우기만 하면 되는 틀), OAuth 콜백 처리·토큰 저장/갱신(서버가 알아서), 빌드/실행 스크립트. **즉 할 일은 "콘솔에서 ID/Secret 발급 → `.env`에 붙여넣기 → 실행"이 전부다.**
 
-### 1. Bun 설치
+### 1. Google OAuth 클라이언트 발급 — 최초 1회, 약 5분
 
-| OS | 설치 명령 |
-|---|---|
-| macOS / Linux | `curl -fsSL https://bun.sh/install \| bash` |
-| Windows (PowerShell) | `powershell -c "irm bun.sh/install.ps1 \| iex"` |
-
-설치 후 **터미널을 새로 열고** 확인:
-
-```sh
-bun --version        # 1.x 가 출력되면 OK
-```
-
-### 2. 클론 & 의존성
-
-```sh
-git clone https://github.com/SeokjuCh0/mail.git
-cd mail
-bun install
-```
-
-### 3. Google OAuth 클라이언트 발급 — 최초 1회, 약 5분
+> 코드를 받기 전에 먼저. 이 단계의 결과물은 **Client ID / Secret 두 문자열**뿐이고, 4단계에서 `.env`에 붙여넣는다. 그때까지 메모장 등에 임시로 둬도 된다.
 
 이 앱은 "각자 자기가 만든 Google 앱"으로 본인 계정에 붙는 구조다. 먼저 본인 Google 계정으로 로그인해 둔다 → [accounts.google.com](https://accounts.google.com).
 아래 ①~⑤를 순서대로. 각 단계의 **🔗 링크를 클릭하면 그 화면으로 바로 이동**한다 (①에서 만든 프로젝트가 자동으로 선택된 채 열린다).
@@ -102,6 +84,27 @@ http://localhost:8787/auth/callback
 > 💡 콘솔 UI가 위 화면과 다르게 보이면 (구버전), 왼쪽 메뉴 **API 및 서비스 → OAuth 동의 화면 / 사용자 인증 정보**로 가면 같은 자리다. 막히면 → [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md)
 >
 > ⚠️ 빠뜨리면 나는 에러 3종 — **②** 안 켬 → `403 ... has not been used in project` · **③** 테스트 사용자 안 넣음 → `403 access_denied` · **④** URI 한 글자라도 다름(`http`/끝 `/`) → `redirect_uri_mismatch`
+
+### 2. Bun 설치
+
+| OS | 설치 명령 |
+|---|---|
+| macOS / Linux | `curl -fsSL https://bun.sh/install \| bash` |
+| Windows (PowerShell) | `powershell -c "irm bun.sh/install.ps1 \| iex"` |
+
+설치 후 **터미널을 새로 열고** 확인:
+
+```sh
+bun --version        # 1.x 가 출력되면 OK
+```
+
+### 3. 클론 & 의존성
+
+```sh
+git clone https://github.com/SeokjuCh0/mail.git
+cd mail
+bun install
+```
 
 ### 4. `.env` 작성
 
