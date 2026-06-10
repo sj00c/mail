@@ -150,7 +150,7 @@ export async function deleteEvent(
  * from now to now + `days`, expanded (recurring -> single instances), sorted by start.
  */
 export async function listEvents(
-  opts: { days?: number; timeMin?: string; timeMax?: string } = {},
+  opts: { days?: number; timeMin?: string; timeMax?: string; q?: string } = {},
 ): Promise<CalEvent[]> {
   const cal = await api();
   let timeMin: string;
@@ -185,6 +185,7 @@ export async function listEvents(
             calendarId: c.id!,
             timeMin,
             timeMax,
+            q: opts.q,
             singleEvents: true,
             orderBy: "startTime",
             maxResults: 250,
@@ -229,6 +230,18 @@ export async function listEvents(
     .flat()
     .sort((a, b) => startMs(a) - startMs(b) || a.start.localeCompare(b.start));
 }
+/** Text search across all calendars (통합 검색의 일정 컬럼).
+ *  Window: 6 months back .. 12 months ahead — search is about finding a
+ *  specific event, recent past included. */
+export async function searchEvents(q: string): Promise<CalEvent[]> {
+  const now = Date.now();
+  return listEvents({
+    q,
+    timeMin: new Date(now - 180 * 86_400_000).toISOString(),
+    timeMax: new Date(now + 365 * 86_400_000).toISOString(),
+  });
+}
+
 export type CalendarMeta = {
   id: string;
   summary: string;

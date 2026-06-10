@@ -32,6 +32,7 @@ import {
   getEvent,
   listCalendars,
   listEvents,
+  searchEvents,
   updateEvent,
 } from "./calendar.ts";
 
@@ -148,6 +149,12 @@ api.get("/calendar/events", async (c) => {
 });
 
 api.get("/calendar/calendars", async (c) => c.json(await listCalendars()));
+
+api.get("/calendar/search", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  if (!q) return c.json({ error: "q required" }, 400);
+  return c.json(await searchEvents(q));
+});
 
 api.get("/calendar/event", async (c) => {
   const calendarId = c.req.query("calendarId");

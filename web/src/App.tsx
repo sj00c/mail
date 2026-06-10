@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   api,
@@ -71,8 +72,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [labels, setLabels] = useState<Label[]>([]);
   const [activeLabel, setActiveLabel] = useState("INBOX");
   const [view, setView] = useState<"mail" | "calendar">("mail");
-  const [query, setQuery] = useState("");
-  const [searchInput, setSearchInput] = useState("");
+  // ?q= deep link: 검색 결과 페이지를 URL로 바로 열 수 있다.
+  const initialQuery = (() => {
+    try {
+      return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
+    } catch {
+      return "";
+    }
+  })();
+  const [query, setQuery] = useState(initialQuery);
+  const [searchInput, setSearchInput] = useState(initialQuery);
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const messagesRef = useRef<MessageSummary[]>([]);
   messagesRef.current = messages; // stable lookup for row-click routing
@@ -138,9 +147,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     };
   }, []);
 
-  // Load the calendar list the first time the calendar view opens.
+  // Load the calendar list the first time the calendar view opens — or the
+  // first search (검색 결과의 일정 카드가 수정 권한 판단에 필요).
   useEffect(() => {
-    if (view !== "calendar" || calendars.length > 0) return;
+    if ((view !== "calendar" && !query) || calendars.length > 0) return;
     let cancelled = false;
     setCalLoading(true);
     setCalErr(null);
@@ -162,7 +172,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [view, calendars.length, onLogout]);
+  }, [view, query, calendars.length, onLogout]);
 
   const toggleCal = useCallback((id: string) => {
     setHiddenCals((prev) => {
@@ -404,6 +414,46 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     .filter((l) => l.type === "user")
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  // Shared between the normal reader pane and the search slide-over.
+  const readerEl = selected ? (
+    <Reader
+      id={selected.id}
+      threadId={selected.threadId}
+      me={email}
+      guard={guard}
+      onPatched={(id, patch) => {
+        // Un-starring while viewing 별표 removes the row — patching in
+        // place would leave a non-starred mail in the list.
+        if (
+          !query &&
+          activeLabel === "STARRED" &&
+          patch.labelIds &&
+          !patch.labelIds.includes("STARRED")
+        ) {
+          removeMessage(id);
+        } else {
+          patchMessage(id, patch);
+        }
+        void refreshLabels();
+      }}
+      onRemoved={(id, scope) => {
+        // Archive only removes the row from the inbox view; 스팸 moves
+        // disappear from every normal view; 삭제 disappears everywhere
+        // EXCEPT the 휴지통 view (trash keeps it there).
+        const keep =
+          scope === "inbox"
+            ? query || activeLabel !== "INBOX"
+            : scope === "trash"
+              ? !query && activeLabel === "TRASH"
+              : false;
+        if (!keep) removeMessage(id);
+        void refreshLabels();
+      }}
+      onReply={openCompose}
+      onClose={() => setSelected(null)}
+    />
+  ) : null;
+
   return (
     <div className="app">
       <header className="topbar">
@@ -548,6 +598,18 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             hiddenCals={hiddenCals}
             calendars={calendars}
           />
+        ) : query ? (
+          <SearchResults
+            query={query}
+            messages={messages}
+            loading={loading}
+            hasMore={!!nextToken}
+            onMore={() => load(false)}
+            onSelect={onSelectMsg}
+            selectedId={selected?.id}
+            calendars={calendars}
+            onLogout={onLogout}
+          />
         ) : (
           <>
             <section className="list">
@@ -571,50 +633,15 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             </section>
 
             <section className="reader">
-              {selected ? (
-                <Reader
-                  id={selected.id}
-                  threadId={selected.threadId}
-                  me={email}
-                  guard={guard}
-                  onPatched={(id, patch) => {
-                    // Un-starring while viewing 별표 removes the row — patching
-                    // in place would leave a non-starred mail in the list.
-                    if (
-                      !query &&
-                      activeLabel === "STARRED" &&
-                      patch.labelIds &&
-                      !patch.labelIds.includes("STARRED")
-                    ) {
-                      removeMessage(id);
-                    } else {
-                      patchMessage(id, patch);
-                    }
-                    void refreshLabels();
-                  }}
-                  onRemoved={(id, scope) => {
-                    // Archive only removes the row from the inbox view; 스팸
-                    // moves disappear from every normal view; 삭제 disappears
-                    // everywhere EXCEPT the 휴지통 view (trash keeps it there).
-                    const keep =
-                      scope === "inbox"
-                        ? query || activeLabel !== "INBOX"
-                        : scope === "trash"
-                          ? !query && activeLabel === "TRASH"
-                          : false;
-                    if (!keep) removeMessage(id);
-                    void refreshLabels();
-                  }}
-                  onReply={openCompose}
-                  onClose={() => setSelected(null)}
-                />
-              ) : (
-                <div className="empty">메일을 선택하세요.</div>
-              )}
+              {readerEl ?? <div className="empty">메일을 선택하세요.</div>}
             </section>
           </>
         )}
       </div>
+
+      {view === "mail" && query && readerEl && (
+        <SlideOver onClose={() => setSelected(null)}>{readerEl}</SlideOver>
+      )}
 
       {composeOpen && (
         <Compose
@@ -830,12 +857,7 @@ const MessageRow = memo(function MessageRow({
   onSelect: (id: string, threadId: string) => void;
 }) {
   const from = parseAddr(m.from).name;
-  const date = new Date(m.date);
-  const now = new Date();
-  const label =
-    date.toDateString() === now.toDateString()
-      ? date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
-      : date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+  const label = listDateLabel(m.date);
   return (
     <button
       className={`msg-row ${active ? "active" : ""} ${m.unread ? "unread" : ""}`}
@@ -1735,6 +1757,365 @@ async function downloadAttachment(
     size: a.size,
     data: await blobToBase64(await res.blob()),
   };
+}
+
+// ---- 통합 검색 결과 (일정 카드 | 메일 카드, 양옆 배치) ----
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Bare words from the query — Gmail operators (from:, has:…) don't highlight. */
+function searchTerms(q: string): string[] {
+  return q
+    .split(/\s+/)
+    .map((t) => t.trim().replace(/^"+|"+$/g, ""))
+    .filter((t) => t.length > 0 && !t.includes(":") && t !== "OR" && t !== "AND");
+}
+
+function highlightText(text: string, terms: string[]): ReactNode {
+  if (!text || terms.length === 0) return text;
+  const re = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  const parts = text.split(re);
+  if (parts.length === 1) return text;
+  // With a single capture group, odd indices are the matches.
+  return parts.map((p, i) => (i % 2 === 1 ? <mark key={i}>{p}</mark> : p));
+}
+
+// Deterministic sender avatar color (Google 팔레트 계열, 외부 에셋 없음).
+const AVATAR_COLORS = [
+  "#7986cb",
+  "#33b679",
+  "#8e24aa",
+  "#e67c73",
+  "#f4b400",
+  "#039be5",
+  "#3f51b5",
+  "#0b8043",
+  "#616161",
+  "#d81b60",
+];
+
+function avatarColor(key: string): string {
+  let h = 0;
+  for (const ch of key) h = (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+function listDateLabel(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  return date.toDateString() === now.toDateString()
+    ? date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+}
+
+function SlideOver({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="slideover-backdrop" onClick={onClose}>
+      <div className="slideover" onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function MailCard({
+  m,
+  terms,
+  active,
+  onSelect,
+}: {
+  m: MessageSummary;
+  terms: string[];
+  active: boolean;
+  onSelect: (id: string, threadId: string) => void;
+}) {
+  const addr = parseAddr(m.from);
+  const initial = (addr.name || "?").trim().charAt(0).toUpperCase();
+  return (
+    <button
+      type="button"
+      className={`scard mail-card${m.unread ? " unread" : ""}${active ? " active" : ""}`}
+      onClick={() => onSelect(m.id, m.threadId)}
+    >
+      <span className="avatar" style={{ background: avatarColor(addr.email.toLowerCase()) }}>
+        {initial}
+      </span>
+      <span className="scard-main">
+        <span className="scard-top">
+          <span className="scard-from">{highlightText(addr.name, terms)}</span>
+          <span className="scard-date">{listDateLabel(m.date)}</span>
+        </span>
+        <span className="scard-title">
+          {highlightText(m.subject || "(제목 없음)", terms)}
+          {m.hasAttachments && <span className="paperclip"> 📎</span>}
+        </span>
+        {m.snippet && (
+          <span className="scard-sub">{highlightText(m.snippet, terms)}</span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function EventCard({
+  e,
+  terms,
+  past,
+  onClick,
+}: {
+  e: CalEvent;
+  terms: string[];
+  past?: boolean;
+  onClick: () => void;
+}) {
+  const d = e.allDay ? new Date(`${e.start.slice(0, 10)}T00:00:00`) : new Date(e.start);
+  const dow = d.toLocaleDateString("ko-KR", { weekday: "short" });
+  let when: string;
+  if (e.allDay) {
+    const lastDay = e.end ? addDays(e.end.slice(0, 10), -1) : e.start.slice(0, 10);
+    when =
+      lastDay > e.start.slice(0, 10)
+        ? `종일 · ${Number(lastDay.slice(5, 7))}월 ${Number(lastDay.slice(8, 10))}일까지`
+        : "종일";
+  } else {
+    when = `${formatTime(e.start)}${e.end ? ` – ${formatTime(e.end)}` : ""}`;
+  }
+  return (
+    <button
+      type="button"
+      className={`scard ev-card${past ? " past" : ""}`}
+      onClick={onClick}
+    >
+      <span className="ev-datebox" style={{ borderTopColor: e.color ?? "#1a73e8" }}>
+        <span className="ev-db-month">
+          {d.getFullYear() !== new Date().getFullYear()
+            ? `${String(d.getFullYear()).slice(2)}년 ${d.getMonth() + 1}월`
+            : `${d.getMonth() + 1}월`}
+        </span>
+        <span className="ev-db-day">{d.getDate()}</span>
+        <span className="ev-db-dow">{dow}</span>
+      </span>
+      <span className="scard-main">
+        <span className="scard-title">{highlightText(e.summary, terms)}</span>
+        <span className="scard-sub">
+          🕒 {when}
+          {e.location ? <> · 📍 {highlightText(e.location, terms)}</> : null}
+        </span>
+        <span className="scard-tagrow">
+          <span className="cal-dot" style={{ background: e.color ?? "#1a73e8" }} />
+          <span className="scard-tag">{e.calendarSummary}</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function SearchResults({
+  query,
+  messages,
+  loading,
+  hasMore,
+  onMore,
+  onSelect,
+  selectedId,
+  calendars,
+  onLogout,
+}: {
+  query: string;
+  messages: MessageSummary[];
+  loading: boolean;
+  hasMore: boolean;
+  onMore: () => void;
+  onSelect: (id: string, threadId: string) => void;
+  selectedId?: string;
+  calendars: Calendar[];
+  onLogout: () => void;
+}) {
+  const [events, setEvents] = useState<CalEvent[] | null>(null);
+  const [evErr, setEvErr] = useState<string | null>(null);
+  const [detailEv, setDetailEv] = useState<CalEvent | null>(null);
+  const [editor, setEditor] = useState<{
+    initial: Partial<EventInput>;
+    eventId?: string;
+  } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEvents(null);
+    setEvErr(null);
+    api
+      .calendarSearch(query)
+      .then((evs) => {
+        if (!cancelled) setEvents(evs);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof AuthError) onLogout();
+        else setEvErr((e as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, refreshKey, onLogout]);
+
+  const terms = useMemo(() => searchTerms(query), [query]);
+
+  // 다가오는 일정 먼저(오름차순), 지난 일정은 구분선 아래 최근순.
+  const { upcoming, past } = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isPast = (e: CalEvent) => {
+      const ref = e.end || e.start;
+      const t = e.allDay
+        ? new Date(`${ref.slice(0, 10)}T00:00:00`).getTime()
+        : new Date(ref).getTime();
+      return e.end ? t <= today.getTime() : t < today.getTime();
+    };
+    const evs = events ?? [];
+    return {
+      upcoming: evs.filter((e) => !isPast(e)),
+      past: evs.filter(isPast).reverse(),
+    };
+  }, [events]);
+
+  const writable = calendars.filter(
+    (c) => c.accessRole === "owner" || c.accessRole === "writer",
+  );
+
+  return (
+    <div className="search-page">
+      <div className="search-head">
+        <h2>“{query}”</h2>
+        <span className="muted">
+          일정 {events ? `${events.length}건` : "…"} · 메일 {messages.length}
+          {hasMore ? "+" : ""}건
+        </span>
+      </div>
+      <div className="search-cols">
+        <section className="search-col">
+          <div className="search-col-head">📅 일정</div>
+          {evErr ? (
+            <div className="scard-empty">⚠️ {evErr}</div>
+          ) : !events ? (
+            <>
+              <div className="skel" />
+              <div className="skel" />
+            </>
+          ) : events.length === 0 ? (
+            <div className="scard-empty">일치하는 일정이 없습니다.</div>
+          ) : (
+            <>
+              {upcoming.map((e) => (
+                <EventCard
+                  key={`${e.calendarId}|${e.id}|${e.start}`}
+                  e={e}
+                  terms={terms}
+                  onClick={() => setDetailEv(e)}
+                />
+              ))}
+              {past.length > 0 && (
+                <div className="search-divider">지난 일정</div>
+              )}
+              {past.map((e) => (
+                <EventCard
+                  key={`${e.calendarId}|${e.id}|${e.start}`}
+                  e={e}
+                  terms={terms}
+                  past
+                  onClick={() => setDetailEv(e)}
+                />
+              ))}
+            </>
+          )}
+        </section>
+        <section className="search-col">
+          <div className="search-col-head">✉️ 메일</div>
+          {messages.length === 0 && !loading ? (
+            <div className="scard-empty">일치하는 메일이 없습니다.</div>
+          ) : (
+            messages.map((m) => (
+              <MailCard
+                key={m.id}
+                m={m}
+                terms={terms}
+                active={selectedId === m.id}
+                onSelect={onSelect}
+              />
+            ))
+          )}
+          {loading && (
+            <>
+              <div className="skel" />
+              <div className="skel" />
+            </>
+          )}
+          {hasMore && !loading && (
+            <button className="btn more" onClick={onMore}>
+              더 보기
+            </button>
+          )}
+        </section>
+      </div>
+      {detailEv && (
+        <EventDetailModal
+          ev={detailEv}
+          onLogout={onLogout}
+          canEdit={writable.some((c) => c.id === detailEv.calendarId)}
+          onEdit={(d) => {
+            setEditor({
+              initial: {
+                calendarId: d.calendarId,
+                summary: d.summary,
+                start: d.start,
+                end: d.end,
+                allDay: d.allDay,
+                location: d.location,
+                description: d.description,
+              },
+              eventId: d.id,
+            });
+            setDetailEv(null);
+          }}
+          onChanged={() => {
+            setDetailEv(null);
+            calCache.clear(); // calendar view caches must see the change too
+            setRefreshKey((k) => k + 1);
+          }}
+          onClose={() => setDetailEv(null)}
+        />
+      )}
+      {editor && (
+        <EventEditModal
+          calendars={writable}
+          initial={editor.initial}
+          eventId={editor.eventId}
+          onLogout={onLogout}
+          onClose={() => setEditor(null)}
+          onSaved={() => {
+            setEditor(null);
+            calCache.clear();
+            setRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+    </div>
+  );
 }
 
 function CalendarView({

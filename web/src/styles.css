@@ -392,6 +392,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Above the search slide-over (z 100/101) — event detail/editor modals
+     opened from search cards must not render underneath it. */
+  z-index: 200;
 }
 .modal {
   background: var(--panel);
@@ -801,6 +804,286 @@ textarea.ev-input {
 }
 .thread-msg .html-frame {
   min-height: 80px;
+}
+
+/* ---- 통합 검색 결과 (일정 | 메일 카드 2열) ---- */
+.search-page {
+  grid-column: 2 / 4;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding: 18px 26px 0;
+}
+.search-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+  width: 100%;
+  max-width: 1280px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.search-head h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.2px;
+}
+.search-cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+  gap: 22px;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.search-col {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 4px 18px 2px;
+}
+.search-col-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 2px 2px 8px;
+  letter-spacing: 0.2px;
+}
+.search-divider {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 10px 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* premium cards: 은은한 그림자 + 호버 리프트, 현재 팔레트 그대로 */
+.scard {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 13px 15px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.05);
+  transition:
+    box-shadow 0.16s ease,
+    transform 0.16s ease,
+    border-color 0.16s ease;
+}
+.scard:hover {
+  box-shadow: 0 6px 20px rgba(60, 64, 67, 0.14);
+  transform: translateY(-1px);
+  border-color: #d2d9e4;
+}
+.scard.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(26, 115, 232, 0.16);
+}
+.scard-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.scard-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.scard-from {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scard-date {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+.scard-title {
+  font-size: 14px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail-card.unread .scard-title,
+.mail-card.unread .scard-from {
+  font-weight: 700;
+}
+.mail-card.unread {
+  border-left: 3px solid var(--accent);
+}
+.scard-sub {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.scard-tagrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+.scard-tag {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 2px 8px;
+  border-radius: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scard-empty {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 26px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+}
+mark {
+  background: #fef3c0;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* 발신자 아바타 (이니셜) */
+.avatar {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+/* 일정 카드 날짜 박스 */
+.ev-datebox {
+  flex: none;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 5px 4px 6px;
+  line-height: 1.25;
+}
+.ev-db-month {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ev-db-day {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+.ev-db-dow {
+  font-size: 10px;
+  color: var(--muted);
+}
+.ev-card.past {
+  opacity: 0.62;
+}
+.ev-card.past:hover {
+  opacity: 1;
+}
+
+/* 로딩 스켈레톤 */
+.skel {
+  flex: none;
+  height: 86px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, #eceff4 25%, #f6f8fb 40%, #eceff4 60%);
+  background-size: 300% 100%;
+  animation: shimmer 1.1s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/* 메일 카드 클릭 → 오른쪽 슬라이드오버 리더 */
+.slideover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(32, 33, 36, 0.32);
+  z-index: 100;
+}
+.slideover {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(820px, 92vw);
+  background: var(--panel);
+  box-shadow: -10px 0 44px rgba(0, 0, 0, 0.24);
+  overflow-y: auto;
+  z-index: 101;
+  animation: slidein 0.18s ease;
+}
+@keyframes slidein {
+  from {
+    transform: translateX(48px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 
 /* settings modal (서명) */

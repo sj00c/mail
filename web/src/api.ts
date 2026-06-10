@@ -116,6 +116,8 @@ export const api = {
     return req<CalEvent[]>(`/api/calendar/events?${u.toString()}`);
   },
   calendars: () => req<Calendar[]>("/api/calendar/calendars"),
+  calendarSearch: (q: string) =>
+    req<CalEvent[]>(`/api/calendar/search?q=${encodeURIComponent(q)}`),
   calendarEvent: (calendarId: string, eventId: string) =>
     req<CalEventDetail>(
       `/api/calendar/event?calendarId=${encodeURIComponent(calendarId)}&eventId=${encodeURIComponent(eventId)}`,
