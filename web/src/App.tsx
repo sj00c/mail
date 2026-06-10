@@ -826,6 +826,15 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+const LABEL_ICONS: Record<string, string> = {
+  INBOX: "📥",
+  STARRED: "⭐",
+  SENT: "📤",
+  DRAFT: "📝",
+  SPAM: "🚫",
+  TRASH: "🗑",
+};
+
 function LabelRow({
   label,
   active,
@@ -841,7 +850,10 @@ function LabelRow({
     ] ?? label.name;
   return (
     <button className={`label-row ${active ? "active" : ""}`} onClick={onClick}>
-      <span>{name}</span>
+      <span className="label-name">
+        <span className="label-ic">{LABEL_ICONS[label.id] ?? "🏷️"}</span>
+        {name}
+      </span>
       {label.unread > 0 && <span className="badge">{label.unread}</span>}
     </button>
   );
@@ -890,22 +902,30 @@ const MessageRow = memo(function MessageRow({
   active: boolean;
   onSelect: (id: string, threadId: string) => void;
 }) {
-  const from = parseAddr(m.from).name;
+  const addr = parseAddr(m.from);
   const label = listDateLabel(m.date);
   return (
     <button
       className={`msg-row ${active ? "active" : ""} ${m.unread ? "unread" : ""}`}
       onClick={() => onSelect(m.id, m.threadId)}
     >
-      <div className="msg-top">
-        <span className="msg-from">{from}</span>
-        <span className="msg-date">{label}</span>
-      </div>
-      <div className="msg-subject">
-        {m.subject || "(제목 없음)"}
-        {m.hasAttachments && <span className="paperclip"> 📎</span>}
-      </div>
-      <div className="msg-snippet">{m.snippet}</div>
+      <span
+        className="avatar sm"
+        style={{ background: avatarColor(addr.email.toLowerCase()) }}
+      >
+        {(addr.name || "?").trim().charAt(0).toUpperCase()}
+      </span>
+      <span className="msg-main">
+        <span className="msg-top">
+          <span className="msg-from">{addr.name}</span>
+          <span className="msg-date">{label}</span>
+        </span>
+        <span className="msg-subject">
+          {m.subject || "(제목 없음)"}
+          {m.hasAttachments && <span className="paperclip"> 📎</span>}
+        </span>
+        <span className="msg-snippet">{m.snippet}</span>
+      </span>
     </button>
   );
 });
@@ -2497,6 +2517,10 @@ function MonthGrid({
                     className="month-ev"
                     onClick={() => onEvent(e)}
                     title={`${evTimeLabel(e, key)} ${e.summary}`}
+                    // 캘린더 색의 파스텔 칩 — 점 하나보다 캘린더 정체성이 잘 읽힌다
+                    style={{
+                      background: `color-mix(in srgb, ${e.color ?? "#1a73e8"} 14%, white)`,
+                    }}
                   >
                     <span
                       className="month-ev-dot"

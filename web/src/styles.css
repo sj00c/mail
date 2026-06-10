@@ -33,7 +33,13 @@ body,
 body {
   font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
   color: var(--text);
-  background: linear-gradient(180deg, #f4f6fa 0%, #ebeef5 100%) fixed;
+  /* 캔버스: 좌상단의 옅은 블루 글로우 + 쿨그레이 그라데이션 — 패널이
+     "떠 보이는" 바탕. 채도는 낮게 유지(과한 보라/네온 금지). */
+  background:
+    radial-gradient(1100px 700px at 6% -8%, rgba(120, 158, 255, 0.16) 0%, rgba(120, 158, 255, 0) 55%),
+    radial-gradient(900px 600px at 104% 112%, rgba(94, 197, 255, 0.1) 0%, rgba(94, 197, 255, 0) 50%),
+    linear-gradient(180deg, #f2f4f9 0%, #e8ecf4 100%);
+  background-attachment: fixed;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -233,17 +239,20 @@ body {
   font-size: 12.5px;
 }
 
+/* 플로팅 패널: 칼럼들이 1px 선으로 붙어 있는 대신 캔버스 위에 라운드
+   카드로 떠 있다. 그리드 구조(3칼럼)는 그대로. */
 .body {
   flex: 1;
   display: grid;
   grid-template-columns: 200px 360px 1fr;
   min-height: 0;
+  gap: 14px;
+  padding: 14px 16px 16px;
 }
 
 .sidebar {
-  border-right: 1px solid var(--border);
   background: transparent;
-  padding: 12px 10px;
+  padding: 4px 2px;
   overflow-y: auto;
 }
 .nav-section {
@@ -335,6 +344,21 @@ body {
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(33, 96, 216, 0.14);
 }
+.label-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.label-ic {
+  font-size: 13px;
+  width: 17px;
+  flex: none;
+  text-align: center;
+  filter: saturate(0.9);
+}
 .badge {
   background: var(--accent);
   color: #fff;
@@ -357,52 +381,78 @@ body {
 }
 
 .list {
-  border-right: 1px solid var(--border);
   background: var(--panel);
   overflow-y: auto;
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
 }
 .msg-row {
   width: 100%;
   text-align: left;
   border: none;
-  border-bottom: 1px solid #eef1f5;
-  border-left: 3px solid transparent;
+  border-bottom: 1px solid #f0f2f6;
   background: transparent;
-  padding: 11px 14px 11px 12px;
+  padding: 12px 14px;
   cursor: pointer;
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
   transition: background 0.13s ease;
+  font-family: inherit;
+  color: var(--text);
 }
 .msg-row:hover {
   background: #f6f8fb;
 }
 .msg-row.active {
   background: var(--accent-bg);
+  box-shadow: inset 2.5px 0 0 var(--accent);
 }
-.msg-row.unread {
-  border-left-color: var(--accent);
+.msg-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .msg-row.unread .msg-from,
 .msg-row.unread .msg-subject {
   font-weight: 700;
 }
+/* 안읽음: 거친 좌측 보더 대신 제목 앞 파란 도트 */
+.msg-row.unread .msg-subject::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+  vertical-align: 1.5px;
+  box-shadow: 0 0 0 3px rgba(33, 96, 216, 0.12);
+}
 .msg-top {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 2px;
+  align-items: baseline;
+  gap: 8px;
 }
 .msg-from {
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .msg-date {
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
+  flex: none;
   font-variant-numeric: tabular-nums;
 }
 .msg-subject {
   font-size: 13px;
-  margin-bottom: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -418,22 +468,28 @@ body {
   margin: 12px;
 }
 .empty {
-  padding: 24px;
+  padding: 56px 24px;
   color: var(--muted);
   text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.1px;
 }
 
 .reader {
   overflow-y: auto;
   background: var(--panel);
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
 }
 .reader-inner {
-  padding: 22px 30px;
+  padding: 24px 32px;
 }
 .reader-head h2 {
-  margin: 0 0 12px;
-  font-size: 20px;
-  letter-spacing: -0.3px;
+  margin: 0 0 14px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
   line-height: 1.35;
 }
 .reader-meta {
@@ -444,13 +500,34 @@ body {
   color: var(--muted);
   font-size: 12px;
 }
+/* 액션 바: 버튼 무더기 대신 고스트 툴바 */
 .reader-actions {
   display: flex;
-  gap: 8px;
+  gap: 2px;
   flex-wrap: wrap;
-  padding: 12px 0;
+  padding: 8px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+.reader-actions .btn {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 7px 11px;
+  border-radius: var(--radius-s);
+  color: #3c4453;
+}
+.reader-actions .btn:hover {
+  background: rgba(16, 24, 40, 0.06);
+  transform: none;
+  box-shadow: none;
+  color: var(--text);
+}
+.reader-actions .btn.danger {
+  color: var(--danger);
+}
+.reader-actions .btn.danger:hover {
+  background: #fdecea;
 }
 .attachments {
   display: flex;
@@ -552,33 +629,54 @@ body {
   font-size: 15px;
   letter-spacing: -0.2px;
 }
+/* 작성창 필드: 박스 대신 헤어라인 언더라인 — Gmail식의 정돈된 결 */
 .modal input,
-.modal textarea,
 .modal select.from-select {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 2px;
   font-size: 14px;
   font-family: inherit;
   outline: none;
-  background: var(--panel);
+  background: transparent;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .modal input:focus,
-.modal textarea:focus,
 .modal select.from-select:focus {
-  border-color: var(--accent);
-  box-shadow: var(--ring);
+  border-bottom-color: var(--accent);
+  box-shadow: 0 1px 0 0 var(--accent);
+}
+.modal input::placeholder,
+.modal textarea::placeholder {
+  color: #9aa3b2;
 }
 .modal select.from-select {
   color: var(--muted);
   cursor: pointer;
 }
 .modal textarea {
+  border: none;
+  border-radius: 0;
+  padding: 12px 2px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  background: transparent;
   resize: none;
   flex: 1;
   min-height: 0;
-  line-height: 1.6;
+  line-height: 1.65;
+}
+/* 서명 입력 등 보조 textarea는 박스 유지 */
+.modal textarea.signature-input {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+.modal textarea.signature-input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
 }
 .modal-foot {
   display: flex;
@@ -786,6 +884,7 @@ body {
   font-weight: 700;
   box-shadow: 0 2px 6px rgba(33, 96, 216, 0.35);
 }
+/* 일정 칩: 캘린더색 파스텔 배경(인라인 color-mix) 위에 도트+제목 */
 .month-ev {
   display: flex;
   align-items: center;
@@ -793,15 +892,15 @@ body {
   text-decoration: none;
   color: var(--text);
   font-size: 11px;
-  line-height: 1.5;
-  border-radius: 5px;
-  padding: 0 3px;
+  line-height: 1.7;
+  border-radius: 6px;
+  padding: 0 5px;
   white-space: nowrap;
   overflow: hidden;
-  transition: background 0.13s ease;
+  transition: filter 0.13s ease, transform 0.13s ease;
 }
 .month-ev:hover {
-  background: #f3f6fa;
+  filter: brightness(0.96) saturate(1.15);
 }
 .month-ev-dot {
   width: 7px;
@@ -1170,7 +1269,14 @@ mark {
   align-items: center;
   justify-content: center;
   user-select: none;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.05));
   box-shadow: inset 0 -1px 2px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(16, 24, 40, 0.12);
+}
+.avatar.sm {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  margin-top: 1px;
 }
 
 /* 일정 카드 날짜 박스 */
