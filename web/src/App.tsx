@@ -639,11 +639,27 @@ function HtmlBody({ html, id }: { html: string; id: string }) {
   const onLoad = useCallback(() => {
     resize();
     const doc = ref.current?.contentDocument;
-    doc?.querySelectorAll("img").forEach((img) => {
+    if (!doc) return;
+    doc.querySelectorAll("img").forEach((img) => {
       if (!img.complete) img.addEventListener("load", resize, { once: true });
     });
     setTimeout(resize, 400);
     setTimeout(resize, 1200);
+    // Intercept link clicks in the parent context so they always open a new
+    // tab (bypasses sandbox popup quirks / popup blockers).
+    doc.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement | null;
+      const a = target?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a) return;
+      const href = a.getAttribute("href") || "";
+      if (/^https?:/i.test(href)) {
+        e.preventDefault();
+        window.open(href, "_blank", "noopener,noreferrer");
+      } else if (/^mailto:/i.test(href)) {
+        e.preventDefault();
+        window.location.href = href;
+      }
+    });
   }, [resize]);
 
   return (
