@@ -1,157 +1,141 @@
-# 📬 Mail
+# Mail
 
-> 사내 보안망이 Gmail 웹(`mail.google.com`)은 막아도 **Gmail API / OAuth / SMTP는 통과**하는 환경에서,
-> 내 머신에 직접 띄워 쓰는 **개인용 Gmail + Google 캘린더 클라이언트**.
+**내 머신에서 `localhost`로 띄워 쓰는 개인용 Gmail + Google 캘린더 클라이언트.**
+사내 보안망이 Gmail 웹(`mail.google.com`)은 막아도 Gmail API / OAuth는 통과하는 환경을 위해 만들었다.
 
-<table>
-<tr><td><b>백엔드</b></td><td>Bun · Hono · Gmail / Calendar REST API</td></tr>
-<tr><td><b>프론트</b></td><td>React · Vite</td></tr>
-<tr><td><b>인증</b></td><td>OAuth2 — refresh token은 <b>이 머신에만</b> 로컬 저장</td></tr>
-</table>
+| | |
+|---|---|
+| **백엔드** | Bun · Hono · Gmail / Calendar REST API |
+| **프론트** | React · Vite |
+| **인증** | OAuth2 — refresh token은 **이 머신에만** 저장 (`server/.data/token.json`) |
+| **외부 연결** | Google API 단 하나. 그 외 어떤 서버와도 통신하지 않는다 |
 
-**메일** — 받은편지함·라벨 조회, Gmail 문법 검색, 스레드(대화) 보기, 본문/첨부 보기, 읽음·별표·스팸·보관·삭제, 작성·답장·전체답장·전달·발송(다중 수신자·첨부·서명), 임시저장·드래프트 이어쓰기, 새 메일 데스크톱 알림
-**캘린더** — 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 일정 상세, 일정 생성·수정·삭제, 60초 자동 갱신
+#### 기능
+
+- **메일** — 받은편지함·라벨, 스레드 보기, HTML 본문(스크립트 차단 샌드박스)·인라인 이미지·첨부, 읽음·별표·스팸·보관·삭제, 작성·답장·전체답장·전달, 다중 수신자·참조·숨은참조·첨부(25MB)·서명, 임시저장·드래프트 이어쓰기, 새 메일 데스크톱 알림
+- **캘린더** — 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 일정 생성·수정·삭제, 종일·멀티데이 일정, 60초 자동 갱신
+- **통합 검색** — 검색하면 **일정 카드 + 메일 카드**가 나란히 뜨고(검색어 하이라이트), `?q=검색어` URL로 바로 열 수도 있다
+- **설정 자동 동기화** — 로그인하면 Gmail 서명을 자동으로 가져오고, 보내는 주소 별칭·기본 답장주소·휴가 자동응답 상태가 함께 딸려온다
 
 ---
 
-## 🚀 빠른 시작
+## 설치
 
-> **클론했다면 [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 를 그대로 따라가면 끝.** (각자 자기 Google 계정으로 5분)
->
-> Client ID/Secret·토큰은 **사람마다 다르고 레포에 올라가지 않는다.** 클론해도 본인 것을 새로 만들어야 한다.
-> 아래는 그 가이드의 요약이다.
+> 전 과정은 **클론 → OAuth 클라이언트 발급 → 실행** 3단계다.
+> Client ID / Secret / 토큰은 사람마다 다르고 레포에 올라가지 않는다 — 클론한 사람 각자 본인 것을 만든다.
+
+### 요구사항
+
+- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
+- Google 계정 (Google Cloud 콘솔 접근, 무료)
+
+### 1. 클론 & 의존성
 
 ```sh
 git clone <repo-url> && cd mail
 bun install
-cp .env.example .env      # 아래 1·2단계로 발급한 값 채우기
-bun run dev               # → http://localhost:5173
 ```
 
-> 필요: [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
+### 2. Google OAuth 클라이언트 발급 — 최초 1회, 약 5분
 
----
+**[`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 를 그대로 따라가면 된다.** 요약:
 
-## 1. Google Cloud 설정 (최초 1회)
-
-콘솔(`console.cloud.google.com`)과 로그인(`accounts.google.com`)은 보통 보안망에서도 열린다.
-콘솔까지 막혔다면 망 밖 기기에서 클라이언트만 만들어 **Client ID / Secret 두 값만** 가져오면 된다.
-
-#### ① 프로젝트 생성
-상단 프로젝트 선택 → **새 프로젝트**(New Project) → 이름 입력 후 만들기.
-
-#### ② API 사용 설정
-**API 및 서비스**(APIs & Services) → **라이브러리**(Library) 에서 각각 검색 후 **사용**(Enable):
-| API | 용도 |
-|---|---|
-| **Gmail API** | 메일 |
-| **Google Calendar API** | 캘린더 *(⚠️ "CalDAV API" 아님)* |
-
-> 안 켜면 `403 ... has not been used in project` 가 뜬다.
-
-#### ③ OAuth 동의 화면
-**API 및 서비스 → OAuth 동의 화면**(OAuth consent screen)
-- 사용자 유형(User Type): **외부**(External) → 만들기
-- 앱 이름 / 지원 이메일 등 필수값만 입력
-- **테스트 사용자**(Test users) 에 **본인 Gmail 주소 추가** ← *빠뜨리면 로그인이 거부된다(`403 access_denied`)*
-- 앱은 **"테스트"(Testing) 상태**로 둔다 *(개인용이라 게시·검수 불필요)*
-
-#### ④ OAuth 클라이언트 ID 생성
-**API 및 서비스 → 사용자 인증 정보**(Credentials) → **사용자 인증 정보 만들기 → OAuth 클라이언트 ID**
-- 애플리케이션 유형(Application type): **웹 애플리케이션**(Web application) ← *반드시*
-- **승인된 리디렉션 URI**(Authorized redirect URIs) 에 정확히 추가:
-  ```
-  http://localhost:8787/auth/callback
-  ```
-  *`http` (https 아님) · 끝에 `/` 없이 · "승인된 자바스크립트 원본"이 아니라 "리디렉션 URI" 칸*
-- 만들기 → **Client ID** 와 **Client secret** 복사
-
----
-
-## 2. 환경 변수
+1. [console.cloud.google.com](https://console.cloud.google.com) → 새 프로젝트
+2. **Gmail API** + **Google Calendar API** 사용 설정
+3. OAuth 동의 화면: 유형 **외부**, **테스트 사용자에 본인 Gmail 추가** *(빠뜨리면 403)*, 앱은 "테스트" 상태 유지
+4. OAuth 클라이언트 ID 생성: 유형 **웹 애플리케이션**, 승인된 리디렉션 URI에 정확히
+   ```
+   http://localhost:8787/auth/callback
+   ```
+5. 발급된 **Client ID / Client Secret** 복사
 
 ```sh
-cp .env.example .env
+cp .env.example .env    # 복사한 두 값 채우기 (따옴표 없이)
 ```
 
-```dotenv
-GOOGLE_CLIENT_ID=복사한-client-id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=복사한-client-secret
-OAUTH_REDIRECT=http://localhost:8787/auth/callback
-PORT=8787
+### 3. 실행
+
+```sh
+bun run dev             # → http://localhost:5173 열기
 ```
 
-> - 값에 **따옴표를 붙이지 않는다** (정상 시크릿은 `GOCSPX-` 로 시작, 35자).
-> - `OAUTH_REDIRECT` 포트 · `PORT` · 콘솔 리디렉션 URI 포트 **세 군데가 정확히 일치**해야 한다 *(불일치 시 `redirect_uri_mismatch`)*.
+첫 화면에서 **"Gmail 연결하기"** → 본인 계정 선택 → 권한 허용.
+*"앱이 확인되지 않았습니다"* 경고가 뜨면 **고급 → 이동** (본인이 만든 앱이라 정상이다).
+받은편지함이 뜨면 끝 — 이후 재시작해도 로그인은 유지된다.
 
 ---
 
-## 3. 실행
+## 실행 모드
 
-**개발 모드** — Vite(5173) + API(8787), 핫리로드
-```sh
-bun run dev
-```
-→ http://localhost:5173
+| 모드 | 명령 | 주소 | 설명 |
+|---|---|---|---|
+| 개발 | `bun run dev` | `localhost:5173` | Vite 핫리로드 + API 서버(8787) 동시 기동 |
+| 프로덕션 | `bun run build && bun run start` | `localhost:8787` | 단일 서버가 빌드된 SPA까지 서빙 (gzip, 장기 캐시) |
 
-**프로덕션 모드** — 단일 서버가 SPA까지 서빙(+ gzip 압축, 정적 자산 장기 캐시)
-```sh
-bun run build && bun run start
-```
-→ http://localhost:8787
+평소에 쓸 때는 **프로덕션 모드**를 권장한다 — 프로세스 하나, 포트 하나.
 
-### 🐳 Docker
+## 환경 변수 (`.env`)
 
-```sh
-docker build -t mail .
-docker run --rm -p 8787:8787 \
-  --env-file .env \
-  -v "$PWD/server/.data:/app/server/.data" \
-  mail
-```
-> `--env-file` 로 자격증명 주입, `-v ...server/.data` 볼륨으로 토큰을 재시작 후에도 유지.
-> CI(`.github/workflows/ci.yml`)는 push/PR마다 `typecheck` + `build` 를 검증한다.
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` | *(필수)* | OAuth 클라이언트 ID |
+| `GOOGLE_CLIENT_SECRET` | *(필수)* | OAuth 클라이언트 시크릿 (`GOCSPX-`로 시작) |
+| `OAUTH_REDIRECT` | `http://localhost:8787/auth/callback` | 콘솔에 등록한 리디렉션 URI와 **정확히 일치**해야 함 |
+| `PORT` | `8787` | API 서버 포트 |
+| `HOST` | `127.0.0.1` | 바인드 주소. **이 앱은 요청 인증이 없다 — LAN에 노출하지 말 것** |
+
+> 포트를 바꾸면 `PORT` · `OAUTH_REDIRECT` · 콘솔의 리디렉션 URI **세 군데**를 함께 바꿔야 한다 (불일치 시 `redirect_uri_mismatch`).
 
 ---
 
-## 4. 첫 로그인
+## 검색
 
-1. **"Gmail 연결하기"** 클릭
-2. 본인 Google 계정 선택 → 권한 허용
-   - *"앱이 확인되지 않았습니다"* 경고 → **고급 → (안전하지 않음) 이동** *(본인이 만든 앱이라 정상)*
-3. 받은편지함이 뜨면 성공. 토큰은 `server/.data/token.json` 에 **이 머신에만** 저장된다.
-
-> 문제가 생기면 → [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 의 트러블슈팅 표.
-
----
-
-## 🔍 검색 문법
-
-상단 검색창은 Gmail 문법을 그대로 쓴다.
+상단 검색창은 Gmail 문법을 그대로 지원하고, 결과 페이지에 일정과 메일이 카드로 나란히 표시된다.
 
 ```
 from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d   label:work
 ```
 
-## 🔐 권한 범위
+## 데이터 & 보안
 
-| Scope | 설명 |
+- **토큰** — `server/.data/token.json`에만 저장된다 (gitignore됨). 로그아웃하면 파일이 비워진다.
+- **바인딩** — 서버는 기본적으로 `127.0.0.1`에만 묶인다. 같은 네트워크의 다른 기기에서는 접근할 수 없다.
+- **메일 HTML** — 스크립트가 차단된 샌드박스 iframe에서 렌더링되고, `javascript:` 링크·meta refresh 등은 제거된다.
+- **권한 범위(scope)**
+
+  | Scope | 허용 범위 |
+  |---|---|
+  | `gmail.modify` | 읽기 · 발송 · 라벨 · 읽음표시 · 보관 · 휴지통. **영구 삭제는 불가** (안전장치) |
+  | `calendar` | 캘린더 / 일정 조회 · 생성 · 수정 · 삭제 |
+
+- **서명·계정 설정** — 브라우저 localStorage에 저장되며, 다른 계정으로 로그인하면 이전 계정의 서명은 자동으로 지워진다.
+
+## 트러블슈팅
+
+| 증상 | 원인 / 해결 |
 |---|---|
-| `gmail.modify` | 읽기 / 발송 / 라벨 / 읽음표시 / 보관 / 휴지통. **영구 삭제 불가**(안전장치) |
-| `calendar` | 캘린더 / 일정 **조회·생성·수정·삭제** |
+| `403 access_denied` | OAuth 동의 화면의 **테스트 사용자**에 본인 Gmail이 없음 |
+| `redirect_uri_mismatch` | `PORT` / `OAUTH_REDIRECT` / 콘솔 리디렉션 URI 불일치 |
+| `403 ... has not been used in project` | Gmail API 또는 Calendar API 사용 설정 안 함 |
+| 로그인 화면으로 자꾸 돌아감 | 토큰 만료·회수 — 다시 "Gmail 연결하기" |
+| 캘린더 쓰기가 안 됨 | 구버전(읽기 전용 scope) 토큰 — 로그아웃 후 재로그인 |
 
-> 휴지통 메일은 Gmail 정책상 30일 후 자동 삭제. scope가 바뀌기 전(캘린더 읽기 전용 시절) 토큰이면 로그아웃 후 재로그인해야 캘린더 쓰기가 동작한다.
+더 자세한 표는 [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 하단 참고.
 
-## 🗂 구조
+## 프로젝트 구조
 
 ```
 server/
-  auth.ts      OAuth2 + 토큰 저장/갱신
-  gmail.ts     Gmail API 래퍼 (list/threads/send/draft/modify/trash/labels/attachments)
-  calendar.ts  Calendar API 래퍼 (events CRUD/calendars)
-  index.ts     Hono 라우트 (/auth/*, /api/*) + 정적 서빙(프로덕션)
+  index.ts     Hono 라우트 (/auth/*, /api/*) + 프로덕션 정적 서빙
+  auth.ts      OAuth2 + 토큰 저장/갱신 (state 검증, 원자적 쓰기)
+  gmail.ts     Gmail API 래퍼 (목록/스레드/발송/드래프트/라벨/첨부/설정)
+  calendar.ts  Calendar API 래퍼 (일정 CRUD/검색/캘린더 목록)
 web/src/
+  App.tsx      전체 UI (사이드바 / 메일 / 캘린더 / 통합 검색 / 작성)
   api.ts       프론트 API 클라이언트 + 타입
-  App.tsx      전체 UI (사이드바 / 메일 / 캘린더 / 작성)
-  styles.css
+  styles.css   디자인 토큰 + 전체 스타일
+docs/
+  OAUTH_SETUP.md   클론한 사람용 처음부터 따라하는 셋업 가이드
 ```
+
+> CI(`.github/workflows/ci.yml`)가 push/PR마다 `typecheck` + `build`를 검증한다.
