@@ -129,6 +129,23 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           localStorage.removeItem(SIGNATURE_HTML_KEY);
         }
         localStorage.setItem(ACCOUNT_KEY, p.email);
+        // OAuth만으로 설정이 딸려오지는 않으므로 서명은 여기서 끌어온다:
+        // 계정당 1회, 로컬 서명이 비어 있을 때만 — 사용자가 설정에서 직접
+        // 쓰거나 지운 서명을 자동 동기화가 덮어쓰면 안 된다.
+        if (localStorage.getItem(SIGNATURE_SYNC_KEY) !== p.email) {
+          if (!localStorage.getItem(SIGNATURE_KEY)) {
+            try {
+              const { html } = await api.signature();
+              if (html) {
+                localStorage.setItem(SIGNATURE_HTML_KEY, html);
+                localStorage.setItem(SIGNATURE_KEY, htmlToText(html));
+              }
+            } catch {
+              // non-fatal: 설정의 수동 가져오기 버튼이 그대로 남아 있다
+            }
+          }
+          localStorage.setItem(SIGNATURE_SYNC_KEY, p.email);
+        }
       } catch {
         // private mode etc.
       }
@@ -678,6 +695,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 const SIGNATURE_KEY = "mail.signature";
 const SIGNATURE_HTML_KEY = "mail.signature.html";
 const ACCOUNT_KEY = "mail.account"; // last logged-in account (settings scope)
+const SIGNATURE_SYNC_KEY = "mail.signature.synced"; // auto-import done for this account
 
 function getSignature(): string {
   try {
