@@ -160,6 +160,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  draftByMessage: (messageId: string) =>
+    req<{ draftId: string }>(`/api/drafts/by-message/${messageId}`),
+  updateDraft: (
+    draftId: string,
+    body: {
+      to: string;
+      cc?: string;
+      bcc?: string;
+      subject: string;
+      body: string;
+      threadId?: string;
+      attachments?: { filename: string; mimeType: string; data: string }[];
+    },
+  ) =>
+    req<{ id: string }>(`/api/drafts/${encodeURIComponent(draftId)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteDraft: (draftId: string) =>
+    req<{ ok: boolean }>(`/api/drafts/${encodeURIComponent(draftId)}/delete`, {
+      method: "POST",
+    }),
   attachmentUrl: (id: string, aid: string, filename: string) =>
     `/api/messages/${id}/attachments/${aid}?filename=${encodeURIComponent(filename)}`,
 };

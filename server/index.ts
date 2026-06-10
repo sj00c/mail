@@ -11,7 +11,10 @@ import {
 } from "./auth.ts";
 import {
   createDraft,
+  deleteDraft,
+  findDraftByMessageId,
   getAttachment,
+  updateDraft,
   getThread,
   getProfile,
   listLabels,
@@ -176,6 +179,22 @@ api.post("/send", async (c) => {
 api.post("/draft", async (c) => {
   const body = await c.req.json();
   return c.json(await createDraft(body));
+});
+
+api.get("/drafts/by-message/:id", async (c) => {
+  const found = await findDraftByMessageId(c.req.param("id"));
+  if (!found) return c.json({ error: "DRAFT_NOT_FOUND" }, 404);
+  return c.json(found);
+});
+
+api.put("/drafts/:id", async (c) => {
+  const body = await c.req.json();
+  return c.json(await updateDraft(c.req.param("id"), body));
+});
+
+api.post("/drafts/:id/delete", async (c) => {
+  await deleteDraft(c.req.param("id"));
+  return c.json({ ok: true });
 });
 
 // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).

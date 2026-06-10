@@ -56,6 +56,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [query, setQuery] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [messages, setMessages] = useState<MessageSummary[]>([]);
+  const messagesRef = useRef<MessageSummary[]>([]);
+  messagesRef.current = messages; // stable lookup for row-click routing
   const [nextToken, setNextToken] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
@@ -121,9 +123,53 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       return next;
     });
   }, []);
+  // Draft rows open the editor (이어쓰기), everything else opens the reader.
+  const openDraft = useCallback(
+    (id: string, threadId: string) =>
+      guard(async () => {
+        const msgs = await api.thread(threadId);
+        // drafts.update rotates the underlying message id, so a stale list row
+        // may carry an old id — fall back to the thread's DRAFT message.
+        const full =
+          msgs.find((x) => x.id === id) ??
+          [...msgs].reverse().find((x) => x.labelIds.includes("DRAFT"));
+        if (!full) throw new Error("드래프트를 불러오지 못했습니다.");
+        const found = await api.draftByMessage(full.id).catch(() => null); // 404 → send as new mail
+        const attachments = await Promise.all(
+          full.attachments.map(async (a) => ({
+            filename: a.filename,
+            mimeType: a.mimeType,
+            size: a.size,
+            data: await blobToBase64(
+              await (
+                await fetch(api.attachmentUrl(full.id, a.id, a.filename))
+              ).blob(),
+            ),
+          })),
+        );
+        setComposeInit({
+          draftId: found?.draftId,
+          to: full.to,
+          cc: full.cc || undefined,
+          subject: full.subject,
+          // our drafts are text/plain (lossless); Gmail-web HTML drafts fall
+          // back to clean text extraction
+          body: full.bodyText ?? quoteText(full),
+          threadId: full.threadId,
+          attachments,
+        });
+        setComposeOpen(true);
+      }),
+    [guard],
+  );
+
   const onSelectMsg = useCallback(
-    (id: string, threadId: string) => setSelected({ id, threadId }),
-    [],
+    (id: string, threadId: string) => {
+      const row = messagesRef.current.find((m) => m.id === id);
+      if (row?.labelIds.includes("DRAFT")) void openDraft(id, threadId);
+      else setSelected({ id, threadId });
+    },
+    [openDraft],
   );
 
   // ---- new-mail polling: desktop notification + inbox refresh ----
@@ -407,9 +453,15 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           init={composeInit}
           guard={guard}
           onClose={() => setComposeOpen(false)}
+          onSaved={() => {
+            setComposeOpen(false);
+            load(true); // draft save rotates message ids — refresh the list
+            refreshLabels();
+          }}
           onSent={() => {
             setComposeOpen(false);
             load(true);
+            refreshLabels();
           }}
         />
       )}
@@ -922,17 +974,21 @@ type ComposeInit = {
   quote?: string;
   quoteFrom?: string;
   attachments?: ComposeAttachment[];
+  body?: string; // verbatim initial body (드래프트 이어쓰기)
+  draftId?: string; // editing this Gmail draft: update on save, delete on send
 };
 
 function Compose({
   init,
   guard,
   onClose,
+  onSaved,
   onSent,
 }: {
   init?: ComposeInit;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onClose: () => void;
+  onSaved: () => void;
   onSent: () => void;
 }) {
   const quoted = init?.quote
@@ -945,7 +1001,7 @@ function Compose({
   const [to, setTo] = useState(init?.to ?? "");
   const [cc, setCc] = useState(init?.cc ?? "");
   const [subject, setSubject] = useState(init?.subject ?? "");
-  const [body, setBody] = useState(quoted);
+  const [body, setBody] = useState(init?.body ?? quoted);
   const [sending, setSending] = useState(false);
   const [files, setFiles] = useState<ComposeAttachment[]>(
     init?.attachments ?? [],
@@ -971,6 +1027,11 @@ function Compose({
               }))
             : undefined,
         });
+        if (init?.draftId) {
+          // The draft was sent as a fresh message — drop the original so the
+          // 임시보관함 doesn't keep a stale copy.
+          await api.deleteDraft(init.draftId);
+        }
         onSent();
       } finally {
         setSending(false);
@@ -981,7 +1042,7 @@ function Compose({
     guard(async () => {
       setSending(true);
       try {
-        await api.saveDraft({
+        const payload = {
           to,
           cc: cc || undefined,
           subject,
@@ -996,8 +1057,10 @@ function Compose({
                 data,
               }))
             : undefined,
-        });
-        onClose();
+        };
+        if (init?.draftId) await api.updateDraft(init.draftId, payload);
+        else await api.saveDraft(payload);
+        onSaved();
       } finally {
         setSending(false);
       }

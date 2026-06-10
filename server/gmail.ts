@@ -308,6 +308,41 @@ export async function createDraft(input: MailInput): Promise<{ id: string }> {
   return { id: res.data.id ?? "" };
 }
 
+/** Resolve the draft id that wraps a given message id (DRAFT label rows). */
+export async function findDraftByMessageId(
+  messageId: string,
+): Promise<{ draftId: string } | null> {
+  const g = await api();
+  const res = await g.users.drafts.list({
+    userId: "me",
+    maxResults: 100,
+    fields: "drafts(id,message/id)",
+  });
+  const d = (res.data.drafts ?? []).find((x) => x.message?.id === messageId);
+  return d?.id ? { draftId: d.id } : null;
+}
+
+/** Overwrite an existing draft in place (재저장 — keeps a single draft). */
+export async function updateDraft(
+  draftId: string,
+  input: MailInput,
+): Promise<{ id: string }> {
+  const g = await api();
+  const res = await g.users.drafts.update({
+    userId: "me",
+    id: draftId,
+    requestBody: {
+      message: { raw: buildRaw(input), threadId: input.threadId },
+    },
+  });
+  return { id: res.data.id ?? "" };
+}
+
+export async function deleteDraft(draftId: string): Promise<void> {
+  const g = await api();
+  await g.users.drafts.delete({ userId: "me", id: draftId });
+}
+
 export async function modifyMessage(
   id: string,
   changes: { add?: string[]; remove?: string[] },
