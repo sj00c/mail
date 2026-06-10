@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import { compress } from "hono/compress";
 import { serveStatic } from "hono/bun";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
+  consumeOAuthState,
   getAuthUrl,
   handleCallback,
   isAuthed,
@@ -49,7 +50,31 @@ app.use(compress());
 
 // ---- helpers ----
 function needAuthError(err: unknown): boolean {
-  return err instanceof Error && err.message === "NOT_AUTHENTICATED";
+  if (!(err instanceof Error)) return false;
+  if (err.message === "NOT_AUTHENTICATED") return true;
+  // Revoked/expired refresh token: Google answers invalid_grant forever.
+  // Treat as logged-out (401) so the UI returns to the login screen instead
+  // of looping on opaque 500s.
+  const data = (err as { response?: { data?: { error?: string } } }).response?.data;
+  return err.message.includes("invalid_grant") || data?.error === "invalid_grant";
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function httpStatusOf(err: unknown): number | undefined {
+  const e = err as { status?: unknown; code?: unknown; response?: { status?: unknown } };
+  for (const v of [e?.status, e?.code, e?.response?.status]) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n >= 100 && n <= 599) return n;
+  }
+  return undefined;
 }
 
 // ---- auth routes ----
@@ -64,7 +89,13 @@ app.get("/auth/login", (c) => {
 app.get("/auth/callback", async (c) => {
   const code = c.req.query("code");
   const err = c.req.query("error");
-  if (err) return c.html(`<h2>OAuth error: ${err}</h2>`);
+  // Query params are attacker-controllable (any page can navigate here) —
+  // never interpolate them into HTML unescaped, and only accept codes from
+  // flows this server started (state check → no login CSRF).
+  if (err) return c.html(`<h2>OAuth error: ${escapeHtml(err)}</h2>`);
+  if (!consumeOAuthState(c.req.query("state"))) {
+    return c.html("<h2>잘못된 OAuth 요청입니다 (state 불일치). 다시 로그인하세요.</h2>", 403);
+  }
   if (!code) return c.html("<h2>Missing ?code in callback</h2>");
   try {
     await handleCallback(code);
@@ -72,7 +103,7 @@ app.get("/auth/callback", async (c) => {
     return c.redirect(APP_URL);
   } catch (e) {
     return c.html(
-      `<h2>Token exchange failed</h2><pre>${(e as Error).message}</pre>`,
+      `<h2>Token exchange failed</h2><pre>${escapeHtml((e as Error).message)}</pre>`,
     );
   }
 });
@@ -209,7 +240,14 @@ api.get("/drafts/by-message/:id", async (c) => {
 
 api.put("/drafts/:id", async (c) => {
   const body = await c.req.json();
-  return c.json(await updateDraft(c.req.param("id"), body));
+  try {
+    return c.json(await updateDraft(c.req.param("id"), body));
+  } catch (e) {
+    // Draft deleted/sent elsewhere (Gmail web) while our editor was open —
+    // give the client a typed 404 so it can fall back to creating a new draft.
+    if (httpStatusOf(e) === 404) return c.json({ error: "DRAFT_NOT_FOUND" }, 404);
+    throw e;
+  }
 });
 
 api.post("/drafts/:id/delete", async (c) => {
@@ -226,6 +264,10 @@ api.onError((e, c) => {
   return c.json({ error: (e as Error).message }, 500);
 });
 app.route("/api", api);
+// Unknown API paths must 404 as JSON — falling through to the SPA fallback
+// returns index.html with HTTP 200, which the client then fails to JSON-parse
+// (version-skew bugs masquerade as data corruption).
+app.all("/api/*", (c) => c.json({ error: "NOT_FOUND" }, 404));
 
 // ---- static (production: serve built SPA) ----
 if (SERVE_STATIC) {
@@ -234,9 +276,16 @@ if (SERVE_STATIC) {
     await next();
     c.header("Cache-Control", "public, max-age=31536000, immutable");
   });
-  app.use("/*", serveStatic({ root: "./dist" }));
-  app.get("/*", serveStatic({ path: "./dist/index.html" }));
+  // serveStatic resolves against cwd while the enable-gate checked the
+  // absolute path — anchor both to the project dir so starting the server
+  // from elsewhere still serves the SPA.
+  const distRel = relative(process.cwd(), DIST) || ".";
+  app.use("/*", serveStatic({ root: distRel }));
+  app.get("/*", serveStatic({ path: join(distRel, "index.html") }));
 }
 
-console.log(`[server] http://localhost:${PORT}`);
-export default { port: PORT, fetch: app.fetch };
+// Personal mail server with no request auth: never listen on 0.0.0.0 —
+// anyone on the LAN could read/send mail. Opt in explicitly via HOST.
+const HOSTNAME = process.env.HOST ?? "127.0.0.1";
+console.log(`[server] http://${HOSTNAME === "0.0.0.0" ? "localhost" : HOSTNAME}:${PORT}`);
+export default { port: PORT, hostname: HOSTNAME, fetch: app.fetch };

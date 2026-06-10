@@ -66,7 +66,9 @@ export async function getEvent(
   const e = res.data;
   return {
     id: e.id ?? "",
-    summary: e.summary?.trim() || "(제목 없음)",
+    // Raw, no placeholder: this feeds the edit form — substituting
+    // "(제목 없음)" here gets the literal placeholder saved as the title.
+    summary: e.summary?.trim() ?? "",
     start: e.start?.dateTime ?? e.start?.date ?? "",
     end: e.end?.dateTime ?? e.end?.date ?? "",
     allDay: !e.start?.dateTime,
@@ -98,15 +100,19 @@ export type EventInput = {
 
 function toEventBody(i: EventInput): calendar_v3.Schema$Event {
   return {
-    summary: i.summary || "(제목 없음)",
-    location: i.location || undefined,
-    description: i.description || undefined,
+    summary: i.summary,
+    // null, not undefined: events.patch ignores absent fields, so clearing
+    // 장소/설명 in the edit form must send an explicit null to erase them.
+    location: i.location || null,
+    description: i.description || null,
+    // Same for date/dateTime: converting 종일 ↔ 시간 일정 must null the other
+    // representation or patch 400s with "cannot have both date and dateTime".
     start: i.allDay
-      ? { date: i.start.slice(0, 10) }
-      : { dateTime: new Date(i.start).toISOString() },
+      ? { date: i.start.slice(0, 10), dateTime: null }
+      : { dateTime: new Date(i.start).toISOString(), date: null },
     end: i.allDay
-      ? { date: i.end.slice(0, 10) }
-      : { dateTime: new Date(i.end).toISOString() },
+      ? { date: i.end.slice(0, 10), dateTime: null }
+      : { dateTime: new Date(i.end).toISOString(), date: null },
   };
 }
 
@@ -156,7 +162,13 @@ export async function listEvents(
     const days = Math.min(Math.max(opts.days ?? 30, 1), 365);
     const now = new Date();
     timeMin = now.toISOString();
-    timeMax = new Date(now.getTime() + days * 86_400_000).toISOString();
+    // "N일" = today..today+N-1, each day in full. Midnight-anchored timeMax —
+    // "+N*24h from now" cut the final day off mid-afternoon, and the agenda's
+    // client-side window filter uses the same today+N exclusive bound.
+    const end = new Date(now);
+    end.setHours(0, 0, 0, 0);
+    end.setDate(end.getDate() + days);
+    timeMax = end.toISOString();
   }
 
   const calendars = await cachedCalendarList(cal);
@@ -164,33 +176,41 @@ export async function listEvents(
   const perCalendar = await Promise.all(
     calendars.map(async (c) => {
       try {
-        const res = await cal.events.list({
-          calendarId: c.id!,
-          timeMin,
-          timeMax,
-          singleEvents: true,
-          orderBy: "startTime",
-          maxResults: 250,
-          fields:
-            "items(id,summary,location,htmlLink,status,start,end),nextPageToken",
-        });
         const out: CalEvent[] = [];
-        for (const e of res.data.items ?? []) {
-          if (e.status === "cancelled") continue;
-          const startDt = e.start?.dateTime ?? e.start?.date ?? "";
-          if (!startDt) continue;
-          out.push({
-            id: e.id ?? "",
-            summary: e.summary?.trim() || "(제목 없음)",
-            start: startDt,
-            end: e.end?.dateTime ?? e.end?.date ?? "",
-            allDay: !e.start?.dateTime,
-            location: e.location ?? "",
-            htmlLink: e.htmlLink ?? "",
-            calendarId: c.id ?? "",
-            calendarSummary: c.summaryOverride || c.summary || c.id || "",
-            color: c.backgroundColor ?? null,
+        let pageToken: string | undefined;
+        // Busy calendars exceed 250 expanded instances per month — follow
+        // nextPageToken (bounded) instead of silently truncating the view.
+        for (let page = 0; page < 4; page++) {
+          const res = await cal.events.list({
+            calendarId: c.id!,
+            timeMin,
+            timeMax,
+            singleEvents: true,
+            orderBy: "startTime",
+            maxResults: 250,
+            pageToken,
+            fields:
+              "items(id,summary,location,htmlLink,status,start,end),nextPageToken",
           });
+          for (const e of res.data.items ?? []) {
+            if (e.status === "cancelled") continue;
+            const startDt = e.start?.dateTime ?? e.start?.date ?? "";
+            if (!startDt) continue;
+            out.push({
+              id: e.id ?? "",
+              summary: e.summary?.trim() || "(제목 없음)",
+              start: startDt,
+              end: e.end?.dateTime ?? e.end?.date ?? "",
+              allDay: !e.start?.dateTime,
+              location: e.location ?? "",
+              htmlLink: e.htmlLink ?? "",
+              calendarId: c.id ?? "",
+              calendarSummary: c.summaryOverride || c.summary || c.id || "",
+              color: c.backgroundColor ?? null,
+            });
+          }
+          pageToken = res.data.nextPageToken ?? undefined;
+          if (!pageToken) break;
         }
         return out;
       } catch (err) {
@@ -201,7 +221,13 @@ export async function listEvents(
     }),
   );
 
-  return perCalendar.flat().sort((a, b) => a.start.localeCompare(b.start));
+  // Numeric sort: raw ISO strings from different calendars carry different
+  // UTC offsets, and lexicographic comparison orders those wrongly.
+  const startMs = (e: CalEvent): number =>
+    e.allDay ? new Date(`${e.start}T00:00:00`).getTime() : new Date(e.start).getTime();
+  return perCalendar
+    .flat()
+    .sort((a, b) => startMs(a) - startMs(b) || a.start.localeCompare(b.start));
 }
 export type CalendarMeta = {
   id: string;

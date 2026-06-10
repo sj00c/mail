@@ -1,5 +1,5 @@
 import { OAuth2Client, type Credentials } from "google-auth-library";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 // Scopes: gmail (read/send/label/mark-read/archive/trash; no permanent delete)
@@ -38,10 +38,16 @@ function makeClient(): OAuth2Client {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     redirectUri: REDIRECT,
+    // Access token revoked before expiry_date (password change, manual revoke):
+    // retry once with a forced refresh instead of bricking until the hour mark.
+    forceRefreshOnFailure: true,
   });
-  // Persist refreshed tokens automatically.
+  // Persist refreshed tokens automatically. A failed persist must not become
+  // an unhandled rejection (it would take the whole server down).
   c.on("tokens", (tokens) => {
-    void mergeAndSave(tokens);
+    mergeAndSave(tokens).catch((err) => {
+      console.error("[auth] token persist failed:", err);
+    });
   });
   return c;
 }
@@ -56,12 +62,28 @@ async function loadToken(): Promise<StoredToken | null> {
   }
 }
 
-async function saveToken(tok: StoredToken): Promise<void> {
-  await mkdir(dirname(TOKEN_PATH), { recursive: true });
-  await Bun.write(TOKEN_PATH, JSON.stringify(tok, null, 2));
+// token.json read-modify-writes are serialized and the write is atomic
+// (tmp + rename): concurrent refreshes must never interleave merges or leave
+// a torn file that drops the refresh token.
+let tokenOp: Promise<unknown> = Promise.resolve();
+function serializedTokenOp<T>(fn: () => Promise<T>): Promise<T> {
+  const p = tokenOp.then(fn, fn);
+  tokenOp = p.catch(() => {});
+  return p;
 }
 
-async function mergeAndSave(tokens: Credentials): Promise<void> {
+async function saveToken(tok: StoredToken): Promise<void> {
+  await mkdir(dirname(TOKEN_PATH), { recursive: true });
+  const tmp = `${TOKEN_PATH}.tmp`;
+  await Bun.write(tmp, JSON.stringify(tok, null, 2));
+  await rename(tmp, TOKEN_PATH);
+}
+
+function mergeAndSave(tokens: Credentials): Promise<void> {
+  return serializedTokenOp(() => mergeAndSaveInner(tokens));
+}
+
+async function mergeAndSaveInner(tokens: Credentials): Promise<void> {
   const existing = (await loadToken()) ?? {};
   // Google omits refresh_token on refresh responses; keep the stored one.
   const incoming: StoredToken = {
@@ -81,13 +103,33 @@ async function mergeAndSave(tokens: Credentials): Promise<void> {
   await saveToken(merged);
 }
 
+// CSRF protection for the OAuth flow: the callback only accepts codes whose
+// `state` we minted ourselves (otherwise any page could silently log this app
+// into an attacker's account by navigating to the callback URL).
+const pendingStates = new Map<string, number>();
+const STATE_TTL_MS = 10 * 60_000;
+
+/** True (and consumed) iff `state` came from a recent getAuthUrl() call. */
+export function consumeOAuthState(state: string | undefined): boolean {
+  const now = Date.now();
+  for (const [s, at] of pendingStates) {
+    if (now - at > STATE_TTL_MS) pendingStates.delete(s);
+  }
+  if (!state || !pendingStates.has(state)) return false;
+  pendingStates.delete(state);
+  return true;
+}
+
 /** Build the consent URL. Forces a refresh_token on first run. */
 export function getAuthUrl(): string {
   const c = client ?? (client = makeClient());
+  const state = crypto.randomUUID();
+  pendingStates.set(state, Date.now());
   return c.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
     scope: SCOPES,
+    state,
   });
 }
 
@@ -106,8 +148,10 @@ export async function isAuthed(): Promise<boolean> {
 }
 
 export async function logout(): Promise<void> {
-  const f = Bun.file(TOKEN_PATH);
-  if (await f.exists()) await Bun.write(TOKEN_PATH, "{}");
+  await serializedTokenOp(async () => {
+    const f = Bun.file(TOKEN_PATH);
+    if (await f.exists()) await Bun.write(TOKEN_PATH, "{}");
+  });
   client = null;
 }
 

@@ -14,11 +14,19 @@ export type MessageSummary = {
 export type MessageFull = MessageSummary & {
   cc: string;
   bcc: string;
+  replyTo: string; // Reply-To header — replies must honor it over From
   references: string; // original References header (RFC 5322 chain)
   rfc822MsgId: string; // RFC 2822 Message-ID header (for In-Reply-To/References)
+  inReplyTo: string; // preserved across draft resume
   bodyHtml: string | null;
   bodyText: string | null;
-  attachments: { id: string; filename: string; mimeType: string; size: number }[];
+  attachments: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    size: number;
+    contentId?: string; // inline (cid:) image parts
+  }[];
 };
 
 export type Label = { id: string; name: string; type: string; unread: number };
@@ -64,6 +72,15 @@ export type Calendar = {
 
 export class AuthError extends Error {}
 
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -72,7 +89,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401) throw new AuthError("NOT_AUTHENTICATED");
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    // Server errors arrive as {"error": "..."} — surface the message, not
+    // the raw JSON envelope.
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown };
+      if (typeof parsed?.error === "string") message = parsed.error;
+    } catch {
+      // not JSON (proxy error page etc.) — keep the raw text
+    }
+    throw new HttpError(message || `HTTP ${res.status}`, res.status);
   }
   return (await res.json()) as T;
 }
@@ -197,4 +223,26 @@ export function parseAddr(raw: string): { name: string; email: string } {
   const m = raw.match(/^\s*"?([^"<]*)"?\s*<([^>]+)>\s*$/);
   if (m) return { name: m[1].trim() || m[2], email: m[2].trim() };
   return { name: raw.trim(), email: raw.trim() };
+}
+
+// Split an address list on top-level commas only: '"Lee, Gildong" <a@b.c>'
+// is one address, not two.
+export function splitAddrList(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  let inAngle = false;
+  for (const ch of s) {
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && ch === "<") inAngle = true;
+    else if (!inQuotes && ch === ">") inAngle = false;
+    if (ch === "," && !inQuotes && !inAngle) {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map((t) => t.trim()).filter(Boolean);
 }
