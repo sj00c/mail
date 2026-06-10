@@ -122,14 +122,7 @@ export async function listMessages(opts: {
   };
 }
 
-export async function getMessage(id: string): Promise<MessageFull> {
-  const g = await api();
-  const res = await g.users.messages.get({
-    userId: "me",
-    id,
-    format: "full",
-  });
-  const m = res.data;
+function toFull(m: gmail_v1.Schema$Message): MessageFull {
   const summary = toSummary(m);
   const acc: ExtractAcc = { html: null, text: null, attachments: [] };
   walkParts(m.payload, acc);
@@ -140,6 +133,23 @@ export async function getMessage(id: string): Promise<MessageFull> {
     bodyText: acc.text,
     attachments: acc.attachments,
   };
+}
+
+export async function getMessage(id: string): Promise<MessageFull> {
+  const g = await api();
+  const res = await g.users.messages.get({ userId: "me", id, format: "full" });
+  return toFull(res.data);
+}
+
+/** All messages in a conversation thread, oldest first. */
+export async function getThread(threadId: string): Promise<MessageFull[]> {
+  const g = await api();
+  const res = await g.users.threads.get({
+    userId: "me",
+    id: threadId,
+    format: "full",
+  });
+  return (res.data.messages ?? []).map(toFull);
 }
 
 export async function getAttachment(

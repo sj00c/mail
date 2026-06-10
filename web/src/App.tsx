@@ -452,9 +452,11 @@ function Reader({
   onClose: () => void;
 }) {
   const [msg, setMsg] = useState<MessageFull | null>(null);
+  const [thread, setThread] = useState<MessageFull[] | null>(null);
 
   useEffect(() => {
     setMsg(null);
+    setThread(null);
     void guard(async () => {
       const m = await api.message(id);
       setMsg(m);
@@ -462,26 +464,17 @@ function Reader({
         await api.modify(id, { remove: ["UNREAD"] });
         onChanged();
       }
+      setThread(await api.thread(m.threadId));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   if (!msg) return <div className="empty">불러오는 중…</div>;
 
-  const fromName = parseAddr(msg.from).name;
   return (
     <div className="reader-inner">
       <div className="reader-head">
         <h2>{msg.subject || "(제목 없음)"}</h2>
-        <div className="reader-meta">
-          <strong>{fromName}</strong>{" "}
-          <span className="muted">&lt;{parseAddr(msg.from).email}&gt;</span>
-          <div className="muted">받는사람: {msg.to}</div>
-          {msg.cc && <div className="muted">참조: {msg.cc}</div>}
-          <div className="muted">
-            {new Date(msg.date).toLocaleString("ko-KR")}
-          </div>
-        </div>
         <div className="reader-actions">
           <button
             className="btn"
@@ -577,30 +570,47 @@ function Reader({
             🗑 삭제
           </button>
         </div>
-        {msg.attachments.length > 0 && (
-          <div className="attachments">
-            {msg.attachments.map((a) => (
-              <a
-                key={a.id}
-                className="chip"
-                href={api.attachmentUrl(id, a.id, a.filename)}
-              >
-                📎 {a.filename} ({Math.round(a.size / 1024)}KB)
-              </a>
-            ))}
-          </div>
-        )}
       </div>
+      {(thread ?? [msg]).map((tm) => (
+        <ThreadMessage key={tm.id} m={tm} />
+      ))}
+    </div>
+  );
+}
+
+function ThreadMessage({ m }: { m: MessageFull }) {
+  return (
+    <div className="thread-msg">
+      <div className="reader-meta">
+        <strong>{parseAddr(m.from).name}</strong>{" "}
+        <span className="muted">&lt;{parseAddr(m.from).email}&gt;</span>
+        <div className="muted">받는사람: {m.to}</div>
+        {m.cc && <div className="muted">참조: {m.cc}</div>}
+        <div className="muted">{new Date(m.date).toLocaleString("ko-KR")}</div>
+      </div>
+      {m.attachments.length > 0 && (
+        <div className="attachments">
+          {m.attachments.map((a) => (
+            <a
+              key={a.id}
+              className="chip"
+              href={api.attachmentUrl(m.id, a.id, a.filename)}
+            >
+              📎 {a.filename} ({Math.round(a.size / 1024)}KB)
+            </a>
+          ))}
+        </div>
+      )}
       <div className="reader-body">
-        {msg.bodyHtml ? (
+        {m.bodyHtml ? (
           <iframe
-            title="message"
+            title={`message-${m.id}`}
             sandbox="allow-popups allow-popups-to-escape-sandbox"
-            srcDoc={prepareEmailHtml(msg.bodyHtml)}
+            srcDoc={prepareEmailHtml(m.bodyHtml)}
             className="html-frame"
           />
         ) : (
-          <pre className="text-body">{msg.bodyText || msg.snippet}</pre>
+          <pre className="text-body">{m.bodyText || m.snippet}</pre>
         )}
       </div>
     </div>

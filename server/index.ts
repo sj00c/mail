@@ -13,6 +13,7 @@ import {
   createDraft,
   getAttachment,
   getMessage,
+  getThread,
   getProfile,
   listLabels,
   listMessages,
@@ -136,6 +137,8 @@ api.get("/messages", async (c) => {
 });
 
 api.get("/messages/:id", async (c) => c.json(await getMessage(c.req.param("id"))));
+
+api.get("/threads/:id", async (c) => c.json(await getThread(c.req.param("id"))));
 
 api.get("/messages/:id/attachments/:aid", async (c) => {
   const buf = await getAttachment(c.req.param("id"), c.req.param("aid"));

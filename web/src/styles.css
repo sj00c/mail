@@ -770,3 +770,19 @@ textarea.ev-input {
 .ev-times .ev-input {
   flex: 1;
 }
+
+/* thread (conversation) */
+.thread-msg {
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+}
+.thread-msg:first-of-type {
+  border-top: none;
+  padding-top: 4px;
+}
+.thread-msg .reader-body {
+  margin-top: 12px;
+}
+.thread-msg .html-frame {
+  min-height: 240px;
+}
