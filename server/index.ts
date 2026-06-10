@@ -12,7 +12,6 @@ import {
 import {
   createDraft,
   getAttachment,
-  getMessage,
   getThread,
   getProfile,
   listLabels,
@@ -22,6 +21,7 @@ import {
   trashMessage,
 } from "./gmail.ts";
 import {
+  clearCalendarCache,
   createEvent,
   deleteEvent,
   getEvent,
@@ -75,6 +75,7 @@ app.get("/auth/callback", async (c) => {
 
 app.post("/auth/logout", async (c) => {
   await logout();
+  clearCalendarCache(); // cached calendar list is account-scoped
   return c.json({ ok: true });
 });
 
@@ -135,8 +136,6 @@ api.get("/messages", async (c) => {
   });
   return c.json(res);
 });
-
-api.get("/messages/:id", async (c) => c.json(await getMessage(c.req.param("id"))));
 
 api.get("/threads/:id", async (c) => c.json(await getThread(c.req.param("id"))));
 

@@ -147,7 +147,7 @@ from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d  
 ```
 server/
   auth.ts      OAuth2 + 토큰 저장/갱신
-  gmail.ts     Gmail API 래퍼 (list/get/threads/send/draft/modify/trash/labels/attachments)
+  gmail.ts     Gmail API 래퍼 (list/threads/send/draft/modify/trash/labels/attachments)
   calendar.ts  Calendar API 래퍼 (events CRUD/calendars)
   index.ts     Hono 라우트 (/auth/*, /api/*) + 정적 서빙(프로덕션)
 web/src/

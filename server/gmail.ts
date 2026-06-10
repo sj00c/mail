@@ -137,12 +137,6 @@ function toFull(m: gmail_v1.Schema$Message): MessageFull {
   };
 }
 
-export async function getMessage(id: string): Promise<MessageFull> {
-  const g = await api();
-  const res = await g.users.messages.get({ userId: "me", id, format: "full" });
-  return toFull(res.data);
-}
-
 /** All messages in a conversation thread, oldest first. */
 export async function getThread(threadId: string): Promise<MessageFull[]> {
   const g = await api();
@@ -167,25 +161,37 @@ export async function getAttachment(
   return Buffer.from(res.data.data ?? "", "base64url");
 }
 
+// Sidebar shows only these system labels (mirrors SYSTEM_ORDER in web/src/App.tsx)
+// plus user labels — unread counts for anything else are never displayed, so
+// skip their per-label `labels.get` round-trips (CATEGORY_*, CHAT, IMPORTANT, …).
+const DISPLAYED_SYSTEM = new Set([
+  "INBOX",
+  "STARRED",
+  "SENT",
+  "DRAFT",
+  "SPAM",
+  "TRASH",
+]);
+
 export async function listLabels(): Promise<
   { id: string; name: string; type: string; unread: number }[]
 > {
   const g = await api();
   const res = await g.users.labels.list({ userId: "me" });
   const labels = res.data.labels ?? [];
-  // Fetch unread counts only for the common system + user labels lazily.
   const detailed = await Promise.all(
     labels.map(async (l) => {
+      const base = { id: l.id!, name: l.name!, type: l.type ?? "user", unread: 0 };
+      if (base.type !== "user" && !DISPLAYED_SYSTEM.has(base.id)) return base;
       try {
-        const d = await g.users.labels.get({ userId: "me", id: l.id! });
-        return {
+        const d = await g.users.labels.get({
+          userId: "me",
           id: l.id!,
-          name: l.name!,
-          type: l.type ?? "user",
-          unread: d.data.messagesUnread ?? 0,
-        };
+          fields: "messagesUnread",
+        });
+        return { ...base, unread: d.data.messagesUnread ?? 0 };
       } catch {
-        return { id: l.id!, name: l.name!, type: l.type ?? "user", unread: 0 };
+        return base;
       }
     }),
   );

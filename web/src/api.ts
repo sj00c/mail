@@ -116,7 +116,6 @@ export const api = {
       `/api/messages?${u.toString()}`,
     );
   },
-  message: (id: string) => req<MessageFull>(`/api/messages/${id}`),
   thread: (id: string) => req<MessageFull[]>(`/api/threads/${id}`),
   modify: (id: string, body: { add?: string[]; remove?: string[] }) =>
     req<{ ok: boolean }>(`/api/messages/${id}/modify`, {

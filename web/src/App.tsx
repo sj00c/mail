@@ -58,7 +58,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [nextToken, setNextToken] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeInit, setComposeInit] = useState<ComposeInit | undefined>();
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +121,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       return next;
     });
   }, []);
-  const onSelectMsg = useCallback((id: string) => setSelected(id), []);
+  const onSelectMsg = useCallback(
+    (id: string, threadId: string) => setSelected({ id, threadId }),
+    [],
+  );
 
   const load = useCallback(
     (reset: boolean) => {
@@ -306,7 +309,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                 <MessageRow
                   key={m.id}
                   m={m}
-                  active={selected === m.id}
+                  active={selected?.id === m.id}
                   onSelect={onSelectMsg}
                 />
               ))}
@@ -321,7 +324,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             <section className="reader">
               {selected ? (
                 <Reader
-                  id={selected}
+                  id={selected.id}
+                  threadId={selected.threadId}
                   guard={guard}
                   onChanged={() => {
                     load(true);
@@ -418,7 +422,7 @@ const MessageRow = memo(function MessageRow({
 }: {
   m: MessageSummary;
   active: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, threadId: string) => void;
 }) {
   const from = parseAddr(m.from).name;
   const date = new Date(m.date);
@@ -430,7 +434,7 @@ const MessageRow = memo(function MessageRow({
   return (
     <button
       className={`msg-row ${active ? "active" : ""} ${m.unread ? "unread" : ""}`}
-      onClick={() => onSelect(m.id)}
+      onClick={() => onSelect(m.id, m.threadId)}
     >
       <div className="msg-top">
         <span className="msg-from">{from}</span>
@@ -447,12 +451,14 @@ const MessageRow = memo(function MessageRow({
 
 function Reader({
   id,
+  threadId,
   guard,
   onChanged,
   onReply,
   onClose,
 }: {
   id: string;
+  threadId: string;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onChanged: () => void;
   onReply: (init: ComposeInit) => void;
@@ -465,16 +471,24 @@ function Reader({
     setMsg(null);
     setThread(null);
     void guard(async () => {
-      const m = await api.message(id);
+      // One round-trip: the thread already contains the opened message
+      // (previously message + thread were fetched, duplicating the payload).
+      const msgs = await api.thread(threadId);
+      const m = msgs.find((x) => x.id === id);
+      if (!m) {
+        // Deleted between list render and open, or id/thread mismatch —
+        // surface it via guard instead of spinning forever.
+        throw new Error("메시지를 찾을 수 없습니다. 목록을 새로고침하세요.");
+      }
       setMsg(m);
+      setThread(msgs);
       if (m.unread) {
-        await api.modify(id, { remove: ["UNREAD"] });
+        await api.modify(m.id, { remove: ["UNREAD"] });
         onChanged();
       }
-      setThread(await api.thread(m.threadId));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, threadId]);
 
   if (!msg) return <div className="empty">불러오는 중…</div>;
 
@@ -585,7 +599,7 @@ function Reader({
   );
 }
 
-function ThreadMessage({ m }: { m: MessageFull }) {
+const ThreadMessage = memo(function ThreadMessage({ m }: { m: MessageFull }) {
   return (
     <div className="thread-msg">
       <div className="reader-meta">
@@ -612,10 +626,89 @@ function ThreadMessage({ m }: { m: MessageFull }) {
         {m.bodyHtml ? (
           <HtmlBody html={m.bodyHtml} id={m.id} />
         ) : (
-          <pre className="text-body">{m.bodyText || m.snippet}</pre>
+          <TextBody text={m.bodyText || m.snippet} />
         )}
       </div>
     </div>
+  );
+});
+
+// ---- plain-text linkify ----
+// URLs / email addresses in plain-text bodies become real links (no innerHTML).
+const LINK_RE =
+  /\bhttps?:\/\/[^\s<>"]+|\bwww\.[^\s<>"]+|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
+
+type LinkPart = { text: string; href?: string };
+
+// Trailing punctuation is almost never part of the URL, but a ")" that closes
+// a "(" inside the URL (wiki-style) is.
+const TRAIL_PUNCT = new Set([...".,;:!?]}>'\""]);
+
+function trimTrailing(match: string): string {
+  // Index-based scan, single final slice: O(n) even for pathological
+  // ")…).,;:" tails (regex-replace per round would copy the string each time).
+  let opens = 0;
+  let closes = 0;
+  for (const ch of match) {
+    if (ch === "(") opens++;
+    else if (ch === ")") closes++;
+  }
+  let end = match.length;
+  for (;;) {
+    const prev = end;
+    while (end > 0 && TRAIL_PUNCT.has(match[end - 1])) end--;
+    while (end > 0 && match[end - 1] === ")" && opens < closes) {
+      end--;
+      closes--;
+    }
+    if (end === prev) return match.slice(0, end);
+  }
+}
+
+function linkifyParts(text: string): LinkPart[] {
+  const parts: LinkPart[] = [];
+  let last = 0;
+  for (const m of text.matchAll(LINK_RE)) {
+    const raw = trimTrailing(m[0]);
+    // Decide the scheme from the untrimmed match so degenerate leftovers
+    // ("www" after trimming "www.,") never become bogus mailto:/https: links.
+    const href = raw.includes("://")
+      ? raw
+      : m[0].startsWith("www.") && raw.length > 4
+        ? `https://${raw}`
+        : !m[0].startsWith("www.") && raw.includes("@")
+          ? `mailto:${raw}`
+          : null;
+    if (!href) continue; // leave the match as plain text
+    const start = m.index;
+    if (start > last) parts.push({ text: text.slice(last, start) });
+    parts.push({ text: raw, href });
+    last = start + raw.length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+function TextBody({ text }: { text: string }) {
+  const parts = useMemo(() => linkifyParts(text), [text]);
+  return (
+    <pre className="text-body">
+      {parts.map((p, i) =>
+        p.href ? (
+          <a
+            key={i}
+            href={p.href}
+            {...(p.href.startsWith("mailto:")
+              ? {}
+              : { target: "_blank", rel: "noopener noreferrer" })}
+          >
+            {p.text}
+          </a>
+        ) : (
+          p.text
+        ),
+      )}
+    </pre>
   );
 }
 
@@ -624,6 +717,9 @@ function ThreadMessage({ m }: { m: MessageFull }) {
 // the parent measure the document height; allow-popups makes links open in a new tab.
 function HtmlBody({ html, id }: { html: string; id: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
+  // DOMParser full-parse is not free on big newsletters — don't redo it when
+  // unrelated parent state (star toggle etc.) re-renders this component.
+  const srcDoc = useMemo(() => prepareEmailHtml(html), [html]);
 
   const resize = useCallback(() => {
     const f = ref.current;
@@ -658,6 +754,23 @@ function HtmlBody({ html, id }: { html: string; id: string }) {
       } else if (/^mailto:/i.test(href)) {
         e.preventDefault();
         window.location.href = href;
+      } else if (href.startsWith("#")) {
+        // In-document anchor (newsletter TOC etc.): scroll within the
+        // auto-sized frame — the browser scrolls the parent page to match.
+        e.preventDefault();
+        let name = href.slice(1);
+        try {
+          name = decodeURIComponent(name);
+        } catch {
+          // malformed % escape ("#50%-off"): fall back to the raw fragment
+        }
+        if (!name) return;
+        const el =
+          doc.getElementById(name) ??
+          doc.querySelector(`a[name="${CSS.escape(name)}"]`);
+        // Instant scroll: smooth scrollIntoView does not reliably propagate
+        // from the same-origin iframe to the parent scroller in Chromium.
+        el?.scrollIntoView({ block: "start" });
       }
     });
   }, [resize]);
@@ -667,7 +780,7 @@ function HtmlBody({ html, id }: { html: string; id: string }) {
       ref={ref}
       title={`message-${id}`}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      srcDoc={prepareEmailHtml(html)}
+      srcDoc={srcDoc}
       className="html-frame"
       onLoad={onLoad}
     />
@@ -1567,6 +1680,20 @@ function prepareEmailHtml(html: string, bodyStyle?: string): string {
     meta.setAttribute("content", "no-referrer");
     doc.head.prepend(meta);
     doc.querySelectorAll("a[href]").forEach((a) => {
+      const href = (a.getAttribute("href") ?? "").trim();
+      // HTML URL parsing strips ASCII control chars, so "java\nscript:" still
+      // parses as javascript: — strip them before the scheme test too.
+      if (/^(javascript|data|vbscript):/i.test(href.replace(/[\u0000-\u0020]/g, ""))) {
+        // Hostile scheme: keep the text, kill the link (target=_blank would
+        // otherwise spawn a blank tab on click).
+        a.removeAttribute("href");
+        return;
+      }
+      if (href.startsWith("#")) {
+        // Pure fragment links must stay inside the frame, not fight <base target>.
+        a.setAttribute("target", "_self");
+        return;
+      }
       a.setAttribute("target", "_blank");
       a.setAttribute("rel", "noopener noreferrer");
     });

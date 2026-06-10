@@ -6,6 +6,36 @@ async function api(): Promise<calendar_v3.Calendar> {
   return calendarApi({ version: "v3", auth });
 }
 
+// calendarList barely changes but was re-fetched on every 60s event refresh.
+// Cache it briefly; listCalendars() (calendar view entry) refreshes it.
+const CAL_LIST_TTL_MS = 5 * 60_000;
+const CAL_LIST_FIELDS =
+  "items(id,summary,summaryOverride,primary,backgroundColor,selected,accessRole)";
+let calListCache: {
+  items: calendar_v3.Schema$CalendarListEntry[];
+  at: number;
+} | null = null;
+
+async function cachedCalendarList(
+  cal: calendar_v3.Calendar,
+): Promise<calendar_v3.Schema$CalendarListEntry[]> {
+  if (calListCache && Date.now() - calListCache.at < CAL_LIST_TTL_MS) {
+    return calListCache.items;
+  }
+  const list = await cal.calendarList.list({
+    maxResults: 250,
+    fields: CAL_LIST_FIELDS,
+  });
+  const items = (list.data.items ?? []).filter((c) => c.id);
+  calListCache = { items, at: Date.now() };
+  return items;
+}
+
+/** Drop cached calendar metadata (call on logout — it is account-scoped). */
+export function clearCalendarCache(): void {
+  calListCache = null;
+}
+
 export type CalEvent = {
   id: string;
   summary: string;
@@ -129,11 +159,7 @@ export async function listEvents(
     timeMax = new Date(now.getTime() + days * 86_400_000).toISOString();
   }
 
-  const list = await cal.calendarList.list({
-    maxResults: 250,
-    fields: "items(id,summary,summaryOverride,backgroundColor)",
-  });
-  const calendars = (list.data.items ?? []).filter((c) => c.id);
+  const calendars = await cachedCalendarList(cal);
 
   const perCalendar = await Promise.all(
     calendars.map(async (c) => {
@@ -189,19 +215,14 @@ export type CalendarMeta = {
 /** All calendars in the user's list (subscribed + own). */
 export async function listCalendars(): Promise<CalendarMeta[]> {
   const cal = await api();
-  const list = await cal.calendarList.list({
-    maxResults: 250,
-    fields:
-      "items(id,summary,summaryOverride,primary,backgroundColor,selected,accessRole)",
-  });
-  return (list.data.items ?? [])
-    .filter((c) => c.id)
-    .map((c) => ({
-      id: c.id!,
-      summary: c.summaryOverride || c.summary || c.id!,
-      primary: !!c.primary,
-      backgroundColor: c.backgroundColor ?? null,
-      selected: c.selected !== false,
-      accessRole: c.accessRole ?? "",
-    }));
+  calListCache = null; // explicit calendar-view entry: serve fresh data
+  const items = await cachedCalendarList(cal);
+  return items.map((c) => ({
+    id: c.id!,
+    summary: c.summaryOverride || c.summary || c.id!,
+    primary: !!c.primary,
+    backgroundColor: c.backgroundColor ?? null,
+    selected: c.selected !== false,
+    accessRole: c.accessRole ?? "",
+  }));
 }
