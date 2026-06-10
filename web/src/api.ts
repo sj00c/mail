@@ -107,11 +107,17 @@ export const api = {
       `/api/calendar/events/${encodeURIComponent(eventId)}/delete?calendarId=${encodeURIComponent(calendarId)}`,
       { method: "POST" },
     ),
-  messages: (params: { q?: string; label?: string; pageToken?: string }) => {
+  messages: (params: {
+    q?: string;
+    label?: string;
+    pageToken?: string;
+    maxResults?: number;
+  }) => {
     const u = new URLSearchParams();
     if (params.q) u.set("q", params.q);
     if (params.label) u.set("label", params.label);
     if (params.pageToken) u.set("pageToken", params.pageToken);
+    if (params.maxResults) u.set("maxResults", String(params.maxResults));
     return req<{ messages: MessageSummary[]; nextPageToken?: string }>(
       `/api/messages?${u.toString()}`,
     );

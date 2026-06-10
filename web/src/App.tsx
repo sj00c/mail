@@ -126,6 +126,14 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     [],
   );
 
+  // ---- new-mail polling: desktop notification + inbox refresh ----
+  const lastTopId = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
+  }, []);
+
   const load = useCallback(
     (reset: boolean) => {
       void guard(async () => {
@@ -151,6 +159,54 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
   const refreshLabels = () =>
     guard(async () => setLabels(await api.labels()));
+
+  // Poll INBOX (60s, visible tab only): notify on new unread mail and keep
+  // the list/labels fresh. Polling is the right call here — Gmail push
+  // (Pub/Sub watch) needs a public webhook this 보안망-local app can't have.
+  useEffect(() => {
+    const tick = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const res = await api.messages({ label: "INBOX", maxResults: 5 });
+        const top = res.messages[0];
+        if (!top) return;
+        if (lastTopId.current && top.id !== lastTopId.current) {
+          const fresh: MessageSummary[] = [];
+          for (const m of res.messages) {
+            if (m.id === lastTopId.current) break;
+            fresh.push(m);
+          }
+          if (
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted"
+          ) {
+            for (const m of fresh.filter((x) => x.unread).slice(0, 3)) {
+              const n = new Notification(parseAddr(m.from).name, {
+                body: m.subject || m.snippet,
+                tag: m.id,
+              });
+              n.onclick = () => {
+                window.focus();
+                setView("mail");
+                setActiveLabel("INBOX");
+                setSelected({ id: m.id, threadId: m.threadId });
+                n.close();
+              };
+            }
+          }
+          refreshLabels();
+          if (view === "mail" && activeLabel === "INBOX" && !query) load(true);
+        }
+        lastTopId.current = top.id;
+      } catch {
+        // transient polling failure: next tick retries
+      }
+    };
+    void tick();
+    const iv = setInterval(tick, 60_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, activeLabel, query]);
 
   const systemLabels = labels
     .filter((l) => l.type === "system" && SYSTEM_ORDER.includes(l.id))
@@ -326,6 +382,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                 <Reader
                   id={selected.id}
                   threadId={selected.threadId}
+                  me={email}
                   guard={guard}
                   onChanged={() => {
                     load(true);
@@ -452,6 +509,7 @@ const MessageRow = memo(function MessageRow({
 function Reader({
   id,
   threadId,
+  me,
   guard,
   onChanged,
   onReply,
@@ -459,6 +517,7 @@ function Reader({
 }: {
   id: string;
   threadId: string;
+  me: string;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onChanged: () => void;
   onReply: (init: ComposeInit) => void;
@@ -513,6 +572,66 @@ function Reader({
             }
           >
             ↩ 답장
+          </button>
+          <button
+            className="btn"
+            onClick={() => {
+              // Reply-all: sender → to, everyone else (minus me) → cc.
+              const others = [
+                ...msg.to.split(","),
+                ...(msg.cc ? msg.cc.split(",") : []),
+              ]
+                .map((s) => parseAddr(s.trim()).email)
+                .filter(
+                  (e) =>
+                    e &&
+                    e.toLowerCase() !== me.toLowerCase() &&
+                    e !== parseAddr(msg.from).email,
+                );
+              onReply({
+                to: parseAddr(msg.from).email,
+                cc: [...new Set(others)].join(", ") || undefined,
+                subject: msg.subject.startsWith("Re:")
+                  ? msg.subject
+                  : `Re: ${msg.subject}`,
+                threadId: msg.threadId,
+                inReplyTo: msg.rfc822MsgId || undefined,
+                quote: quoteText(msg),
+                quoteFrom: msg.from,
+              });
+            }}
+          >
+            ↩↩ 전체답장
+          </button>
+          <button
+            className="btn"
+            onClick={() =>
+              guard(async () => {
+                // Forward: original attachments ride along (re-download → base64).
+                const attachments = await Promise.all(
+                  msg.attachments.map(async (a) => ({
+                    filename: a.filename,
+                    mimeType: a.mimeType,
+                    size: a.size,
+                    data: await blobToBase64(
+                      await (
+                        await fetch(api.attachmentUrl(msg.id, a.id, a.filename))
+                      ).blob(),
+                    ),
+                  })),
+                );
+                onReply({
+                  subject: msg.subject.startsWith("Fwd:")
+                    ? msg.subject
+                    : `Fwd: ${msg.subject}`,
+                  quote: quoteText(msg),
+                  quoteFrom: msg.from,
+                  attachments,
+                });
+              })
+            }
+          >
+            ↪ 전달
           </button>
           <button
             className="btn"
@@ -787,6 +906,13 @@ function HtmlBody({ html, id }: { html: string; id: string }) {
   );
 }
 
+type ComposeAttachment = {
+  filename: string;
+  mimeType: string;
+  data: string;
+  size: number;
+};
+
 type ComposeInit = {
   to?: string;
   cc?: string;
@@ -795,6 +921,7 @@ type ComposeInit = {
   inReplyTo?: string;
   quote?: string;
   quoteFrom?: string;
+  attachments?: ComposeAttachment[];
 };
 
 function Compose({
@@ -820,9 +947,9 @@ function Compose({
   const [subject, setSubject] = useState(init?.subject ?? "");
   const [body, setBody] = useState(quoted);
   const [sending, setSending] = useState(false);
-  const [files, setFiles] = useState<
-    { filename: string; mimeType: string; data: string; size: number }[]
-  >([]);
+  const [files, setFiles] = useState<ComposeAttachment[]>(
+    init?.attachments ?? [],
+  );
 
   const send = () =>
     guard(async () => {
@@ -979,6 +1106,19 @@ function fileToBase64(file: File): Promise<{
     };
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+  });
+}
+
+/** Base64 (no data: prefix) of an already-downloaded blob (전달 첨부 재사용). */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
   });
 }
 
