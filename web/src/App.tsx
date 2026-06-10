@@ -128,8 +128,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [email, setEmail] = useState("");
   const [labels, setLabels] = useState<Label[]>([]);
   const [activeLabel, setActiveLabel] = useState("INBOX");
-  const [view, setView] = useState<"mail" | "calendar">("mail");
-  // ?q= deep link: 검색 결과 페이지를 URL로 바로 열 수 있다.
+  // ?view=calendar / ?q=검색어 deep link: 화면을 URL로 바로 열 수 있다.
+  const [view, setView] = useState<"mail" | "calendar">(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("view") === "calendar"
+        ? "calendar"
+        : "mail";
+    } catch {
+      return "mail";
+    }
+  });
   const initialQuery = (() => {
     try {
       return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
@@ -225,6 +233,18 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     };
   }, []);
 
+  // ?hide=calId1,calId2 deep link — 특정 캘린더를 숨긴 화면을 URL로 공유/오픈.
+  const urlHiddenCals = useRef<string[]>(
+    (() => {
+      try {
+        const v = new URLSearchParams(window.location.search).get("hide");
+        return v ? v.split(",").filter(Boolean) : [];
+      } catch {
+        return [];
+      }
+    })(),
+  );
+
   // Load the calendar list the first time the calendar view opens — or the
   // first search (검색 결과의 일정 카드가 수정 권한 판단에 필요).
   useEffect(() => {
@@ -237,7 +257,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       .then((cs) => {
         if (cancelled) return;
         setCalendars(cs);
-        setHiddenCals(new Set(cs.filter((c) => !c.selected).map((c) => c.id)));
+        setHiddenCals(
+          new Set([
+            ...cs.filter((c) => !c.selected).map((c) => c.id),
+            ...urlHiddenCals.current,
+          ]),
+        );
       })
       .catch((e) => {
         if (cancelled) return;
