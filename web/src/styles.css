@@ -357,8 +357,10 @@ body {
 }
 .html-frame {
   width: 100%;
-  min-height: 60vh;
+  min-height: 80px;
+  height: 320px; /* JS overrides to fit content; this is the pre-measure fallback */
   border: none;
+  display: block;
 }
 .text-body {
   white-space: pre-wrap;
@@ -784,5 +786,5 @@ textarea.ev-input {
   margin-top: 12px;
 }
 .thread-msg .html-frame {
-  min-height: 240px;
+  min-height: 80px;
 }

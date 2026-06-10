@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   api,
   AuthError,
@@ -603,17 +610,51 @@ function ThreadMessage({ m }: { m: MessageFull }) {
       )}
       <div className="reader-body">
         {m.bodyHtml ? (
-          <iframe
-            title={`message-${m.id}`}
-            sandbox="allow-popups allow-popups-to-escape-sandbox"
-            srcDoc={prepareEmailHtml(m.bodyHtml)}
-            className="html-frame"
-          />
+          <HtmlBody html={m.bodyHtml} id={m.id} />
         ) : (
           <pre className="text-body">{m.bodyText || m.snippet}</pre>
         )}
       </div>
     </div>
+  );
+}
+
+// Renders email HTML in a sandboxed iframe and auto-sizes it to its content.
+// allow-same-origin (WITHOUT allow-scripts) keeps email JS disabled while letting
+// the parent measure the document height; allow-popups makes links open in a new tab.
+function HtmlBody({ html, id }: { html: string; id: string }) {
+  const ref = useRef<HTMLIFrameElement>(null);
+
+  const resize = useCallback(() => {
+    const f = ref.current;
+    const doc = f?.contentDocument;
+    if (!f || !doc) return;
+    const h = Math.max(
+      doc.body?.scrollHeight ?? 0,
+      doc.documentElement?.scrollHeight ?? 0,
+    );
+    if (h) f.style.height = `${h + 8}px`;
+  }, []);
+
+  const onLoad = useCallback(() => {
+    resize();
+    const doc = ref.current?.contentDocument;
+    doc?.querySelectorAll("img").forEach((img) => {
+      if (!img.complete) img.addEventListener("load", resize, { once: true });
+    });
+    setTimeout(resize, 400);
+    setTimeout(resize, 1200);
+  }, [resize]);
+
+  return (
+    <iframe
+      ref={ref}
+      title={`message-${id}`}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      srcDoc={prepareEmailHtml(html)}
+      className="html-frame"
+      onLoad={onLoad}
+    />
   );
 }
 
