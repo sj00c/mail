@@ -370,6 +370,7 @@ export type OutAttachment = {
   filename: string;
   mimeType: string;
   data: string; // base64 (no data: prefix)
+  contentId?: string; // set → inline image referenced by cid: in bodyHtml
 };
 
 function wrap76(b64: string): string {
@@ -404,8 +405,9 @@ function buildMime(input: MailInput): string {
     "MIME-Version: 1.0",
   ].filter((l) => l !== "");
 
+  let boundarySeq = 0;
   const boundary = (tag: string) =>
-    `${tag}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+    `${tag}_${Date.now().toString(36)}_${(boundarySeq++).toString(36)}_${Math.random().toString(36).slice(2)}`;
   const b64Part = (contentType: string, data: string) => [
     `Content-Type: ${contentType}`,
     "Content-Transfer-Encoding: base64",
@@ -413,8 +415,14 @@ function buildMime(input: MailInput): string {
     wrap76(Buffer.from(data, "utf-8").toString("base64")),
   ];
 
-  // Body: text/plain, or multipart/alternative(text, html) when HTML exists.
-  let bodyLines = b64Part('text/plain; charset="UTF-8"', input.body);
+  // Proper nesting, built inside-out:
+  //   multipart/alternative (text + html)
+  //     └ wrapped in multipart/related when there are inline (cid) images
+  //       └ wrapped in multipart/mixed when there are file attachments
+  // Each layer is only added when it has more than one child.
+
+  // 1. body — text/plain alone, or multipart/alternative(text, html).
+  let bodyLines: string[];
   if (input.bodyHtml) {
     const alt = boundary("alt");
     bodyLines = [
@@ -426,39 +434,59 @@ function buildMime(input: MailInput): string {
       ...b64Part('text/html; charset="UTF-8"', input.bodyHtml),
       `--${alt}--`,
     ];
+  } else {
+    bodyLines = b64Part('text/plain; charset="UTF-8"', input.body);
   }
 
-  const atts = input.attachments ?? [];
-  let mime: string;
-  if (atts.length === 0) {
-    mime = [...headers, ...bodyLines].join("\r\n");
-  } else {
-    const mixed = boundary("b");
-    const parts: string[] = [
-      ...headers,
-      `Content-Type: multipart/mixed; boundary="${mixed}"`,
+  const all = input.attachments ?? [];
+  const inline = all.filter((a) => a.contentId);
+  const files = all.filter((a) => !a.contentId);
+
+  const attachPart = (a: OutAttachment, disposition: "attachment" | "inline") => {
+    const fname = encodeHeaderWord(a.filename.replace(/[\r\n"\\]/g, "_"), false);
+    const lines = [
+      `Content-Type: ${a.mimeType || "application/octet-stream"}; name="${fname}"`,
+      "Content-Transfer-Encoding: base64",
+    ];
+    if (disposition === "inline" && a.contentId) {
+      lines.push(`Content-ID: <${a.contentId.replace(/[\r\n<>]/g, "")}>`);
+      lines.push(`Content-Disposition: inline; filename="${fname}"`);
+    } else {
+      lines.push(`Content-Disposition: attachment; filename="${fname}"`);
+    }
+    lines.push("", wrap76(a.data));
+    return lines;
+  };
+
+  // 2. wrap body + inline images in multipart/related (only if any inline).
+  if (inline.length > 0) {
+    const rel = boundary("rel");
+    const relLines = [
+      `Content-Type: multipart/related; boundary="${rel}"`,
       "",
-      `--${mixed}`,
+      `--${rel}`,
       ...bodyLines,
     ];
-    for (const a of atts) {
-      // RFC 2047 encoded-word inside quoted filename/name params — universally
-      // understood by Gmail/Outlook. The previous filename*=UTF-8'' form leaked
-      // RFC 5987-illegal chars (parens) unencoded, which garbled the name.
-      const fname = encodeHeaderWord(a.filename.replace(/[\r\n"\\]/g, "_"), false);
-      parts.push(
-        `--${mixed}`,
-        `Content-Type: ${a.mimeType || "application/octet-stream"}; name="${fname}"`,
-        "Content-Transfer-Encoding: base64",
-        `Content-Disposition: attachment; filename="${fname}"`,
-        "",
-        wrap76(a.data),
-      );
-    }
-    parts.push(`--${mixed}--`);
-    mime = parts.join("\r\n");
+    for (const a of inline) relLines.push(`--${rel}`, ...attachPart(a, "inline"));
+    relLines.push(`--${rel}--`);
+    bodyLines = relLines;
   }
-  return mime;
+
+  // 3. wrap in multipart/mixed (only if any file attachments).
+  if (files.length === 0) {
+    return [...headers, ...bodyLines].join("\r\n");
+  }
+  const mixed = boundary("mix");
+  const parts: string[] = [
+    ...headers,
+    `Content-Type: multipart/mixed; boundary="${mixed}"`,
+    "",
+    `--${mixed}`,
+    ...bodyLines,
+  ];
+  for (const a of files) parts.push(`--${mixed}`, ...attachPart(a, "attachment"));
+  parts.push(`--${mixed}--`);
+  return parts.join("\r\n");
 }
 
 // Above this, the message goes through the /upload media endpoint: the plain

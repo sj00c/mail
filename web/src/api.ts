@@ -186,7 +186,7 @@ export const api = {
     threadId?: string;
     inReplyTo?: string;
     references?: string;
-    attachments?: { filename: string; mimeType: string; data: string }[];
+    attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
   }) =>
     req<{ id: string; threadId: string }>("/api/send", {
       method: "POST",
@@ -200,10 +200,11 @@ export const api = {
     replyTo?: string;
     subject: string;
     body: string;
+    bodyHtml?: string;
     threadId?: string;
     inReplyTo?: string;
     references?: string;
-    attachments?: { filename: string; mimeType: string; data: string }[];
+    attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
   }) =>
     req<{ id: string }>("/api/draft", {
       method: "POST",
@@ -221,10 +222,11 @@ export const api = {
       replyTo?: string;
       subject: string;
       body: string;
+      bodyHtml?: string;
       threadId?: string;
       inReplyTo?: string;
       references?: string;
-      attachments?: { filename: string; mimeType: string; data: string }[];
+      attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
     },
   ) =>
     req<{ id: string }>(`/api/drafts/${encodeURIComponent(draftId)}`, {

@@ -319,10 +319,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           if (e instanceof HttpError && e.status === 404) return null;
           throw e;
         });
+        // Re-download ALL attachments incl. inline (cid:) images, preserving
+        // contentId — otherwise the resumed draft's bodyHtml keeps cid: refs
+        // with no matching parts and inline images break on re-send.
         const attachments = await Promise.all(
-          full.attachments
-            .filter((a) => !a.contentId) // inline images belong to the HTML body
-            .map((a) => downloadAttachment(full.id, a)),
+          full.attachments.map((a) => downloadAttachment(full.id, a)),
         );
         if (seq !== openDraftSeq.current) return; // superseded by a later click
         openCompose({
@@ -331,13 +332,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           cc: full.cc || undefined,
           bcc: full.bcc || undefined, // Gmail-web drafts may carry Bcc
           subject: full.subject,
-          // our drafts are text/plain (lossless); Gmail-web HTML drafts fall
-          // back to clean text extraction
-          body: full.bodyText ?? quoteText(full),
+          // 저장된 HTML을 그대로 이어쓴다 (서식 보존). 평문뿐인 드래프트는
+          // textToHtml로 감싸 동일한 에디터에 올린다.
+          bodyHtml: full.bodyHtml ?? textToHtml(full.bodyText ?? ""),
           // a resumed reply draft must keep its threading headers
           inReplyTo: full.inReplyTo || undefined,
           references: full.references || undefined,
-          richWarning: !full.bodyText && !!full.bodyHtml,
           threadId: full.threadId,
           attachments,
         });
@@ -1124,18 +1124,19 @@ function Reader({
             className="btn"
             onClick={() =>
               guard(async () => {
-                // Forward: original attachments ride along (re-download →
-                // base64). Inline cid: image parts stay out — they belong to
-                // the original HTML body, not the attachment list.
+                // Forward carries everything: file attachments AND inline cid:
+                // images (re-related on send) so the original renders intact.
                 const attachments = await Promise.all(
-                  msg.attachments
-                    .filter((a) => !a.contentId)
-                    .map((a) => downloadAttachment(msg.id, a)),
+                  msg.attachments.map((a) => downloadAttachment(msg.id, a)),
                 );
                 onReply({
                   subject: fwdSubject(msg.subject),
-                  quote: quoteText(msg),
+                  forward: true,
+                  quoteHtml: msg.bodyHtml || textToHtml(msg.bodyText || msg.snippet || ""),
                   quoteFrom: msg.from,
+                  quoteDate: msg.date,
+                  quoteTo: msg.to,
+                  quoteSubject: msg.subject,
                   attachments,
                 });
               })
@@ -1278,8 +1279,10 @@ function buildReplyInit(msg: MessageFull, me: string, all: boolean): ComposeInit
     threadId: msg.threadId,
     inReplyTo: msg.rfc822MsgId || undefined,
     references: replyReferences(msg),
-    quote: quoteText(msg),
+    // 원본 HTML 보존 — 없으면 평문을 HTML로 감싸 인용
+    quoteHtml: msg.bodyHtml || textToHtml(msg.bodyText || msg.snippet || ""),
     quoteFrom: msg.from,
+    quoteDate: msg.date,
   };
 }
 
@@ -1525,6 +1528,7 @@ type ComposeAttachment = {
   mimeType: string;
   data: string;
   size: number;
+  contentId?: string; // inline (cid:) image — re-related on forward
 };
 
 type ComposeInit = {
@@ -1535,13 +1539,193 @@ type ComposeInit = {
   inReplyTo?: string;
   references?: string; // accumulated RFC 5322 chain (원본 References + Message-ID)
   bcc?: string;
-  quote?: string;
+  // 답장/전달 인용 — 원본 HTML을 보존해 blockquote로 싣는다 (평문으로 펼치지 않음)
+  quoteHtml?: string;
   quoteFrom?: string;
+  quoteDate?: string;
+  quoteTo?: string;
+  quoteSubject?: string;
+  forward?: boolean; // 전달이면 인용을 "전달된 메일" 헤더 형식으로
   attachments?: ComposeAttachment[];
-  body?: string; // verbatim initial body (드래프트 이어쓰기)
+  bodyHtml?: string; // 드래프트 이어쓰기 — 저장된 HTML 그대로
   draftId?: string; // editing this Gmail draft: update on save, delete on send
-  richWarning?: boolean; // Gmail-web HTML draft resumed as plain text
 };
+
+// 답장/전달 시 에디터에 까는 인용 HTML. 원본 HTML을 그대로 blockquote에 넣어
+// 서식·인라인 이미지(cid:)를 보존한다.
+function buildQuotedHtml(init?: ComposeInit): string {
+  if (!init?.quoteHtml) return "";
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const when = init.quoteDate
+    ? new Date(init.quoteDate).toLocaleString("ko-KR", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+  // 위생 처리 필수 — 받은 메일의 원본 HTML이 에디터(메인 문서)에 innerHTML로
+  // 들어가므로 <img onerror> 류가 마운트 즉시 실행되는 걸 막는다. 전달은 인라인
+  // 이미지를 재첨부하므로 cid: 유지, 답장은 재첨부 안 하므로 cid: 이미지 제거.
+  if (init.forward) {
+    const safe = sanitizeMailHtml(init.quoteHtml);
+    const rows = [
+      ["보낸사람", init.quoteFrom],
+      ["날짜", when],
+      ["제목", init.quoteSubject],
+      ["받는사람", init.quoteTo],
+    ]
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${esc(String(v))}`)
+      .join("<br>");
+    return (
+      `<br><div class="mail-quote">` +
+      `<div style="color:#5f6368">---------- 전달된 메일 ----------<br>${rows}</div>` +
+      `<br>${safe}</div>`
+    );
+  }
+  const safe = sanitizeMailHtml(init.quoteHtml, { dropCidImages: true });
+  const attr = `${when ? when + ", " : ""}${esc(init.quoteFrom ?? "")} 님이 작성:`;
+  return (
+    `<br><div class="mail-quote">` +
+    `<div style="color:#5f6368">${attr}</div>` +
+    `<blockquote style="margin:0 0 0 0.8ex;border-left:2px solid #d3d9e3;padding-left:1ex">` +
+    `${safe}</blockquote></div>`
+  );
+}
+
+// 메일 본문 HTML 위생 처리. 두 곳에서 쓴다:
+//  (1) 받은 메일/드래프트 HTML이 에디터(contentEditable, 메인 문서)에 innerHTML로
+//      들어가기 "전" — <img onerror>·<svg onload> 류 인라인 핸들러가 마운트 즉시
+//      실행되는 XSS를 막는다 (받은 메일 보기는 무스크립트 iframe이라 안전하지만
+//      에디터는 그렇지 않다).
+//  (2) 발송 직전 — 수신자/SENT 함을 위한 방어.
+const URL_ATTRS = new Set([
+  "href",
+  "src",
+  "xlink:href",
+  "formaction",
+  "action",
+  "background",
+  "poster",
+]);
+const DANGER_SCHEME = /^(javascript|vbscript|data):/i;
+// strip control/space chars so "java\nscript:" can't slip past the scheme test
+const CTRL_WS = /[\u0000-\u0020]/g;
+
+function sanitizeMailHtml(html: string, opts?: { dropCidImages?: boolean }): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc
+      .querySelectorAll("script,style,meta,link,title,base,iframe,object,embed,form")
+      .forEach((n) => n.remove());
+    if (opts?.dropCidImages) {
+      // 답장 인용엔 인라인 이미지를 재첨부하지 않으므로 cid: 참조 이미지를 제거 —
+      // 안 그러면 수신자에게 깨진 이미지로 보인다.
+      doc.querySelectorAll("img[src]").forEach((img) => {
+        if (/^cid:/i.test(img.getAttribute("src") ?? "")) img.remove();
+      });
+    }
+    doc.querySelectorAll("*").forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        const val = attr.value.replace(CTRL_WS, "");
+        if (name.startsWith("on")) {
+          el.removeAttribute(attr.name);
+        } else if (
+          name === "style" &&
+          /expression\(|url\(\s*['"]?\s*(javascript|vbscript):/i.test(attr.value)
+        ) {
+          el.removeAttribute(attr.name);
+        } else if (URL_ATTRS.has(name) && DANGER_SCHEME.test(val)) {
+          if (!/^data:image\//i.test(val)) el.removeAttribute(attr.name); // data:image만 허용
+        }
+      }
+    });
+    return doc.body?.innerHTML ?? "";
+  } catch {
+    return "";
+  }
+}
+
+// 서식 작성 에디터 — contentEditable + 툴바. 외부 라이브러리 없이
+// document.execCommand로 굵게/기울임/밑줄/목록/링크를 처리한다. 본문은
+// 부모가 editorRef.current.innerHTML로 읽어 발송한다 (uncontrolled).
+function RichEditor({
+  editorRef,
+  initialHtml,
+  onFiles,
+}: {
+  editorRef: React.RefObject<HTMLDivElement>;
+  initialHtml: string;
+  onFiles: (files: File[]) => void;
+}) {
+  // 마운트 시 1회만 주입 — contentEditable은 uncontrolled로 둔다.
+  useEffect(() => {
+    if (editorRef.current) editorRef.current.innerHTML = initialHtml;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cmd = (command: string, value?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+  };
+  const makeLink = () => {
+    const sel = window.getSelection?.()?.toString();
+    const url = window.prompt("링크 URL:", sel && /^https?:/i.test(sel) ? sel : "https://");
+    if (url) cmd("createLink", url);
+  };
+  // 버튼이 selection을 빼앗지 않게 mousedown 기본동작 차단 후 click에서 실행
+  const tool = (
+    label: ReactNode,
+    action: () => void,
+    title: string,
+  ) => (
+    <button
+      type="button"
+      className="rich-tool"
+      title={title}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={action}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="rich-compose">
+      <div className="rich-toolbar">
+        {tool(<b>B</b>, () => cmd("bold"), "굵게")}
+        {tool(<i>I</i>, () => cmd("italic"), "기울임")}
+        {tool(<u>U</u>, () => cmd("underline"), "밑줄")}
+        <span className="rich-sep" />
+        {tool("• 목록", () => cmd("insertUnorderedList"), "글머리 목록")}
+        {tool("1. 목록", () => cmd("insertOrderedList"), "번호 목록")}
+        <span className="rich-sep" />
+        {tool("🔗", makeLink, "링크")}
+        {tool("✕서식", () => cmd("removeFormat"), "서식 지우기")}
+      </div>
+      <div
+        ref={editorRef}
+        className="rich-body"
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder="내용을 입력하세요"
+        onPaste={(e) => {
+          const pasted = Array.from(e.clipboardData.files);
+          if (pasted.length) {
+            e.preventDefault(); // 파일/스크린샷 붙여넣기 → 첨부
+            onFiles(pasted);
+          }
+          // 그 외(텍스트/HTML)는 브라우저 기본 붙여넣기에 맡긴다
+        }}
+      />
+    </div>
+  );
+}
 
 function Compose({
   init,
@@ -1571,18 +1755,28 @@ function Compose({
       ? `"${chosenAlias.displayName.replace(/"/g, "")}" <${chosenAlias.email}>`
       : chosenAlias.email
     : undefined;
-  const quoted = init?.quote
-    ? `\n\n\n--- ${init.quoteFrom ?? ""} 작성 ---\n` +
-      init.quote
-        .split("\n")
-        .map((l) => `> ${l}`)
-        .join("\n")
-    : "";
+  // 에디터 초기 HTML (마운트 시 1회). composeKey로 매번 재마운트되므로
+  // init은 마운트당 고정 — 의존성 비워도 안전.
+  const editorRef = useRef<HTMLDivElement>(null);
+  const initialHtml = useMemo(() => {
+    // 드래프트 이어쓰기: 저장된 HTML. Gmail-web 드래프트엔 위험 마크업이 있을 수
+    // 있으므로 에디터(메인 문서)에 넣기 전 위생 처리한다.
+    if (init?.draftId || init?.bodyHtml) {
+      return init?.bodyHtml ? sanitizeMailHtml(init.bodyHtml) : "<div><br></div>";
+    }
+    // 새 메일 / 답장 / 전달: 입력칸 + 서명 + 인용
+    const sigHtml = getSignatureHtml();
+    const sigText = getSignature();
+    const sig = sigHtml || (sigText ? textToHtml(sigText) : "");
+    const sigBlock = sig ? `<br><div class="mail-signature">--<br>${sig}</div>` : "";
+    return `<div><br></div>${sigBlock}${buildQuotedHtml(init)}`;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [to, setTo] = useState(init?.to ?? "");
   const [cc, setCc] = useState(init?.cc ?? "");
   const [bcc, setBcc] = useState(init?.bcc ?? "");
   const [subject, setSubject] = useState(init?.subject ?? "");
-  const [body, setBody] = useState(init?.body ?? quoted);
   const [sending, setSending] = useState(false);
   // Errors render inside the modal — the global banner sits behind the
   // backdrop and is unreachable while the editor is open. An AuthError keeps
@@ -1657,43 +1851,40 @@ function Compose({
     }
   };
 
+  // 에디터 HTML(위생 처리) + 그로부터 파생한 text/plain 대체본 + 첨부 페이로드.
+  // 서명·인용은 에디터 콘텐츠에 이미 들어 있으므로 발송 시 따로 덧붙이지 않는다.
+  const composedPayload = () => {
+    const html = sanitizeMailHtml(editorRef.current?.innerHTML ?? "");
+    return {
+      to,
+      cc: cc || undefined,
+      bcc: bcc || undefined,
+      // 별칭이 하나뿐이면 Gmail 기본값에 맡긴다 (보내는 이름 자동 적용)
+      from: aliases.length > 1 ? fromHeader : undefined,
+      replyTo: chosenAlias?.replyTo || undefined,
+      subject,
+      body: htmlToText(html), // text/plain 대체본
+      bodyHtml: html,
+      threadId: init?.threadId,
+      inReplyTo: init?.inReplyTo,
+      references: init?.references ?? init?.inReplyTo,
+      attachments: files.length
+        ? files.map(({ filename, mimeType, data, contentId }) => ({
+            filename,
+            mimeType,
+            data,
+            contentId,
+          }))
+        : undefined,
+    };
+  };
+
   const send = () =>
     run(async () => {
       setSending(true);
       try {
         assertSendableSize();
-        // 서명은 발송 시점에 합성: 텍스트 본문 + (서식 서명이 있으면) HTML
-        // alternative — 이미지/스타일이 원본 그대로 나간다.
-        const sigText = getSignature();
-        const sigHtml = getSignatureHtml();
-        // Resumed drafts may already carry the signature — never append twice.
-        const hasSig =
-          !!sigText && body.replace(/\s+$/, "").endsWith(sigText.trim());
-        const appendSig = !!sigText && !hasSig;
-        await api.send({
-          to,
-          cc: cc || undefined,
-          bcc: bcc || undefined,
-          // 별칭이 하나뿐이면 Gmail 기본값에 맡긴다 (보내는 이름 자동 적용)
-          from: aliases.length > 1 ? fromHeader : undefined,
-          replyTo: chosenAlias?.replyTo || undefined,
-          subject,
-          body: appendSig ? `${body}\n\n--\n${sigText}` : body,
-          bodyHtml:
-            appendSig && sigHtml
-              ? `${textToHtml(body)}<br><br>--<br>${sigHtml}`
-              : undefined,
-          threadId: init?.threadId,
-          inReplyTo: init?.inReplyTo,
-          references: init?.references ?? init?.inReplyTo,
-          attachments: files.length
-            ? files.map(({ filename, mimeType, data }) => ({
-                filename,
-                mimeType,
-                data,
-              }))
-            : undefined,
-        });
+        await api.send(composedPayload());
         if (draftId) {
           // Post-send cleanup only — a failed draft delete must never make a
           // SENT mail look failed (re-click would double-send).
@@ -1710,25 +1901,7 @@ function Compose({
       setSending(true);
       try {
         assertSendableSize();
-        const payload = {
-          to,
-          cc: cc || undefined,
-          bcc: bcc || undefined,
-          from: aliases.length > 1 ? fromHeader : undefined,
-          replyTo: chosenAlias?.replyTo || undefined,
-          subject,
-          body,
-          threadId: init?.threadId,
-          inReplyTo: init?.inReplyTo,
-          references: init?.references ?? init?.inReplyTo,
-          attachments: files.length
-            ? files.map(({ filename, mimeType, data }) => ({
-                filename,
-                mimeType,
-                data,
-              }))
-            : undefined,
-        };
+        const payload = composedPayload();
         if (draftId) {
           try {
             await api.updateDraft(draftId, payload);
@@ -1771,7 +1944,7 @@ function Compose({
               ? "임시보관 메일"
               : init?.inReplyTo
                 ? "답장"
-                : init?.attachments?.length || init?.quote
+                : init?.forward
                   ? "전달"
                   : "새 메일"}
           </strong>
@@ -1779,11 +1952,6 @@ function Compose({
             ✕
           </button>
         </div>
-        {init?.richWarning && (
-          <div className="muted settings-label">
-            ⚠️ 서식 있는 임시보관 메일입니다 — 저장/발송 시 텍스트로 변환됩니다.
-          </div>
-        )}
         {aliases.length > 1 && (
           <select
             className="from-select"
@@ -1818,32 +1986,28 @@ function Compose({
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
         />
-        <textarea
-          placeholder="내용"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onPaste={(e) => {
-            const pasted = Array.from(e.clipboardData.files);
-            if (pasted.length) {
-              e.preventDefault(); // file paste (스크린샷 등) → attach
-              addFiles(pasted);
-            }
-          }}
+        <RichEditor
+          editorRef={editorRef}
+          initialHtml={initialHtml}
+          onFiles={addFiles}
         />
-        {files.length > 0 && (
+        {files.some((f) => !f.contentId) && (
           <div className="compose-atts">
-            {files.map((f, i) => (
-              <span key={`${f.filename}-${i}`} className="chip">
-                📎 {f.filename} ({Math.round(f.size / 1024)}KB)
-                <button
-                  type="button"
-                  className="chip-x"
-                  onClick={() => removeFile(i)}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
+            {files.map((f, i) =>
+              // 인라인 이미지(cid:)는 본문에 박혀 있으므로 칩으로 안 보인다.
+              f.contentId ? null : (
+                <span key={`${f.filename}-${i}`} className="chip">
+                  📎 {f.filename} ({Math.round(f.size / 1024)}KB)
+                  <button
+                    type="button"
+                    className="chip-x"
+                    onClick={() => removeFile(i)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ),
+            )}
           </div>
         )}
         {formErr && (
@@ -1933,7 +2097,7 @@ function replyReferences(m: MessageFull): string | undefined {
  *  instead of silently base64-encoding an error JSON body as the attachment. */
 async function downloadAttachment(
   messageId: string,
-  a: { id: string; filename: string; mimeType: string; size: number },
+  a: { id: string; filename: string; mimeType: string; size: number; contentId?: string },
 ): Promise<ComposeAttachment> {
   const res = await fetch(api.attachmentUrl(messageId, a.id, a.filename));
   if (res.status === 401) throw new AuthError("NOT_AUTHENTICATED");
@@ -1944,6 +2108,7 @@ async function downloadAttachment(
     filename: a.filename,
     mimeType: a.mimeType,
     size: a.size,
+    contentId: a.contentId, // preserve cid so forwarded inline images re-link
     data: await blobToBase64(await res.blob()),
   };
 }
@@ -3078,17 +3243,6 @@ function htmlToText(html: string): string {
   } catch {
     return "";
   }
-}
-
-// Reply-quote text. Prefer extracting from the HTML part: some senders
-// (Dooray 등) leak raw entities ("&nbsp;") and tag-mashed text into their
-// text/plain part, and HTML-only mails have no text part at all.
-function quoteText(m: MessageFull): string {
-  if (m.bodyHtml) {
-    const cleaned = htmlToText(m.bodyHtml);
-    if (cleaned) return cleaned;
-  }
-  return m.bodyText ?? "";
 }
 
 // Rendered email/description HTML lives in a sandboxed iframe (no scripts).
