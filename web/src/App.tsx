@@ -507,7 +507,7 @@ function Reader({
                   : `Re: ${msg.subject}`,
                 threadId: msg.threadId,
                 inReplyTo: msg.rfc822MsgId || undefined,
-                quote: msg.bodyText ?? "",
+                quote: quoteText(msg),
                 quoteFrom: msg.from,
               })
             }
@@ -1661,6 +1661,33 @@ function formatEventWhen(e: CalEvent): string {
   if (s.toDateString() === en.toDateString()) return `${date} ${st} – ${et}`;
   const ed = en.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
   return `${date} ${st} – ${ed} ${et}`;
+}
+
+// Reply-quote text. Prefer extracting from the HTML part: some senders
+// (Dooray 등) leak raw entities ("&nbsp;") and tag-mashed text into their
+// text/plain part, and HTML-only mails have no text part at all. DOM
+// extraction decodes entities and turns block boundaries into line breaks.
+function quoteText(m: MessageFull): string {
+  if (m.bodyHtml) {
+    try {
+      const doc = new DOMParser().parseFromString(m.bodyHtml, "text/html");
+      doc.querySelectorAll("style,script").forEach((n) => n.remove());
+      doc.querySelectorAll("br").forEach((n) => n.replaceWith("\n"));
+      doc.body
+        ?.querySelectorAll("p,div,li,tr,h1,h2,h3,h4,h5,h6,blockquote,table")
+        .forEach((n) => n.append("\n"));
+      const text = doc.body?.textContent ?? "";
+      const cleaned = text
+        .replace(/\u00a0/g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (cleaned) return cleaned;
+    } catch {
+      // fall through to the text part
+    }
+  }
+  return m.bodyText ?? "";
 }
 
 // Rendered email/description HTML lives in a sandboxed iframe (no scripts).

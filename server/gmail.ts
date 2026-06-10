@@ -49,7 +49,11 @@ function toSummary(m: gmail_v1.Schema$Message): MessageSummary {
     date: new Date(internal).toISOString(),
     unread: labelIds.includes("UNREAD"),
     labelIds,
-    hasAttachments: hasAttachment(m.payload),
+    // format=metadata has no payload parts — fall back to the Content-Type
+    // header (multipart/mixed ⇒ attachments) so the list 📎 indicator works.
+    hasAttachments:
+      hasAttachment(m.payload) ||
+      /multipart\/mixed/i.test(header(headers, "Content-Type")),
   };
 }
 
@@ -112,7 +116,7 @@ export async function listMessages(opts: {
         userId: "me",
         id: ref.id!,
         format: "metadata",
-        metadataHeaders: ["From", "To", "Subject", "Date"],
+        metadataHeaders: ["From", "To", "Subject", "Date", "Content-Type"],
       });
       return toSummary(full.data);
     }),
@@ -263,11 +267,15 @@ function buildRaw(input: MailInput): string {
       bodyB64,
     ];
     for (const a of atts) {
+      // RFC 2047 encoded-word inside quoted filename/name params — universally
+      // understood by Gmail/Outlook. The previous filename*=UTF-8'' form leaked
+      // RFC 5987-illegal chars (parens) unencoded, which garbled the name.
+      const fname = encodeHeaderWord(a.filename.replace(/[\r\n"]/g, "_"));
       parts.push(
         `--${boundary}`,
-        `Content-Type: ${a.mimeType || "application/octet-stream"}`,
+        `Content-Type: ${a.mimeType || "application/octet-stream"}; name="${fname}"`,
         "Content-Transfer-Encoding: base64",
-        `Content-Disposition: attachment; filename*=UTF-8''${encodeURIComponent(a.filename)}`,
+        `Content-Disposition: attachment; filename="${fname}"`,
         "",
         wrap76(a.data),
       );
