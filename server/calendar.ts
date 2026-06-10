@@ -56,6 +56,59 @@ export async function getEvent(
   };
 }
 
+export type EventInput = {
+  calendarId: string;
+  summary: string;
+  start: string; // ISO datetime, or YYYY-MM-DD for all-day
+  end: string;
+  allDay: boolean;
+  location?: string;
+  description?: string;
+};
+
+function toEventBody(i: EventInput): calendar_v3.Schema$Event {
+  return {
+    summary: i.summary || "(제목 없음)",
+    location: i.location || undefined,
+    description: i.description || undefined,
+    start: i.allDay
+      ? { date: i.start.slice(0, 10) }
+      : { dateTime: new Date(i.start).toISOString() },
+    end: i.allDay
+      ? { date: i.end.slice(0, 10) }
+      : { dateTime: new Date(i.end).toISOString() },
+  };
+}
+
+export async function createEvent(i: EventInput): Promise<{ id: string }> {
+  const cal = await api();
+  const res = await cal.events.insert({
+    calendarId: i.calendarId,
+    requestBody: toEventBody(i),
+  });
+  return { id: res.data.id ?? "" };
+}
+
+export async function updateEvent(
+  eventId: string,
+  i: EventInput,
+): Promise<void> {
+  const cal = await api();
+  await cal.events.patch({
+    calendarId: i.calendarId,
+    eventId,
+    requestBody: toEventBody(i),
+  });
+}
+
+export async function deleteEvent(
+  calendarId: string,
+  eventId: string,
+): Promise<void> {
+  const cal = await api();
+  await cal.events.delete({ calendarId, eventId });
+}
+
 /**
  * Upcoming events across all of the user's selected calendars,
  * from now to now + `days`, expanded (recurring -> single instances), sorted by start.

@@ -3,10 +3,10 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 // Scopes: gmail (read/send/label/mark-read/archive/trash; no permanent delete)
-// + read-only Google Calendar.
+// + Google Calendar read/write (create/update/delete events).
 export const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar",
 ];
 
 const TOKEN_PATH = join(import.meta.dir, ".data", "token.json");

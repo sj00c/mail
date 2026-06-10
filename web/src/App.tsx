@@ -7,6 +7,7 @@ import {
   type CalEvent,
   type Calendar,
   type CalEventDetail,
+  type EventInput,
   type MessageFull,
   type MessageSummary,
 } from "./api.ts";
@@ -283,7 +284,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </nav>
 
         {view === "calendar" ? (
-          <CalendarView onLogout={onLogout} hiddenCals={hiddenCals} />
+          <CalendarView
+            onLogout={onLogout}
+            hiddenCals={hiddenCals}
+            calendars={calendars}
+          />
         ) : (
           <>
             <section className="list">
@@ -499,6 +504,27 @@ function Reader({
             className="btn"
             onClick={() =>
               guard(async () => {
+                const starred = msg.labelIds.includes("STARRED");
+                await api.modify(id, {
+                  add: starred ? [] : ["STARRED"],
+                  remove: starred ? ["STARRED"] : [],
+                });
+                onChanged();
+                setMsg({
+                  ...msg,
+                  labelIds: starred
+                    ? msg.labelIds.filter((l) => l !== "STARRED")
+                    : [...msg.labelIds, "STARRED"],
+                });
+              })
+            }
+          >
+            {msg.labelIds.includes("STARRED") ? "★ 별표 해제" : "☆ 별표"}
+          </button>
+          <button
+            className="btn"
+            onClick={() =>
+              guard(async () => {
                 await api.modify(id, {
                   add: msg.unread ? [] : ["UNREAD"],
                   remove: msg.unread ? ["UNREAD"] : [],
@@ -521,6 +547,22 @@ function Reader({
             }
           >
             📥 보관
+          </button>
+          <button
+            className="btn"
+            onClick={() =>
+              guard(async () => {
+                const isSpam = msg.labelIds.includes("SPAM");
+                await api.modify(id, {
+                  add: isSpam ? ["INBOX"] : ["SPAM"],
+                  remove: isSpam ? ["SPAM"] : ["INBOX"],
+                });
+                onChanged();
+                onClose();
+              })
+            }
+          >
+            {msg.labelIds.includes("SPAM") ? "✅ 스팸 아님" : "🚫 스팸"}
           </button>
           <button
             className="btn danger"
@@ -628,6 +670,32 @@ function Compose({
       }
     });
 
+  const saveDraft = () =>
+    guard(async () => {
+      setSending(true);
+      try {
+        await api.saveDraft({
+          to,
+          cc: cc || undefined,
+          subject,
+          body,
+          threadId: init?.threadId,
+          inReplyTo: init?.inReplyTo,
+          references: init?.inReplyTo,
+          attachments: files.length
+            ? files.map(({ filename, mimeType, data }) => ({
+                filename,
+                mimeType,
+                data,
+              }))
+            : undefined,
+        });
+        onClose();
+      } finally {
+        setSending(false);
+      }
+    });
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -692,6 +760,13 @@ function Compose({
           </label>
           <span className="modal-spacer" />
           <button
+            className="btn"
+            disabled={sending}
+            onClick={saveDraft}
+          >
+            임시저장
+          </button>
+          <button
             className="btn primary"
             disabled={sending || !to}
             onClick={send}
@@ -730,9 +805,11 @@ function fileToBase64(file: File): Promise<{
 function CalendarView({
   onLogout,
   hiddenCals,
+  calendars,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
+  calendars: Calendar[];
 }) {
   const [mode, setMode] = useState<"month" | "agenda">("month");
   const [detailEv, setDetailEv] = useState<CalEvent | null>(null);
@@ -740,18 +817,39 @@ function CalendarView({
     key: string;
     events: CalEvent[];
   } | null>(null);
+  const [editor, setEditor] = useState<{
+    initial: Partial<EventInput>;
+    eventId?: string;
+  } | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const writable = calendars.filter(
+    (c) => c.accessRole === "owner" || c.accessRole === "writer",
+  );
 
   const openEvent = useCallback((e: CalEvent) => setDetailEv(e), []);
   const openDay = useCallback(
     (key: string, events: CalEvent[]) => setDayModal({ key, events }),
     [],
   );
+  const reload = useCallback(() => {
+    calCache.clear();
+    setRefreshKey((k) => k + 1);
+  }, []);
 
   return (
     <div className="calendar">
       <div className="cal-head">
         <h2>📅 캘린더</h2>
         <div className="cal-modes">
+          {writable.length > 0 && (
+            <button
+              className="btn primary"
+              onClick={() => setEditor({ initial: {} })}
+            >
+              ✏️ 새 일정
+            </button>
+          )}
           <button
             className={`btn ${mode === "month" ? "primary" : ""}`}
             onClick={() => setMode("month")}
@@ -772,12 +870,14 @@ function CalendarView({
           hiddenCals={hiddenCals}
           onEvent={openEvent}
           onDay={openDay}
+          refreshKey={refreshKey}
         />
       ) : (
         <AgendaList
           onLogout={onLogout}
           hiddenCals={hiddenCals}
           onEvent={openEvent}
+          refreshKey={refreshKey}
         />
       )}
       {dayModal && (
@@ -795,7 +895,39 @@ function CalendarView({
         <EventDetailModal
           ev={detailEv}
           onLogout={onLogout}
+          canEdit={writable.some((c) => c.id === detailEv.calendarId)}
+          onEdit={(d) => {
+            setEditor({
+              initial: {
+                calendarId: d.calendarId,
+                summary: d.summary,
+                start: d.start,
+                end: d.end,
+                allDay: d.allDay,
+                location: d.location,
+                description: d.description,
+              },
+              eventId: d.id,
+            });
+            setDetailEv(null);
+          }}
+          onChanged={() => {
+            setDetailEv(null);
+            reload();
+          }}
           onClose={() => setDetailEv(null)}
+        />
+      )}
+      {editor && (
+        <EventEditModal
+          calendars={writable}
+          initial={editor.initial}
+          eventId={editor.eventId}
+          onClose={() => setEditor(null)}
+          onSaved={() => {
+            setEditor(null);
+            reload();
+          }}
         />
       )}
     </div>
@@ -879,11 +1011,13 @@ function MonthGrid({
   hiddenCals,
   onEvent,
   onDay,
+  refreshKey,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
   onEvent: (e: CalEvent) => void;
   onDay: (key: string, events: CalEvent[]) => void;
+  refreshKey: number;
 }) {
   const [cursor, setCursor] = useState(() => {
     const d = new Date();
@@ -896,7 +1030,7 @@ function MonthGrid({
       from: start.toISOString(),
       to: new Date(end.getTime() + 86_400_000).toISOString(),
     },
-    [cursor.getTime(), onLogout],
+    [cursor.getTime(), refreshKey, onLogout],
     onLogout,
   );
 
@@ -1006,13 +1140,19 @@ function AgendaList({
   onLogout,
   hiddenCals,
   onEvent,
+  refreshKey,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
   onEvent: (e: CalEvent) => void;
+  refreshKey: number;
 }) {
   const [days, setDays] = useState(30);
-  const { events, err } = useCalendarEvents({ days }, [days, onLogout], onLogout);
+  const { events, err } = useCalendarEvents(
+    { days },
+    [days, refreshKey, onLogout],
+    onLogout,
+  );
 
   const groups = useMemo(() => {
     const out: [string, CalEvent[]][] = [];
@@ -1186,14 +1326,21 @@ function DayEventsModal({
 function EventDetailModal({
   ev,
   onLogout,
+  canEdit,
+  onEdit,
+  onChanged,
   onClose,
 }: {
   ev: CalEvent;
   onLogout: () => void;
+  canEdit: boolean;
+  onEdit: (d: CalEventDetail) => void;
+  onChanged: () => void;
   onClose: () => void;
 }) {
   const [detail, setDetail] = useState<CalEventDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1277,6 +1424,30 @@ function EventDetailModal({
           )}
         </div>
         <div className="modal-foot">
+          {canEdit && d && (
+            <>
+              <button className="btn" onClick={() => onEdit(d)}>
+                ✏️ 수정
+              </button>
+              <button
+                className="btn danger"
+                disabled={deleting}
+                onClick={async () => {
+                  if (!confirm("이 일정을 삭제할까요?")) return;
+                  setDeleting(true);
+                  try {
+                    await api.deleteEvent(ev.calendarId, ev.id);
+                    onChanged();
+                  } catch (e) {
+                    setErr((e as Error).message);
+                    setDeleting(false);
+                  }
+                }}
+              >
+                🗑 삭제
+              </button>
+            </>
+          )}
           <span className="modal-spacer" />
           <a className="btn" href={ev.htmlLink} target="_blank" rel="noreferrer">
             Google 캘린더에서 열기
@@ -1340,4 +1511,187 @@ function prepareEmailHtml(html: string, bodyStyle?: string): string {
   } catch {
     return `<base target="_blank">${html}`;
   }
+}
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function ymdhm(d: Date): string {
+  return `${ymd(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function addDays(ymdStr: string, n: number): string {
+  const d = new Date(`${ymdStr}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return ymd(d);
+}
+
+function EventEditModal({
+  calendars,
+  initial,
+  eventId,
+  onClose,
+  onSaved,
+}: {
+  calendars: Calendar[];
+  initial: Partial<EventInput>;
+  eventId?: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const init = (() => {
+    if (initial.start) {
+      if (initial.allDay) {
+        const s = initial.start.slice(0, 10);
+        const e = initial.end ? addDays(initial.end.slice(0, 10), -1) : s;
+        return { allDay: true, start: s, end: e < s ? s : e };
+      }
+      return {
+        allDay: false,
+        start: ymdhm(new Date(initial.start)),
+        end: ymdhm(new Date(initial.end || initial.start)),
+      };
+    }
+    const n = new Date();
+    n.setMinutes(0, 0, 0);
+    n.setHours(n.getHours() + 1);
+    return {
+      allDay: false,
+      start: ymdhm(n),
+      end: ymdhm(new Date(n.getTime() + 3_600_000)),
+    };
+  })();
+
+  const [calendarId, setCalendarId] = useState(
+    initial.calendarId ||
+      calendars.find((c) => c.primary)?.id ||
+      calendars[0]?.id ||
+      "",
+  );
+  const [summary, setSummary] = useState(initial.summary ?? "");
+  const [allDay, setAllDay] = useState(init.allDay);
+  const [start, setStart] = useState(init.start);
+  const [end, setEnd] = useState(init.end);
+  const [location, setLocation] = useState(initial.location ?? "");
+  const [description, setDescription] = useState(initial.description ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const toggleAllDay = (v: boolean) => {
+    if (v === allDay) return;
+    if (v) {
+      setStart(start.slice(0, 10));
+      setEnd(end.slice(0, 10));
+    } else {
+      setStart(`${start.slice(0, 10)}T09:00`);
+      setEnd(`${end.slice(0, 10)}T10:00`);
+    }
+    setAllDay(v);
+  };
+
+  const save = async () => {
+    if (!calendarId) return setErr("쓸 수 있는 캘린더가 없습니다.");
+    setBusy(true);
+    setErr(null);
+    try {
+      const body: EventInput = {
+        calendarId,
+        summary,
+        allDay,
+        location,
+        description,
+        start: allDay ? start : new Date(start).toISOString(),
+        end: allDay ? addDays(end, 1) : new Date(end).toISOString(),
+      };
+      if (eventId) await api.updateEvent(eventId, body);
+      else await api.createEvent(body);
+      onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <strong>{eventId ? "일정 수정" : "새 일정"}</strong>
+          <button className="clear" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <div className="ev-form">
+          <input
+            className="ev-input"
+            placeholder="제목"
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+          />
+          <label className="ev-allday">
+            <input
+              type="checkbox"
+              checked={allDay}
+              onChange={(e) => toggleAllDay(e.target.checked)}
+            />
+            종일
+          </label>
+          <div className="ev-times">
+            <input
+              className="ev-input"
+              type={allDay ? "date" : "datetime-local"}
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+            />
+            <span>→</span>
+            <input
+              className="ev-input"
+              type={allDay ? "date" : "datetime-local"}
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+            />
+          </div>
+          {calendars.length > 1 && (
+            <select
+              className="ev-input"
+              value={calendarId}
+              onChange={(e) => setCalendarId(e.target.value)}
+            >
+              {calendars.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.summary}
+                </option>
+              ))}
+            </select>
+          )}
+          <input
+            className="ev-input"
+            placeholder="장소 (선택)"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+          />
+          <textarea
+            className="ev-input"
+            placeholder="설명 (선택)"
+            rows={4}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          {err && <div className="ev-row muted">⚠️ {err}</div>}
+        </div>
+        <div className="modal-foot">
+          <span className="modal-spacer" />
+          <button className="btn" onClick={onClose}>
+            취소
+          </button>
+          <button
+            className="btn primary"
+            disabled={busy || !summary.trim()}
+            onClick={save}
+          >
+            {busy ? "저장 중…" : "저장"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

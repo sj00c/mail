@@ -40,6 +40,16 @@ export type CalEventDetail = CalEvent & {
   attendees: { name: string; email: string; status: string }[];
 };
 
+export type EventInput = {
+  calendarId: string;
+  summary: string;
+  start: string; // ISO datetime, or YYYY-MM-DD for all-day
+  end: string;
+  allDay: boolean;
+  location?: string;
+  description?: string;
+};
+
 export type Calendar = {
   id: string;
   summary: string;
@@ -81,6 +91,21 @@ export const api = {
     req<CalEventDetail>(
       `/api/calendar/event?calendarId=${encodeURIComponent(calendarId)}&eventId=${encodeURIComponent(eventId)}`,
     ),
+  createEvent: (body: EventInput) =>
+    req<{ id: string }>("/api/calendar/events", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateEvent: (eventId: string, body: EventInput) =>
+    req<{ ok: boolean }>(`/api/calendar/events/${encodeURIComponent(eventId)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteEvent: (calendarId: string, eventId: string) =>
+    req<{ ok: boolean }>(
+      `/api/calendar/events/${encodeURIComponent(eventId)}/delete?calendarId=${encodeURIComponent(calendarId)}`,
+      { method: "POST" },
+    ),
   messages: (params: { q?: string; label?: string; pageToken?: string }) => {
     const u = new URLSearchParams();
     if (params.q) u.set("q", params.q);
@@ -110,6 +135,21 @@ export const api = {
     attachments?: { filename: string; mimeType: string; data: string }[];
   }) =>
     req<{ id: string; threadId: string }>("/api/send", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  saveDraft: (body: {
+    to: string;
+    cc?: string;
+    bcc?: string;
+    subject: string;
+    body: string;
+    threadId?: string;
+    inReplyTo?: string;
+    references?: string;
+    attachments?: { filename: string; mimeType: string; data: string }[];
+  }) =>
+    req<{ id: string }>("/api/draft", {
       method: "POST",
       body: JSON.stringify(body),
     }),

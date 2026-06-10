@@ -196,7 +196,7 @@ function wrap76(b64: string): string {
   return b64.replace(/(.{76})/g, "$1\r\n");
 }
 
-export async function sendMessage(input: {
+export type MailInput = {
   to: string;
   cc?: string;
   bcc?: string;
@@ -206,8 +206,9 @@ export async function sendMessage(input: {
   inReplyTo?: string;
   references?: string;
   attachments?: OutAttachment[];
-}): Promise<{ id: string; threadId: string }> {
-  const g = await api();
+};
+
+function buildRaw(input: MailInput): string {
   const headers = [
     `To: ${input.to}`,
     input.cc ? `Cc: ${input.cc}` : "",
@@ -256,12 +257,29 @@ export async function sendMessage(input: {
     parts.push(`--${boundary}--`);
     mime = parts.join("\r\n");
   }
-  const raw = Buffer.from(mime, "utf-8").toString("base64url");
+  return Buffer.from(mime, "utf-8").toString("base64url");
+}
+
+export async function sendMessage(
+  input: MailInput,
+): Promise<{ id: string; threadId: string }> {
+  const g = await api();
   const res = await g.users.messages.send({
     userId: "me",
-    requestBody: { raw, threadId: input.threadId },
+    requestBody: { raw: buildRaw(input), threadId: input.threadId },
   });
   return { id: res.data.id!, threadId: res.data.threadId! };
+}
+
+export async function createDraft(input: MailInput): Promise<{ id: string }> {
+  const g = await api();
+  const res = await g.users.drafts.create({
+    userId: "me",
+    requestBody: {
+      message: { raw: buildRaw(input), threadId: input.threadId },
+    },
+  });
+  return { id: res.data.id ?? "" };
 }
 
 export async function modifyMessage(

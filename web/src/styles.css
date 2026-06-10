@@ -732,3 +732,41 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+
+/* event editor form */
+.ev-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.ev-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+.ev-input:focus {
+  border-color: var(--accent);
+}
+textarea.ev-input {
+  resize: vertical;
+}
+.ev-allday {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ev-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ev-times .ev-input {
+  flex: 1;
+}

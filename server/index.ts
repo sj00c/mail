@@ -10,6 +10,7 @@ import {
   logout,
 } from "./auth.ts";
 import {
+  createDraft,
   getAttachment,
   getMessage,
   getProfile,
@@ -19,7 +20,14 @@ import {
   sendMessage,
   trashMessage,
 } from "./gmail.ts";
-import { getEvent, listCalendars, listEvents } from "./calendar.ts";
+import {
+  createEvent,
+  deleteEvent,
+  getEvent,
+  listCalendars,
+  listEvents,
+  updateEvent,
+} from "./calendar.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -93,6 +101,24 @@ api.get("/calendar/event", async (c) => {
   return c.json(await getEvent(calendarId, eventId));
 });
 
+api.post("/calendar/events", async (c) => {
+  const body = await c.req.json();
+  return c.json(await createEvent(body));
+});
+
+api.put("/calendar/events/:id", async (c) => {
+  const body = await c.req.json();
+  await updateEvent(c.req.param("id"), body);
+  return c.json({ ok: true });
+});
+
+api.post("/calendar/events/:id/delete", async (c) => {
+  const calendarId = c.req.query("calendarId");
+  if (!calendarId) return c.json({ error: "calendarId required" }, 400);
+  await deleteEvent(calendarId, c.req.param("id"));
+  return c.json({ ok: true });
+});
+
 api.get("/messages", async (c) => {
   const q = c.req.query("q") || undefined;
   const label = c.req.query("label") || undefined;
@@ -137,6 +163,11 @@ api.post("/send", async (c) => {
   const body = await c.req.json();
   const res = await sendMessage(body);
   return c.json(res);
+});
+
+api.post("/draft", async (c) => {
+  const body = await c.req.json();
+  return c.json(await createDraft(body));
 });
 
 // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).
