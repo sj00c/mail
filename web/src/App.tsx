@@ -129,15 +129,6 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [labels, setLabels] = useState<Label[]>([]);
   const [activeLabel, setActiveLabel] = useState("INBOX");
   // ?view=calendar / ?q=검색어 deep link: 화면을 URL로 바로 열 수 있다.
-  const [view, setView] = useState<"mail" | "calendar">(() => {
-    try {
-      return new URLSearchParams(window.location.search).get("view") === "calendar"
-        ? "calendar"
-        : "mail";
-    } catch {
-      return "mail";
-    }
-  });
   const initialQuery = (() => {
     try {
       return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
@@ -145,6 +136,17 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       return "";
     }
   })();
+  const [view, setView] = useState<"mail" | "calendar">(() => {
+    try {
+      // q가 있으면 검색이 우선 — 검색 결과는 mail 뷰에서만 렌더된다.
+      if (initialQuery) return "mail";
+      return new URLSearchParams(window.location.search).get("view") === "calendar"
+        ? "calendar"
+        : "mail";
+    } catch {
+      return "mail";
+    }
+  });
   const [query, setQuery] = useState(initialQuery);
   const [searchInput, setSearchInput] = useState(initialQuery);
   const [messages, setMessages] = useState<MessageSummary[]>([]);
@@ -180,6 +182,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     },
     [onLogout],
   );
+
+  // 백그라운드 갱신(캘린더 60s/포커스, 검색 일정)이 세션 만료를 만나도 작성창이
+  // 열려 있으면 로그아웃을 보류한다 — 언마운트가 작성 중인 메일을 날리기 때문.
+  // 사용자가 직접 보내기/저장할 때 모달 안에서 만료가 표면화된다.
+  const bgLogout = useCallback(() => {
+    if (!composeOpenRef.current) onLogout();
+  }, [onLogout]);
 
   useEffect(() => {
     // Account settings ride along with login — non-fatal if unavailable.
@@ -266,7 +275,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       })
       .catch((e) => {
         if (cancelled) return;
-        if (e instanceof AuthError) onLogout();
+        if (e instanceof AuthError) bgLogout();
         else setCalErr((e as Error).message);
       })
       .finally(() => {
@@ -275,7 +284,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [view, query, calendars.length, onLogout]);
+  }, [view, query, calendars.length, bgLogout]);
 
   const toggleCal = useCallback((id: string) => {
     setHiddenCals((prev) => {
@@ -332,6 +341,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           cc: full.cc || undefined,
           bcc: full.bcc || undefined, // Gmail-web drafts may carry Bcc
           subject: full.subject,
+          from: full.from || undefined, // 원래 보내는 주소(별칭) 복원
           // 저장된 HTML을 그대로 이어쓴다 (서식 보존). 평문뿐인 드래프트는
           // textToHtml로 감싸 동일한 에디터에 올린다.
           bodyHtml: full.bodyHtml ?? textToHtml(full.bodyText ?? ""),
@@ -390,7 +400,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               pageToken: reset ? undefined : nextTokenRef.current,
             });
             if (seq !== loadSeq.current) return; // superseded — discard
-            setMessages((prev) => (reset ? res.messages : [...prev, ...res.messages]));
+            setMessages((prev) => {
+              if (reset) return res.messages;
+              // 페이지네이션 도중 새 메일이 상단에 끼면 경계 항목이 다음 페이지에
+              // 다시 와 id가 중복될 수 있다 — append 시 중복 제거(React key 충돌 방지).
+              const seen = new Set(prev.map((m) => m.id));
+              return [...prev, ...res.messages.filter((m) => !seen.has(m.id))];
+            });
             setNextToken(res.nextPageToken);
           } catch (e) {
             // A superseded request's failure is as irrelevant as its result —
@@ -523,6 +539,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       id={selected.id}
       threadId={selected.threadId}
       me={email}
+      inTrash={!query && activeLabel === "TRASH"}
       guard={guard}
       onPatched={(id, patch) => {
         // Un-starring while viewing 별표 removes the row — patching in
@@ -725,7 +742,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
         {view === "calendar" ? (
           <CalendarView
-            onLogout={onLogout}
+            onLogout={bgLogout}
             hiddenCals={hiddenCals}
             calendars={calendars}
           />
@@ -739,7 +756,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             onSelect={onSelectMsg}
             selectedId={selected?.id}
             calendars={calendars}
-            onLogout={onLogout}
+            hiddenCals={hiddenCals}
+            onLogout={bgLogout}
           />
         ) : (
           <>
@@ -992,6 +1010,19 @@ function CalendarChecklist({
   );
 }
 
+// 목록/카드에 표시할 상대방: 보낸함·임시보관함(내가 보낸 것)은 받는사람을,
+// 그 외에는 보낸사람을 보여준다. 수신자가 여럿이면 "이름 외 N명".
+function listParty(m: MessageSummary): { name: string; email: string } {
+  const outgoing = m.labelIds.includes("SENT") || m.labelIds.includes("DRAFT");
+  const raw = outgoing ? m.to : m.from;
+  const toks = splitAddrList(raw);
+  if (toks.length === 0) return { name: outgoing ? "(받는사람 없음)" : "(보낸사람 없음)", email: "" };
+  const first = parseAddr(toks[0]);
+  const name =
+    toks.length > 1 ? `${first.name} 외 ${toks.length - 1}명` : first.name;
+  return { name, email: first.email };
+}
+
 const MessageRow = memo(function MessageRow({
   m,
   active,
@@ -1001,7 +1032,7 @@ const MessageRow = memo(function MessageRow({
   active: boolean;
   onSelect: (id: string, threadId: string) => void;
 }) {
-  const addr = parseAddr(m.from);
+  const addr = listParty(m);
   const label = listDateLabel(m.date);
   return (
     <button
@@ -1033,6 +1064,7 @@ function Reader({
   id,
   threadId,
   me,
+  inTrash,
   guard,
   onPatched,
   onRemoved,
@@ -1042,6 +1074,7 @@ function Reader({
   id: string;
   threadId: string;
   me: string;
+  inTrash: boolean;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onPatched: (id: string, patch: Partial<MessageSummary>) => void;
   onRemoved: (id: string, scope: "inbox" | "trash" | "all") => void;
@@ -1191,50 +1224,73 @@ function Reader({
           >
             {msg.unread ? "✉️ 읽음" : "📩 안읽음"}
           </button>
-          <button
-            className="btn"
-            onClick={() =>
-              guard(async () => {
-                await api.modify(id, { remove: ["INBOX"] });
-                onRemoved(id, "inbox");
-                onClose();
-              })
-            }
-          >
-            📥 보관
-          </button>
-          <button
-            className="btn"
-            onClick={() =>
-              guard(async () => {
-                const isSpam = msg.labelIds.includes("SPAM");
-                await api.modify(id, {
-                  add: isSpam ? ["INBOX"] : ["SPAM"],
-                  remove: isSpam ? ["SPAM"] : ["INBOX"],
-                });
-                onRemoved(id, "all");
-                onClose();
-              })
-            }
-          >
-            {msg.labelIds.includes("SPAM") ? "✅ 스팸 아님" : "🚫 스팸"}
-          </button>
-          <button
-            className="btn danger"
-            onClick={() =>
-              guard(async () => {
-                await api.trash(id);
-                onRemoved(id, "trash");
-                onClose();
-              })
-            }
-          >
-            🗑 삭제
-          </button>
+          {inTrash ? (
+            // 휴지통: trash/보관/스팸은 모두 no-op이므로 '복원'만 노출.
+            <button
+              className="btn"
+              onClick={() =>
+                guard(async () => {
+                  await api.modify(id, { add: ["INBOX"], remove: ["TRASH"] });
+                  onRemoved(id, "all");
+                  onClose();
+                })
+              }
+            >
+              ♻️ 받은편지함으로 복원
+            </button>
+          ) : (
+            <>
+              <button
+                className="btn"
+                onClick={() =>
+                  guard(async () => {
+                    await api.modify(id, { remove: ["INBOX"] });
+                    onRemoved(id, "inbox");
+                    onClose();
+                  })
+                }
+              >
+                📥 보관
+              </button>
+              <button
+                className="btn"
+                onClick={() =>
+                  guard(async () => {
+                    const isSpam = msg.labelIds.includes("SPAM");
+                    await api.modify(id, {
+                      add: isSpam ? ["INBOX"] : ["SPAM"],
+                      remove: isSpam ? ["SPAM"] : ["INBOX"],
+                    });
+                    onRemoved(id, "all");
+                    onClose();
+                  })
+                }
+              >
+                {msg.labelIds.includes("SPAM") ? "✅ 스팸 아님" : "🚫 스팸"}
+              </button>
+              <button
+                className="btn danger"
+                onClick={() =>
+                  guard(async () => {
+                    await api.trash(id);
+                    onRemoved(id, "trash");
+                    onClose();
+                  })
+                }
+              >
+                🗑 삭제
+              </button>
+            </>
+          )}
         </div>
       </div>
       {(thread ?? [msg]).map((tm) => (
-        <ThreadMessage key={tm.id} m={tm} guard={guard} />
+        <ThreadMessage
+          key={tm.id}
+          m={tm}
+          guard={guard}
+          onComposeTo={(email) => onReply({ to: email })}
+        />
       ))}
     </div>
   );
@@ -1310,9 +1366,11 @@ async function saveAttachment(
 const ThreadMessage = memo(function ThreadMessage({
   m,
   guard,
+  onComposeTo,
 }: {
   m: MessageFull;
   guard: (fn: () => Promise<void>) => Promise<void>;
+  onComposeTo: (email: string) => void;
 }) {
   // Inline (cid:) image parts → attachment URLs for the HTML body.
   const cidUrls = useMemo(() => {
@@ -1326,7 +1384,14 @@ const ThreadMessage = memo(function ThreadMessage({
     <div className="thread-msg">
       <div className="reader-meta">
         <strong>{parseAddr(m.from).name}</strong>{" "}
-        <span className="muted">&lt;{parseAddr(m.from).email}&gt;</span>
+        <button
+          type="button"
+          className="addr-link muted"
+          title="이 주소로 새 메일"
+          onClick={() => onComposeTo(parseAddr(m.from).email)}
+        >
+          &lt;{parseAddr(m.from).email}&gt;
+        </button>
         <div className="muted">받는사람: {m.to}</div>
         {m.cc && <div className="muted">참조: {m.cc}</div>}
         <div className="muted">{new Date(m.date).toLocaleString("ko-KR")}</div>
@@ -1352,9 +1417,9 @@ const ThreadMessage = memo(function ThreadMessage({
       )}
       <div className="reader-body">
         {m.bodyHtml ? (
-          <HtmlBody html={m.bodyHtml} id={m.id} cidUrls={cidUrls} />
+          <HtmlBody html={m.bodyHtml} id={m.id} cidUrls={cidUrls} onComposeTo={onComposeTo} />
         ) : (
-          <TextBody text={m.bodyText || m.snippet} />
+          <TextBody text={m.bodyText || m.snippet} onComposeTo={onComposeTo} />
         )}
       </div>
     </div>
@@ -1417,21 +1482,35 @@ function linkifyParts(text: string): LinkPart[] {
   return parts;
 }
 
-function TextBody({ text }: { text: string }) {
+function TextBody({
+  text,
+  onComposeTo,
+}: {
+  text: string;
+  onComposeTo: (email: string) => void;
+}) {
   const parts = useMemo(() => linkifyParts(text), [text]);
   return (
     <pre className="text-body">
       {parts.map((p, i) =>
         p.href ? (
-          <a
-            key={i}
-            href={p.href}
-            {...(p.href.startsWith("mailto:")
-              ? {}
-              : { target: "_blank", rel: "noopener noreferrer" })}
-          >
-            {p.text}
-          </a>
+          p.href.startsWith("mailto:") ? (
+            // 본문 이메일 주소 → 시스템 메일앱(iCloud 등)이 아니라 이 앱의 작성창
+            <a
+              key={i}
+              href={p.href}
+              onClick={(e) => {
+                e.preventDefault();
+                onComposeTo(p.href!.slice("mailto:".length));
+              }}
+            >
+              {p.text}
+            </a>
+          ) : (
+            <a key={i} href={p.href} target="_blank" rel="noopener noreferrer">
+              {p.text}
+            </a>
+          )
         ) : (
           p.text
         ),
@@ -1447,12 +1526,18 @@ function HtmlBody({
   html,
   id,
   cidUrls,
+  onComposeTo,
 }: {
   html: string;
   id: string;
   cidUrls?: Map<string, string>;
+  onComposeTo: (email: string) => void;
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
+  // 부모가 onLoad에서 iframe 문서에 click 리스너를 단다 — 최신 콜백을 ref로
+  // 잡아 stale 클로저를 피한다.
+  const composeRef = useRef(onComposeTo);
+  composeRef.current = onComposeTo;
   // DOMParser full-parse is not free on big newsletters — don't redo it when
   // unrelated parent state (star toggle etc.) re-renders this component.
   const srcDoc = useMemo(() => prepareEmailHtml(html, undefined, cidUrls), [html, cidUrls]);
@@ -1488,8 +1573,15 @@ function HtmlBody({
       if (!a) return;
       const href = a.getAttribute("href") || "";
       if (/^mailto:/i.test(href)) {
+        // 시스템 메일앱(iCloud 등) 대신 이 앱의 작성창을 연다.
         e.preventDefault();
-        window.location.href = href;
+        let addr = href.slice(href.indexOf(":") + 1).split("?")[0];
+        try {
+          addr = decodeURIComponent(addr);
+        } catch {
+          // 잘못된 % 이스케이프(스팸 등): 원본 그대로 사용
+        }
+        composeRef.current(addr);
       } else if (href.startsWith("#")) {
         // In-document anchor (newsletter TOC etc.): scroll within the
         // auto-sized frame — the browser scrolls the parent page to match.
@@ -1546,6 +1638,7 @@ type ComposeInit = {
   quoteTo?: string;
   quoteSubject?: string;
   forward?: boolean; // 전달이면 인용을 "전달된 메일" 헤더 형식으로
+  from?: string; // 드래프트 이어쓰기 시 원래 보내는 주소(별칭) 복원용
   attachments?: ComposeAttachment[];
   bodyHtml?: string; // 드래프트 이어쓰기 — 저장된 HTML 그대로
   draftId?: string; // editing this Gmail draft: update on save, delete on send
@@ -1581,18 +1674,22 @@ function buildQuotedHtml(init?: ComposeInit): string {
       .filter(([, v]) => v)
       .map(([k, v]) => `${k}: ${esc(String(v))}`)
       .join("<br>");
+    // 전달 블록: 상단 구분선 + "전달된 메일" 라벨, 메타와 본문을 왼쪽 강조선으로
+    // 들여써 원문과 명확히 구분 (인라인 스타일 — 수신자 클라이언트에도 적용).
     return (
-      `<br><div class="mail-quote">` +
-      `<div style="color:#5f6368">---------- 전달된 메일 ----------<br>${rows}</div>` +
-      `<br>${safe}</div>`
+      `<br><div class="mail-fwd" style="margin-top:14px;border-top:1px solid #e3e7ee;padding-top:12px">` +
+      `<div style="font-size:12px;font-weight:600;letter-spacing:.3px;color:#8a93a3;text-transform:uppercase;margin-bottom:10px">전달된 메일</div>` +
+      `<div style="border-left:3px solid #c8d0dd;padding-left:14px">` +
+      `<div style="font-size:12.5px;line-height:1.7;color:#5f6368;margin-bottom:10px">${rows}</div>` +
+      `${safe}</div></div>`
     );
   }
   const safe = sanitizeMailHtml(init.quoteHtml, { dropCidImages: true });
   const attr = `${when ? when + ", " : ""}${esc(init.quoteFrom ?? "")} 님이 작성:`;
   return (
     `<br><div class="mail-quote">` +
-    `<div style="color:#5f6368">${attr}</div>` +
-    `<blockquote style="margin:0 0 0 0.8ex;border-left:2px solid #d3d9e3;padding-left:1ex">` +
+    `<div style="font-size:12.5px;color:#8a93a3;margin-bottom:6px">${attr}</div>` +
+    `<blockquote style="margin:0;border-left:3px solid #c8d0dd;padding-left:14px;color:#3c4453">` +
     `${safe}</blockquote></div>`
   );
 }
@@ -1727,6 +1824,93 @@ function RichEditor({
   );
 }
 
+// "Name <email>" 또는 "email" 토큰이 유효한 주소를 담고 있나 (대략적).
+function tokenHasEmail(tok: string): boolean {
+  return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(parseAddr(tok).email);
+}
+
+// 수신자 칩 입력 — 문자열(콤마 구분)을 그대로 value로 유지하면서, 토큰을
+// 박스(칩)로 보여준다. 콤마/엔터/탭/세미콜론/붙여넣기로 확정, 백스페이스로
+// 마지막 칩 삭제. send/saveDraft는 기존처럼 문자열을 읽는다.
+function RecipientField({
+  label,
+  value,
+  onChange,
+  autoFocus,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  autoFocus?: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+  const items = splitAddrList(value);
+  const commit = (raw: string) => {
+    const next = raw.trim().replace(/[,;]+$/, "").trim();
+    if (!next) return;
+    onChange([...items, next].join(", "));
+    setDraft("");
+  };
+  const removeAt = (i: number) =>
+    onChange(items.filter((_, j) => j !== i).join(", "));
+
+  return (
+    <label className="recip-field">
+      <span className="recip-label">{label}</span>
+      <span className="recip-box">
+        {items.map((tok, i) => {
+          const a = parseAddr(tok);
+          return (
+            <span
+              key={`${tok}-${i}`}
+              className={`recip-chip${tokenHasEmail(tok) ? "" : " invalid"}`}
+              title={a.email}
+            >
+              {a.name || a.email}
+              <button type="button" className="recip-x" onClick={() => removeAt(i)}>
+                ✕
+              </button>
+            </span>
+          );
+        })}
+        <input
+          className="recip-input"
+          // eslint-disable-next-line jsx-a11y/no-autofocus
+          autoFocus={autoFocus}
+          value={draft}
+          placeholder={items.length === 0 ? `${label} 추가` : ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            // 콤마/세미콜론 입력 즉시 칩으로 확정
+            if (/[,;]/.test(v)) commit(v);
+            else setDraft(v);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === "Tab") {
+              if (draft.trim()) {
+                e.preventDefault();
+                commit(draft);
+              }
+            } else if (e.key === "Backspace" && !draft && items.length) {
+              e.preventDefault();
+              removeAt(items.length - 1);
+            }
+          }}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData("text");
+            if (/[,;\n]/.test(text)) {
+              e.preventDefault();
+              const toks = splitAddrList(text.replace(/\n/g, ","));
+              if (toks.length) onChange([...items, ...toks].join(", "));
+            }
+          }}
+          onBlur={() => commit(draft)}
+        />
+      </span>
+    </label>
+  );
+}
+
 function Compose({
   init,
   sendAs,
@@ -1743,13 +1927,30 @@ function Compose({
   // 보내는 주소: 검증된 별칭이 둘 이상일 때만 선택 UI가 뜬다. Gmail은
   // 미검증 별칭의 From을 기본 주소로 강제 재작성하므로 verified만 노출.
   const aliases = (sendAs ?? []).filter((s) => s.verified);
+  const defaultAlias = () =>
+    aliases.find((s) => s.isDefault) ?? aliases.find((s) => s.isPrimary) ?? aliases[0];
+  // 드래프트 이어쓰기 시 원래 별칭(init.from) 복원, 아니면 기본 별칭.
+  const initFromEmail = init?.from ? parseAddr(init.from).email.toLowerCase() : "";
   const [fromEmail, setFromEmail] = useState(
     () =>
-      (aliases.find((s) => s.isDefault) ?? aliases.find((s) => s.isPrimary))?.email ??
-      aliases[0]?.email ??
+      aliases.find((s) => s.email.toLowerCase() === initFromEmail)?.email ??
+      defaultAlias()?.email ??
       "",
   );
-  const chosenAlias = aliases.find((s) => s.email === fromEmail);
+  // 별칭 목록이 비어 있다가(설정 비동기 로드) 나중에 채워지면 보내는 주소를
+  // 기본값으로 동기화 — 표시값과 실제 발송 From의 불일치를 막는다.
+  useEffect(() => {
+    if (aliases.length && !aliases.some((s) => s.email === fromEmail)) {
+      setFromEmail(
+        aliases.find((s) => s.email.toLowerCase() === initFromEmail)?.email ??
+          defaultAlias()?.email ??
+          "",
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendAs]);
+  // chosenAlias가 아직 비어 있어도(레이스) 기본 별칭으로 폴백해 표시값과 일치.
+  const chosenAlias = aliases.find((s) => s.email === fromEmail) ?? defaultAlias();
   const fromHeader = chosenAlias
     ? chosenAlias.displayName
       ? `"${chosenAlias.displayName.replace(/"/g, "")}" <${chosenAlias.email}>`
@@ -1966,21 +2167,9 @@ function Compose({
             ))}
           </select>
         )}
-        <input
-          placeholder="받는사람"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-        />
-        <input
-          placeholder="참조 (선택)"
-          value={cc}
-          onChange={(e) => setCc(e.target.value)}
-        />
-        <input
-          placeholder="숨은참조 (선택)"
-          value={bcc}
-          onChange={(e) => setBcc(e.target.value)}
-        />
+        <RecipientField label="받는사람" value={to} onChange={setTo} autoFocus />
+        <RecipientField label="참조" value={cc} onChange={setCc} />
+        <RecipientField label="숨은참조" value={bcc} onChange={setBcc} />
         <input
           placeholder="제목"
           value={subject}
@@ -2198,7 +2387,7 @@ function MailCard({
   active: boolean;
   onSelect: (id: string, threadId: string) => void;
 }) {
-  const addr = parseAddr(m.from);
+  const addr = listParty(m);
   const initial = (addr.name || "?").trim().charAt(0).toUpperCase();
   return (
     <button
@@ -2288,6 +2477,7 @@ function SearchResults({
   onSelect,
   selectedId,
   calendars,
+  hiddenCals,
   onLogout,
 }: {
   query: string;
@@ -2298,6 +2488,7 @@ function SearchResults({
   onSelect: (id: string, threadId: string) => void;
   selectedId?: string;
   calendars: Calendar[];
+  hiddenCals: Set<string>;
   onLogout: () => void;
 }) {
   const [events, setEvents] = useState<CalEvent[] | null>(null);
@@ -2331,6 +2522,7 @@ function SearchResults({
   const terms = useMemo(() => searchTerms(query), [query]);
 
   // 다가오는 일정 먼저(오름차순), 지난 일정은 구분선 아래 최근순.
+  // 숨긴 캘린더는 월/목록 뷰와 동일하게 제외 (검색에서 다시 새어나오지 않게).
   const { upcoming, past } = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -2341,12 +2533,13 @@ function SearchResults({
         : new Date(ref).getTime();
       return e.end ? t <= today.getTime() : t < today.getTime();
     };
-    const evs = events ?? [];
+    const evs = (events ?? []).filter((e) => !hiddenCals.has(e.calendarId));
     return {
       upcoming: evs.filter((e) => !isPast(e)),
       past: evs.filter(isPast).reverse(),
     };
-  }, [events]);
+  }, [events, hiddenCals]);
+  const visibleCount = upcoming.length + past.length;
 
   const writable = calendars.filter(
     (c) => c.accessRole === "owner" || c.accessRole === "writer",
@@ -2357,7 +2550,7 @@ function SearchResults({
       <div className="search-head">
         <h2>“{query}”</h2>
         <span className="muted">
-          일정 {events ? `${events.length}건` : "…"} · 메일 {messages.length}
+          일정 {events ? `${visibleCount}건` : "…"} · 메일 {messages.length}
           {hasMore ? "+" : ""}건
         </span>
       </div>
@@ -2371,7 +2564,7 @@ function SearchResults({
               <div className="skel" />
               <div className="skel" />
             </>
-          ) : events.length === 0 ? (
+          ) : visibleCount === 0 ? (
             <div className="scard-empty">일치하는 일정이 없습니다.</div>
           ) : (
             <>
@@ -2502,6 +2695,12 @@ function CalendarView({
     (key: string, events: CalEvent[]) => setDayModal({ key, events }),
     [],
   );
+  // 날짜 칸 클릭 → 그 날짜로 종일 새 일정 모달 (에디터에서 시간 지정으로 전환 가능)
+  const createOnDay = useCallback(
+    (dayKey: string) =>
+      setEditor({ initial: { allDay: true, start: dayKey, end: dayKey } }),
+    [],
+  );
   const reload = useCallback(() => {
     calCache.clear();
     setRefreshKey((k) => k + 1);
@@ -2540,6 +2739,7 @@ function CalendarView({
           hiddenCals={hiddenCals}
           onEvent={openEvent}
           onDay={openDay}
+          onCreate={writable.length > 0 ? createOnDay : undefined}
           refreshKey={refreshKey}
         />
       ) : (
@@ -2682,12 +2882,14 @@ function MonthGrid({
   hiddenCals,
   onEvent,
   onDay,
+  onCreate,
   refreshKey,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
   onEvent: (e: CalEvent) => void;
   onDay: (key: string, events: CalEvent[]) => void;
+  onCreate?: (dayKey: string) => void; // 날짜 칸 클릭 → 그 날짜로 새 일정 (쓰기 가능 시)
   refreshKey: number;
 }) {
   const [cursor, setCursor] = useState(() => {
@@ -2770,7 +2972,11 @@ function MonthGrid({
             return (
               <div
                 key={key}
-                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}`}
+                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${onCreate ? " creatable" : ""}`}
+                // 빈 영역(또는 날짜 숫자) 클릭 → 그 날짜로 새 일정. 이벤트 칩/
+                // 더보기 버튼은 stopPropagation으로 이 핸들러를 막는다.
+                onClick={onCreate ? () => onCreate(key) : undefined}
+                title={onCreate ? "클릭하여 이 날짜에 일정 추가" : undefined}
               >
                 <div className="month-daynum">{d.getDate()}</div>
                 {evs.slice(0, 3).map((e) => (
@@ -2779,7 +2985,10 @@ function MonthGrid({
                     key={`${e.calendarId}|${e.id}|${e.start}`}
                     type="button"
                     className="month-ev"
-                    onClick={() => onEvent(e)}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onEvent(e);
+                    }}
                     title={`${evTimeLabel(e, key)} ${e.summary}`}
                     // 캘린더 색의 파스텔 칩 — 점 하나보다 캘린더 정체성이 잘 읽힌다
                     style={{
@@ -2800,7 +3009,10 @@ function MonthGrid({
                   <button
                     type="button"
                     className="month-more"
-                    onClick={() => onDay(key, evs)}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onDay(key, evs);
+                    }}
                   >
                     +{evs.length - 3}개 더보기
                   </button>

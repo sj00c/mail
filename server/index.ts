@@ -281,10 +281,16 @@ app.all("/api/*", (c) => c.json({ error: "NOT_FOUND" }, 404));
 
 // ---- static (production: serve built SPA) ----
 if (SERVE_STATIC) {
-  // Content-hashed assets are immutable — cache hard.
+  // Content-hashed assets are immutable — cache hard. But only when a real
+  // asset was served: a missing hashed file falls through to the index.html
+  // SPA fallback (text/html, 200), and caching THAT as immutable would pin a
+  // wrong response under a .js/.css URL across deploys (version skew).
   app.use("/assets/*", async (c, next) => {
     await next();
-    c.header("Cache-Control", "public, max-age=31536000, immutable");
+    const ct = c.res.headers.get("Content-Type") ?? "";
+    if (!ct.includes("text/html")) {
+      c.header("Cache-Control", "public, max-age=31536000, immutable");
+    }
   });
   // serveStatic resolves against cwd while the enable-gate checked the
   // absolute path — anchor both to the project dir so starting the server
