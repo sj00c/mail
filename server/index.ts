@@ -143,10 +143,16 @@ api.get("/threads/:id", async (c) => c.json(await getThread(c.req.param("id"))))
 api.get("/messages/:id/attachments/:aid", async (c) => {
   const buf = await getAttachment(c.req.param("id"), c.req.param("aid"));
   const filename = c.req.query("filename") || "attachment";
+  // Header-safe ASCII fallback + RFC 5987 encoded full name (Korean filenames etc.).
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
   return new Response(new Uint8Array(buf), {
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
     },
   });
 });

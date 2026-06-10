@@ -13,6 +13,7 @@ export type MessageSummary = {
 
 export type MessageFull = MessageSummary & {
   cc: string;
+  rfc822MsgId: string; // RFC 2822 Message-ID header (for In-Reply-To/References)
   bodyHtml: string | null;
   bodyText: string | null;
   attachments: { id: string; filename: string; mimeType: string; size: number }[];

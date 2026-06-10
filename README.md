@@ -9,8 +9,8 @@
 <tr><td><b>인증</b></td><td>OAuth2 — refresh token은 <b>이 머신에만</b> 로컬 저장</td></tr>
 </table>
 
-**메일** — 받은편지함·라벨 조회, Gmail 문법 검색, 본문/첨부 보기, 읽음·보관·삭제, 작성·답장·발송(첨부 포함)
-**캘린더** — 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 일정 상세, 60초 자동 갱신 *(읽기 전용)*
+**메일** — 받은편지함·라벨 조회, Gmail 문법 검색, 스레드(대화) 보기, 본문/첨부 보기, 읽음·별표·스팸·보관·삭제, 작성·답장·발송·임시저장(첨부 포함)
+**캘린더** — 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 일정 상세, 일정 생성·수정·삭제, 60초 자동 갱신
 
 ---
 
@@ -138,17 +138,17 @@ from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d  
 | Scope | 설명 |
 |---|---|
 | `gmail.modify` | 읽기 / 발송 / 라벨 / 읽음표시 / 보관 / 휴지통. **영구 삭제 불가**(안전장치) |
-| `calendar.readonly` | 캘린더 / 일정 **조회 전용** |
+| `calendar` | 캘린더 / 일정 **조회·생성·수정·삭제** |
 
-> 휴지통 메일은 Gmail 정책상 30일 후 자동 삭제. 캘린더 쓰기까지 필요하면 scope를 `calendar`로 올리고 재로그인.
+> 휴지통 메일은 Gmail 정책상 30일 후 자동 삭제. scope가 바뀌기 전(캘린더 읽기 전용 시절) 토큰이면 로그아웃 후 재로그인해야 캘린더 쓰기가 동작한다.
 
 ## 🗂 구조
 
 ```
 server/
   auth.ts      OAuth2 + 토큰 저장/갱신
-  gmail.ts     Gmail API 래퍼 (list/get/send/modify/trash/labels/attachments)
-  calendar.ts  Calendar API 래퍼 (events/calendars)
+  gmail.ts     Gmail API 래퍼 (list/get/threads/send/draft/modify/trash/labels/attachments)
+  calendar.ts  Calendar API 래퍼 (events CRUD/calendars)
   index.ts     Hono 라우트 (/auth/*, /api/*) + 정적 서빙(프로덕션)
 web/src/
   api.ts       프론트 API 클라이언트 + 타입

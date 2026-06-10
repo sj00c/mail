@@ -492,7 +492,7 @@ function Reader({
                   ? msg.subject
                   : `Re: ${msg.subject}`,
                 threadId: msg.threadId,
-                inReplyTo: msg.id,
+                inReplyTo: msg.rfc822MsgId || undefined,
                 quote: msg.bodyText ?? "",
                 quoteFrom: msg.from,
               })
