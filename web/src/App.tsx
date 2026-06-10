@@ -137,21 +137,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         if (!full) throw new Error("드래프트를 불러오지 못했습니다.");
         const found = await api.draftByMessage(full.id).catch(() => null); // 404 → send as new mail
         const attachments = await Promise.all(
-          full.attachments.map(async (a) => ({
-            filename: a.filename,
-            mimeType: a.mimeType,
-            size: a.size,
-            data: await blobToBase64(
-              await (
-                await fetch(api.attachmentUrl(full.id, a.id, a.filename))
-              ).blob(),
-            ),
-          })),
+          full.attachments.map((a) => downloadAttachment(full.id, a)),
         );
         setComposeInit({
           draftId: found?.draftId,
           to: full.to,
           cc: full.cc || undefined,
+          bcc: full.bcc || undefined, // Gmail-web drafts may carry Bcc
           subject: full.subject,
           // our drafts are text/plain (lossless); Gmail-web HTML drafts fall
           // back to clean text extraction
@@ -174,25 +166,33 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   );
 
   // ---- new-mail polling: desktop notification + inbox refresh ----
-  const lastTopId = useRef<string | null>(null);
+  const lastSeenIds = useRef<string[] | null>(null);
   useEffect(() => {
     if (typeof Notification !== "undefined" && Notification.permission === "default") {
       void Notification.requestPermission();
     }
   }, []);
 
+  // Monotonic sequence guard: label switches / polling / 더 보기 responses can
+  // land out of order — only the latest request may write list state.
+  const loadSeq = useRef(0);
   const load = useCallback(
     (reset: boolean) => {
+      const seq = ++loadSeq.current;
       void guard(async () => {
         setLoading(true);
-        const res = await api.messages({
-          label: query ? undefined : activeLabel,
-          q: query || undefined,
-          pageToken: reset ? undefined : nextToken,
-        });
-        setMessages((prev) => (reset ? res.messages : [...prev, ...res.messages]));
-        setNextToken(res.nextPageToken);
-        setLoading(false);
+        try {
+          const res = await api.messages({
+            label: query ? undefined : activeLabel,
+            q: query || undefined,
+            pageToken: reset ? undefined : nextToken,
+          });
+          if (seq !== loadSeq.current) return; // superseded — discard
+          setMessages((prev) => (reset ? res.messages : [...prev, ...res.messages]));
+          setNextToken(res.nextPageToken);
+        } finally {
+          if (seq === loadSeq.current) setLoading(false);
+        }
       });
     },
     [guard, activeLabel, query, nextToken],
@@ -217,12 +217,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         const res = await api.messages({ label: "INBOX", maxResults: 5 });
         const top = res.messages[0];
         if (!top) return;
-        if (lastTopId.current && top.id !== lastTopId.current) {
-          const fresh: MessageSummary[] = [];
-          for (const m of res.messages) {
-            if (m.id === lastTopId.current) break;
-            fresh.push(m);
-          }
+        const seenIds = lastSeenIds.current;
+        if (seenIds && top.id !== seenIds[0]) {
+          // Set difference, not top-id walk: deleting/archiving the top mail
+          // must not make old mail look "new" (false notifications).
+          const fresh = res.messages.filter((m) => !seenIds.includes(m.id));
           if (
             typeof Notification !== "undefined" &&
             Notification.permission === "granted"
@@ -241,10 +240,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               };
             }
           }
-          refreshLabels();
-          if (view === "mail" && activeLabel === "INBOX" && !query) load(true);
+          if (fresh.length > 0) {
+            refreshLabels();
+            if (view === "mail" && activeLabel === "INBOX" && !query) load(true);
+          }
         }
-        lastTopId.current = top.id;
+        lastSeenIds.current = res.messages.map((m) => m.id);
       } catch {
         // transient polling failure: next tick retries
       }
@@ -486,7 +487,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 const SIGNATURE_KEY = "mail.signature";
 const SIGNATURE_HTML_KEY = "mail.signature.html";
 
-export function getSignature(): string {
+function getSignature(): string {
   try {
     return localStorage.getItem(SIGNATURE_KEY) ?? "";
   } catch {
@@ -494,7 +495,7 @@ export function getSignature(): string {
   }
 }
 
-export function getSignatureHtml(): string {
+function getSignatureHtml(): string {
   try {
     return localStorage.getItem(SIGNATURE_HTML_KEY) ?? "";
   } catch {
@@ -744,6 +745,7 @@ function Reader({
                   : `Re: ${msg.subject}`,
                 threadId: msg.threadId,
                 inReplyTo: msg.rfc822MsgId || undefined,
+                references: replyReferences(msg),
                 quote: quoteText(msg),
                 quoteFrom: msg.from,
               })
@@ -755,17 +757,14 @@ function Reader({
             className="btn"
             onClick={() => {
               // Reply-all: sender → to, everyone else (minus me) → cc.
+              // Address comparison is case-insensitive end to end.
+              const from = parseAddr(msg.from).email.toLowerCase();
               const others = [
                 ...msg.to.split(","),
                 ...(msg.cc ? msg.cc.split(",") : []),
               ]
-                .map((s) => parseAddr(s.trim()).email)
-                .filter(
-                  (e) =>
-                    e &&
-                    e.toLowerCase() !== me.toLowerCase() &&
-                    e !== parseAddr(msg.from).email,
-                );
+                .map((s) => parseAddr(s.trim()).email.toLowerCase())
+                .filter((e) => e && e !== me.toLowerCase() && e !== from);
               onReply({
                 to: parseAddr(msg.from).email,
                 cc: [...new Set(others)].join(", ") || undefined,
@@ -774,6 +773,7 @@ function Reader({
                   : `Re: ${msg.subject}`,
                 threadId: msg.threadId,
                 inReplyTo: msg.rfc822MsgId || undefined,
+                references: replyReferences(msg),
                 quote: quoteText(msg),
                 quoteFrom: msg.from,
               });
@@ -787,16 +787,7 @@ function Reader({
               guard(async () => {
                 // Forward: original attachments ride along (re-download → base64).
                 const attachments = await Promise.all(
-                  msg.attachments.map(async (a) => ({
-                    filename: a.filename,
-                    mimeType: a.mimeType,
-                    size: a.size,
-                    data: await blobToBase64(
-                      await (
-                        await fetch(api.attachmentUrl(msg.id, a.id, a.filename))
-                      ).blob(),
-                    ),
-                  })),
+                  msg.attachments.map((a) => downloadAttachment(msg.id, a)),
                 );
                 onReply({
                   subject: msg.subject.startsWith("Fwd:")
@@ -845,7 +836,7 @@ function Reader({
               })
             }
           >
-            {msg.unread ? "읽음" : "안읽음"}
+            {msg.unread ? "✉️ 읽음" : "📩 안읽음"}
           </button>
           <button
             className="btn"
@@ -1097,6 +1088,8 @@ type ComposeInit = {
   subject?: string;
   threadId?: string;
   inReplyTo?: string;
+  references?: string; // accumulated RFC 5322 chain (원본 References + Message-ID)
+  bcc?: string;
   quote?: string;
   quoteFrom?: string;
   attachments?: ComposeAttachment[];
@@ -1126,6 +1119,7 @@ function Compose({
     : "";
   const [to, setTo] = useState(init?.to ?? "");
   const [cc, setCc] = useState(init?.cc ?? "");
+  const [bcc, setBcc] = useState(init?.bcc ?? "");
   const [subject, setSubject] = useState(init?.subject ?? "");
   const [body, setBody] = useState(init?.body ?? quoted);
   const [sending, setSending] = useState(false);
@@ -1136,10 +1130,19 @@ function Compose({
   // One funnel for every attach path (버튼/드래그앤드롭/붙여넣기) — managed
   // Chrome can block the file-selection dialog outright, so DnD/paste must
   // work too; guard surfaces FileReader failures instead of silent drops.
+  const MAX_ATTACH_BYTES = 25 * 1024 * 1024; // Gmail 발송 한도 (실측 확인)
   const addFiles = (picked: File[]) => {
     if (picked.length === 0) return;
     void guard(async () => {
       const read = await Promise.all(picked.map(fileToBase64));
+      const total =
+        files.reduce((s, f) => s + f.size, 0) +
+        read.reduce((s, f) => s + f.size, 0);
+      if (total > MAX_ATTACH_BYTES) {
+        throw new Error(
+          `첨부 합계가 25MB를 초과합니다 (${Math.round(total / 1024 / 1024)}MB). Gmail 발송 한도를 넘으면 반송됩니다.`,
+        );
+      }
       setFiles((p) => [...p, ...read]);
     });
   };
@@ -1155,6 +1158,7 @@ function Compose({
         await api.send({
           to,
           cc: cc || undefined,
+          bcc: bcc || undefined,
           subject,
           body: sigText ? `${body}\n\n--\n${sigText}` : body,
           bodyHtml: sigHtml
@@ -1162,7 +1166,7 @@ function Compose({
             : undefined,
           threadId: init?.threadId,
           inReplyTo: init?.inReplyTo,
-          references: init?.inReplyTo,
+          references: init?.references ?? init?.inReplyTo,
           attachments: files.length
             ? files.map(({ filename, mimeType, data }) => ({
                 filename,
@@ -1172,9 +1176,9 @@ function Compose({
             : undefined,
         });
         if (init?.draftId) {
-          // The draft was sent as a fresh message — drop the original so the
-          // 임시보관함 doesn't keep a stale copy.
-          await api.deleteDraft(init.draftId);
+          // Post-send cleanup only — a failed draft delete must never make a
+          // SENT mail look failed (re-click would double-send).
+          await api.deleteDraft(init.draftId).catch(() => {});
         }
         onSent();
       } finally {
@@ -1189,11 +1193,12 @@ function Compose({
         const payload = {
           to,
           cc: cc || undefined,
+          bcc: bcc || undefined,
           subject,
           body,
           threadId: init?.threadId,
           inReplyTo: init?.inReplyTo,
-          references: init?.inReplyTo,
+          references: init?.references ?? init?.inReplyTo,
           attachments: files.length
             ? files.map(({ filename, mimeType, data }) => ({
                 filename,
@@ -1222,7 +1227,15 @@ function Compose({
         }}
       >
         <div className="modal-head">
-          <strong>새 메일</strong>
+          <strong>
+            {init?.draftId
+              ? "임시보관 메일"
+              : init?.inReplyTo
+                ? "답장"
+                : init?.attachments?.length || init?.quote
+                  ? "전달"
+                  : "새 메일"}
+          </strong>
           <button className="clear" onClick={onClose}>
             ✕
           </button>
@@ -1236,6 +1249,11 @@ function Compose({
           placeholder="참조 (선택)"
           value={cc}
           onChange={(e) => setCc(e.target.value)}
+        />
+        <input
+          placeholder="숨은참조 (선택)"
+          value={bcc}
+          onChange={(e) => setBcc(e.target.value)}
         />
         <input
           placeholder="제목"
@@ -1300,7 +1318,7 @@ function Compose({
           </button>
           <button
             className="btn primary"
-            disabled={sending || !to}
+            disabled={sending || !to.trim()}
             onClick={send}
           >
             {sending ? "보내는 중…" : "보내기"}
@@ -1345,6 +1363,30 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+/** RFC 5322: replies accumulate References = original References + its Message-ID. */
+function replyReferences(m: MessageFull): string | undefined {
+  return [m.references, m.rfc822MsgId].filter(Boolean).join(" ") || undefined;
+}
+
+/** Re-download an attachment for forward/draft-resume. Throws on HTTP errors
+ *  instead of silently base64-encoding an error JSON body as the attachment. */
+async function downloadAttachment(
+  messageId: string,
+  a: { id: string; filename: string; mimeType: string; size: number },
+): Promise<ComposeAttachment> {
+  const res = await fetch(api.attachmentUrl(messageId, a.id, a.filename));
+  if (res.status === 401) throw new AuthError("NOT_AUTHENTICATED");
+  if (!res.ok) {
+    throw new Error(`첨부 다운로드 실패 (${a.filename}): HTTP ${res.status}`);
+  }
+  return {
+    filename: a.filename,
+    mimeType: a.mimeType,
+    size: a.size,
+    data: await blobToBase64(await res.blob()),
+  };
 }
 
 function CalendarView({
@@ -1585,10 +1627,12 @@ function MonthGrid({
     const map = new Map<string, CalEvent[]>();
     for (const e of events ?? []) {
       if (hiddenCals.has(e.calendarId)) continue;
-      const key = e.allDay ? e.start.slice(0, 10) : localDayKey(e.start);
-      const bucket = map.get(key);
-      if (bucket) bucket.push(e);
-      else map.set(key, [e]);
+      // Multi-day events occupy every day they span, not just the start day.
+      for (const key of occupiedDayKeys(e)) {
+        const bucket = map.get(key);
+        if (bucket) bucket.push(e);
+        else map.set(key, [e]);
+      }
     }
     return map;
   }, [events, hiddenCals]);
@@ -1700,20 +1744,20 @@ function AgendaList({
   );
 
   const groups = useMemo(() => {
-    const out: [string, CalEvent[]][] = [];
     const index = new Map<string, CalEvent[]>();
     for (const e of events ?? []) {
       if (hiddenCals.has(e.calendarId)) continue;
-      const key = e.allDay ? e.start.slice(0, 10) : localDayKey(e.start);
-      let bucket = index.get(key);
-      if (!bucket) {
-        bucket = [];
-        index.set(key, bucket);
-        out.push([key, bucket]);
+      // Multi-day events occupy every day they span, not just the start day.
+      for (const key of occupiedDayKeys(e)) {
+        let bucket = index.get(key);
+        if (!bucket) {
+          bucket = [];
+          index.set(key, bucket);
+        }
+        bucket.push(e);
       }
-      bucket.push(e);
     }
-    return out;
+    return [...index.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [events, hiddenCals]);
 
   return (
@@ -1777,6 +1821,37 @@ function dateKey(d: Date): string {
 
 function localDayKey(iso: string): string {
   return dateKey(new Date(iso));
+}
+
+// Every local day key an event spans. All-day ends are exclusive (Google);
+// timed events ending exactly at midnight don't occupy that day.
+function occupiedDayKeys(e: CalEvent): string[] {
+  const keys: string[] = [];
+  if (e.allDay) {
+    const endEx = e.end || e.start;
+    for (
+      let d = new Date(`${e.start.slice(0, 10)}T00:00:00`), i = 0;
+      dateKey(d) < endEx.slice(0, 10) && i < 62;
+      d.setDate(d.getDate() + 1), i++
+    ) {
+      keys.push(dateKey(d));
+    }
+    if (keys.length === 0) keys.push(e.start.slice(0, 10));
+    return keys;
+  }
+  const startKey = localDayKey(e.start);
+  const endMs = e.end ? new Date(e.end).getTime() : NaN;
+  const lastKey = Number.isFinite(endMs)
+    ? dateKey(new Date(endMs - 1)) // minus 1ms: midnight end excludes that day
+    : startKey;
+  const d = new Date(`${startKey}T00:00:00`);
+  for (let i = 0; i < 62; i++) {
+    const k = dateKey(d);
+    keys.push(k);
+    if (k >= lastKey) break;
+    d.setDate(d.getDate() + 1);
+  }
+  return keys;
 }
 
 function startOfWeek(d: Date): Date {
@@ -2152,10 +2227,14 @@ function EventEditModal({
     };
   })();
 
+  // Read-only(reader/freeBusyReader) calendars 403 on insert — never offer them.
+  const writable = calendars.filter(
+    (c) => c.accessRole === "owner" || c.accessRole === "writer",
+  );
   const [calendarId, setCalendarId] = useState(
     initial.calendarId ||
-      calendars.find((c) => c.primary)?.id ||
-      calendars[0]?.id ||
+      writable.find((c) => c.primary)?.id ||
+      writable[0]?.id ||
       "",
   );
   const [summary, setSummary] = useState(initial.summary ?? "");
@@ -2181,6 +2260,13 @@ function EventEditModal({
 
   const save = async () => {
     if (!calendarId) return setErr("쓸 수 있는 캘린더가 없습니다.");
+    if (!start || !end) return setErr("시작/종료 일시를 입력하세요.");
+    if (allDay ? end < start : new Date(end) <= new Date(start)) {
+      return setErr("종료가 시작보다 빠릅니다.");
+    }
+    if (!allDay && (isNaN(+new Date(start)) || isNaN(+new Date(end)))) {
+      return setErr("일시 형식이 올바르지 않습니다.");
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -2241,13 +2327,17 @@ function EventEditModal({
               onChange={(e) => setEnd(e.target.value)}
             />
           </div>
-          {calendars.length > 1 && (
+          {writable.length > 1 && (
             <select
               className="ev-input"
               value={calendarId}
               onChange={(e) => setCalendarId(e.target.value)}
+              // Moving an event between calendars needs events.move — patch
+              // against a different calendarId just 404s. Lock it when editing.
+              disabled={!!eventId}
+              title={eventId ? "일정의 캘린더는 변경할 수 없습니다" : undefined}
             >
-              {calendars.map((c) => (
+              {writable.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.summary}
                 </option>

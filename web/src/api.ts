@@ -13,6 +13,8 @@ export type MessageSummary = {
 
 export type MessageFull = MessageSummary & {
   cc: string;
+  bcc: string;
+  references: string; // original References header (RFC 5322 chain)
   rfc822MsgId: string; // RFC 2822 Message-ID header (for In-Reply-To/References)
   bodyHtml: string | null;
   bodyText: string | null;
@@ -172,6 +174,8 @@ export const api = {
       subject: string;
       body: string;
       threadId?: string;
+      inReplyTo?: string;
+      references?: string;
       attachments?: { filename: string; mimeType: string; data: string }[];
     },
   ) =>

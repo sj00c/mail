@@ -465,9 +465,15 @@ body {
 }
 .cal-head {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
 .cal-range {
   flex: none;
+  display: flex;
+  gap: 6px;
   margin-bottom: 12px;
 }
 .agenda-scroll {
@@ -475,19 +481,12 @@ body {
   min-height: 0;
   overflow-y: auto;
 }
-.cal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
 .cal-head h2 {
   margin: 0;
   font-size: 20px;
 }
-.cal-range {
-  display: flex;
-  gap: 6px;
+.paperclip {
+  opacity: 0.6;
 }
 .cal-day {
   margin-bottom: 18px;

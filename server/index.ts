@@ -90,11 +90,30 @@ api.get("/profile", async (c) => c.json(await getProfile()));
 
 api.get("/labels", async (c) => c.json(await listLabels()));
 
+// Query params come from the URL — validate before they become RangeErrors
+// deep inside Date/Google API calls (NaN days previously exploded as a 500).
+function finiteOr(
+  raw: string | undefined,
+  name: string,
+): { ok: true; value: number | undefined } | { ok: false; error: string } {
+  if (raw === undefined || raw === "") return { ok: true, value: undefined };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { ok: false, error: `${name} must be a number` };
+  return { ok: true, value: n };
+}
+
 api.get("/calendar/events", async (c) => {
-  const days = c.req.query("days") ? Number(c.req.query("days")) : undefined;
+  const days = finiteOr(c.req.query("days"), "days");
+  if (!days.ok) return c.json({ error: days.error }, 400);
   const timeMin = c.req.query("from") || undefined;
   const timeMax = c.req.query("to") || undefined;
-  return c.json(await listEvents({ days, timeMin, timeMax }));
+  if (!!timeMin !== !!timeMax)
+    return c.json({ error: "from and to must be provided together" }, 400);
+  if (timeMin && Number.isNaN(Date.parse(timeMin)))
+    return c.json({ error: "from is not a valid date" }, 400);
+  if (timeMax && Number.isNaN(Date.parse(timeMax)))
+    return c.json({ error: "to is not a valid date" }, 400);
+  return c.json(await listEvents({ days: days.value, timeMin, timeMax }));
 });
 
 api.get("/calendar/calendars", async (c) => c.json(await listCalendars()));
@@ -129,9 +148,9 @@ api.get("/messages", async (c) => {
   const q = c.req.query("q") || undefined;
   const label = c.req.query("label") || undefined;
   const pageToken = c.req.query("pageToken") || undefined;
-  const maxResults = c.req.query("maxResults")
-    ? Number(c.req.query("maxResults"))
-    : undefined;
+  const max = finiteOr(c.req.query("maxResults"), "maxResults");
+  if (!max.ok) return c.json({ error: max.error }, 400);
+  const maxResults = max.value;
   const res = await listMessages({
     q,
     labelIds: label ? [label] : undefined,

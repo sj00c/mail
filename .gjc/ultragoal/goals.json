@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "brief": "사용자 직접 지시(승인 완료): 메일을 열었을 때 본문 내부 링크가 안 보이는 버그를 고치고, 프론트/서버 최적화까지 끝까지 해결한다.\n\n공통 제약:\n- 레포: ~/dev/mail (Bun + Hono 서버, React + Vite 프론트). dev 서버가 8787(bun --watch) / 5173(vite)으로 떠 있음 — 죽이지 말 것.\n- 검증: `bun run typecheck` + `bun run build` + 라이브 서버(localhost:8787, 인증됨) 대상 실측.\n- 기존 컨벤션 유지, 과한 추상화 금지.\n\n@goal: 메일 본문 링크 가시성·동작 수정\n근거(조사 완료):\n(a) plain-text 메일(bodyHtml 없음)은 web/src/App.tsx ThreadMessage가 <pre className=\"text-body\">로 그대로 출력 → URL/이메일 주소가 클릭 불가능한 일반 텍스트로 보임.\n(b) HTML 메일은 prepareEmailHtml()이 모든 a[href]에 target=\"_blank\" + <base target=\"_blank\"> 강제 → href=\"#fragment\" 문서 내부 앵커(뉴스레터 목차 등)가 about:srcdoc 새 탭으로 빠져 동작 불능. HtmlBody 클릭 인터셉터는 https?:/mailto:만 처리.\n수정:\n- plain-text 본문을 URL/메일주소 자동 링크화(linkify)해 새 탭(noopener,noreferrer)으로 열리는 안전한 React 엘리먼트로 렌더 (dangerouslySetInnerHTML 금지).\n- prepareEmailHtml: 순수 fragment(#...) 링크에는 target=_blank를 걸지 않음. HtmlBody 클릭 인터셉터에 #fragment 분기 추가 — iframe 문서 내부에서 해당 id/name 요소로 스크롤.\n완료 기준: typecheck/build 통과 + 두 케이스(plain-text URL, HTML 내부 앵커) 실제 렌더 동작 검증.\n\n@goal: 서버 API 호출 최적화\n근거(조사 완료):\n(a) server/gmail.ts listLabels가 labels.list 후 모든 라벨에 labels.get N+1 호출(라벨 20개면 21회) — 사이드바 로드·메일 조작 후 refreshLabels마다 반복. UI가 실제 표시하는 라벨은 SYSTEM_ORDER(INBOX/STARRED/SENT/DRAFT/SPAM/TRASH) + user 라벨뿐인데 CATEGORY_*, CHAT 등 미표시 시스템 라벨까지 전부 unread 카운트를 조회.\n(b) server/calendar.ts listEvents가 60초 자동갱신마다 calendarList.list를 매번 호출.\n수정:\n- listLabels: 표시 대상 라벨(SYSTEM_ORDER 시스템 라벨 + user 라벨)만 labels.get으로 unread 조회, 나머지는 unread 0으로 즉시 반환. fields 파라미터로 응답 슬림화.\n- calendar: calendarList.list 결과를 서버 메모리에 짧은 TTL(5분)로 캐시, listEvents/listCalendars가 공유. listCalendars 직접 호출 시(캘린더 뷰 첫 진입) 캐시 갱신.\n완료 기준: typecheck 통과 + 라이브 서버에서 /api/labels, /api/calendar/events 응답 정상·동작 동일 확인, 호출 수 감소 근거 제시.\n\n@goal: 프론트 렌더·페치 최적화\n근거(조사 완료):\n(a) web/src/App.tsx HtmlBody가 렌더마다 prepareEmailHtml(html)을 재실행(DOMParser 풀 파싱) — srcDoc prop이 매 렌더 새로 계산됨.\n(b) Reader가 메일 클릭 시 api.message(id) + api.thread(threadId) 두 번 풀 페치 — 스레드 응답에 같은 메시지가 또 포함돼 단일 메시지 스레드(대부분)는 페이로드/지연 2배. MessageSummary에 threadId가 이미 있으므로 thread 한 번만 페치해 클릭 메시지를 골라내면 1 round-trip.\n(c) ThreadMessage가 memo 없이 부모 상태 변경(별표 토글 등)마다 전체 재렌더 → iframe srcDoc 재계산 연쇄.\n수정:\n- HtmlBody: useMemo로 srcDoc 캐시. ThreadMessage: React.memo.\n- Reader에 threadId를 prop으로 전달, api.thread 단일 페치로 통합(첫 페인트 동작 유지하되 중복 메시지 페치 제거). 읽음 처리 로직 동일 유지.\n완료 기준: typecheck/build 통과 + 메일 열람 시 네트워크 요청이 thread 1회로 줄었는지 실측, 별표 토글 시 본문 iframe 리로드 없음 확인.",
+  "gjcGoalMode": "aggregate",
+  "gjcObjective": "Complete the durable ultragoal plan in .gjc/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .gjc/ultragoal/ledger.jsonl as the audit trail.",
+  "goals": [
+    {
+      "id": "G001",
+      "title": "메일 본문 링크 가시성·동작 수정",
+      "objective": "근거(조사 완료):\n(a) plain-text 메일(bodyHtml 없음)은 web/src/App.tsx ThreadMessage가 <pre className=\"text-body\">로 그대로 출력 → URL/이메일 주소가 클릭 불가능한 일반 텍스트로 보임.\n(b) HTML 메일은 prepareEmailHtml()이 모든 a[href]에 target=\"_blank\" + <base target=\"_blank\"> 강제 → href=\"#fragment\" 문서 내부 앵커(뉴스레터 목차 등)가 about:srcdoc 새 탭으로 빠져 동작 불능. HtmlBody 클릭 인터셉터는 https?:/mailto:만 처리.\n수정:\n- plain-text 본문을 URL/메일주소 자동 링크화(linkify)해 새 탭(noopener,noreferrer)으로 열리는 안전한 React 엘리먼트로 렌더 (dangerouslySetInnerHTML 금지).\n- prepareEmailHtml: 순수 fragment(#...) 링크에는 target=_blank를 걸지 않음. HtmlBody 클릭 인터셉터에 #fragment 분기 추가 — iframe 문서 내부에서 해당 id/name 요소로 스크롤.\n완료 기준: typecheck/build 통과 + 두 케이스(plain-text URL, HTML 내부 앵커) 실제 렌더 동작 검증.",
+      "status": "complete",
+      "createdAt": "2026-06-10T02:00:36.926Z",
+      "updatedAt": "2026-06-10T03:07:33.336Z",
+      "startedAt": "2026-06-10T02:00:42.380Z",
+      "completedAt": "2026-06-10T03:07:33.336Z",
+      "evidence": "메일 본문 링크 가시성·동작 수정 완료: plain-text linkify(TextBody, innerHTML 미사용), HTML # 앵커 프레임 내 스크롤(한글/malformed/빈 # 방어), 위험 스킴 href 중성화, 외부 링크 비회귀 실클릭 검증. 아티팩트 server/.data/artifacts/g001-* 및 .gjc/ultragoal/artifacts/g001-*, 리뷰 태스크 1-FinalArchReview/3-DeltaReview 전부 CLEAR+APPROVE",
+      "completionVerification": {
+        "schemaVersion": 1,
+        "receiptId": "0fe7b670-fdb7-437c-9f9c-9a3c0ca6c7fa",
+        "verifiedAt": "2026-06-10T03:07:33.336Z",
+        "goalId": "G001",
+        "receiptKind": "per-goal",
+        "goalStatusBeforeCheckpoint": "active",
+        "gjcGoalMode": "aggregate",
+        "gjcObjective": "Complete the durable ultragoal plan in .gjc/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .gjc/ultragoal/ledger.jsonl as the audit trail.",
+        "qualityGateHash": "494c4dbe00f83aed81bbe97480a7adf7efe5c8bd9803155ee39162dd2426f213",
+        "gjcGoalSnapshotHash": "1608db6fab9fef150abd32f4fd58ae3f4e17e82b20a4c2ee0494e0e36aa83439",
+        "planGeneration": "9ab23a9be3c432ce400f239e22bec8c468adeccf85e70ce558688f56c2736125",
+        "basis": {
+          "planHashBeforeCheckpoint": "2dd938efddec2e463c44abd6c1305afb67a9c411f2356390cd1858a9cafdd132",
+          "latestRelevantLedgerEventIdBeforeCheckpoint": "37add52b-396c-4979-b54b-b6c709433299",
+          "goalUpdatedAtBeforeCheckpoint": "2026-06-10T03:07:33.336Z",
+          "relevantGoalIdsBeforeCheckpoint": [
+            "G001"
+          ],
+          "requiredGoalSetHashBeforeCheckpoint": "b97aa004c9cfce121d0e2f0e524eb0204a94a00c3119db17c3704a3e45b77782"
+        },
+        "checkpointLedgerEventId": "fd6ee399-699b-495a-b808-f856037370ca"
+      }
+    },
+    {
+      "id": "G002",
+      "title": "서버 API 호출 최적화",
+      "objective": "근거(조사 완료):\n(a) server/gmail.ts listLabels가 labels.list 후 모든 라벨에 labels.get N+1 호출(라벨 20개면 21회) — 사이드바 로드·메일 조작 후 refreshLabels마다 반복. UI가 실제 표시하는 라벨은 SYSTEM_ORDER(INBOX/STARRED/SENT/DRAFT/SPAM/TRASH) + user 라벨뿐인데 CATEGORY_*, CHAT 등 미표시 시스템 라벨까지 전부 unread 카운트를 조회.\n(b) server/calendar.ts listEvents가 60초 자동갱신마다 calendarList.list를 매번 호출.\n수정:\n- listLabels: 표시 대상 라벨(SYSTEM_ORDER 시스템 라벨 + user 라벨)만 labels.get으로 unread 조회, 나머지는 unread 0으로 즉시 반환. fields 파라미터로 응답 슬림화.\n- calendar: calendarList.list 결과를 서버 메모리에 짧은 TTL(5분)로 캐시, listEvents/listCalendars가 공유. listCalendars 직접 호출 시(캘린더 뷰 첫 진입) 캐시 갱신.\n완료 기준: typecheck 통과 + 라이브 서버에서 /api/labels, /api/calendar/events 응답 정상·동작 동일 확인, 호출 수 감소 근거 제시.",
+      "status": "complete",
+      "createdAt": "2026-06-10T02:00:36.926Z",
+      "updatedAt": "2026-06-10T03:09:53.757Z",
+      "startedAt": "2026-06-10T03:07:33.339Z",
+      "completedAt": "2026-06-10T03:09:53.757Z",
+      "evidence": "서버 API 최적화 완료: listLabels가 표시 라벨(SYSTEM_ORDER 6종+user)만 unread 조회(15→6회, 사이드바 갱신당 Gmail API 9회 절감, fields 마스크 적용), calendarList 5분 TTL 캐시(60초 폴링 공유, listCalendars 진입 시 강제 갱신, logout 시 clearCalendarCache). 라이브 검증: INBOX 591/SPAM 23 정확, 비표시 라벨 0 즉시 반환, events 연속 호출 동일 16건. 리뷰 태스크 1-FinalArchReview/3-DeltaReview APPROVE",
+      "completionVerification": {
+        "schemaVersion": 1,
+        "receiptId": "63593bf9-7818-4dec-8fd9-18290069c716",
+        "verifiedAt": "2026-06-10T03:09:53.757Z",
+        "goalId": "G002",
+        "receiptKind": "per-goal",
+        "goalStatusBeforeCheckpoint": "active",
+        "gjcGoalMode": "aggregate",
+        "gjcObjective": "Complete the durable ultragoal plan in .gjc/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .gjc/ultragoal/ledger.jsonl as the audit trail.",
+        "qualityGateHash": "0566f16aba11f120057e076a5fe3cbb97972c2a0f3e816ead4bfa09b66531fd3",
+        "gjcGoalSnapshotHash": "2b7a1e27fa48d9b54d4fa1927c2ed881a6405e4e82d5a53ed7e49f32cea70c7c",
+        "planGeneration": "9367896989b4d47a10e434fe7310add56d7421b13af76ec9321efa68062a434c",
+        "basis": {
+          "planHashBeforeCheckpoint": "dce004375a927351a3d99678a0f0e55b388126ef249bb14c6a39539fa940d3a6",
+          "latestRelevantLedgerEventIdBeforeCheckpoint": "92058e71-1925-4315-9171-f8b08e0bf112",
+          "goalUpdatedAtBeforeCheckpoint": "2026-06-10T03:09:53.757Z",
+          "relevantGoalIdsBeforeCheckpoint": [
+            "G002"
+          ],
+          "requiredGoalSetHashBeforeCheckpoint": "5991b158fb6db8c6b12f8c030668914503eac67c1f3bd67c3b745a0dc21617ae"
+        },
+        "checkpointLedgerEventId": "02f9f655-ce35-4287-b737-f303a1f32446"
+      }
+    },
+    {
+      "id": "G003",
+      "title": "프론트 렌더·페치 최적화",
+      "objective": "근거(조사 완료):\n(a) web/src/App.tsx HtmlBody가 렌더마다 prepareEmailHtml(html)을 재실행(DOMParser 풀 파싱) — srcDoc prop이 매 렌더 새로 계산됨.\n(b) Reader가 메일 클릭 시 api.message(id) + api.thread(threadId) 두 번 풀 페치 — 스레드 응답에 같은 메시지가 또 포함돼 단일 메시지 스레드(대부분)는 페이로드/지연 2배. MessageSummary에 threadId가 이미 있으므로 thread 한 번만 페치해 클릭 메시지를 골라내면 1 round-trip.\n(c) ThreadMessage가 memo 없이 부모 상태 변경(별표 토글 등)마다 전체 재렌더 → iframe srcDoc 재계산 연쇄.\n수정:\n- HtmlBody: useMemo로 srcDoc 캐시. ThreadMessage: React.memo.\n- Reader에 threadId를 prop으로 전달, api.thread 단일 페치로 통합(첫 페인트 동작 유지하되 중복 메시지 페치 제거). 읽음 처리 로직 동일 유지.\n완료 기준: typecheck/build 통과 + 메일 열람 시 네트워크 요청이 thread 1회로 줄었는지 실측, 별표 토글 시 본문 iframe 리로드 없음 확인.",
+      "status": "complete",
+      "createdAt": "2026-06-10T02:00:36.926Z",
+      "updatedAt": "2026-06-10T03:10:14.471Z",
+      "startedAt": "2026-06-10T03:09:53.762Z",
+      "completedAt": "2026-06-10T03:10:14.471Z",
+      "evidence": "프론트 렌더·페치 최적화 완료: 메일 열람이 /api/threads 단일 페치(기존 message+thread 2회→1회, 중복 페이로드 제거), HtmlBody srcDoc useMemo로 DOMParser 재파싱 제거, ThreadMessage memo. 별표 토글 시 iframe contentDocument 보존 실측, fetch 가로채기로 1회 페치 확인. 미발견 메시지는 guard 에러로 표면화(무한 스피너 제거), 죽은 api.message()/GET /messages/:id/getMessage 일관 제거+README 갱신. 리뷰 태스크 1-FinalArchReview/3-DeltaReview APPROVE, 잔여 P3 nit 1건 advisory",
+      "completionVerification": {
+        "schemaVersion": 1,
+        "receiptId": "b1910ddf-b574-4f85-b827-5334e01a2c6d",
+        "verifiedAt": "2026-06-10T03:10:14.471Z",
+        "goalId": "G003",
+        "receiptKind": "final-aggregate",
+        "goalStatusBeforeCheckpoint": "active",
+        "gjcGoalMode": "aggregate",
+        "gjcObjective": "Complete the durable ultragoal plan in .gjc/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .gjc/ultragoal/ledger.jsonl as the audit trail.",
+        "qualityGateHash": "f1a1e996e723d111308e899f7547c95642794606805da8a48a49bc00ed6ef6df",
+        "gjcGoalSnapshotHash": "b522026e905df9cf3e6b207488b8bd97657ecfcf652f13cd70bd2bd59bceef98",
+        "planGeneration": "7e581df16595d44b92cbd90c441fd8f495dccc9e448e0c5b81fb48458ed5128b",
+        "basis": {
+          "planHashBeforeCheckpoint": "36fbe369653ad82aff8a00bd8f3268dc4791b27b5a0c66cfade028339128569b",
+          "latestRelevantLedgerEventIdBeforeCheckpoint": "44f172e5-edf3-42c8-80d4-69369f426b49",
+          "goalUpdatedAtBeforeCheckpoint": "2026-06-10T03:10:14.471Z",
+          "relevantGoalIdsBeforeCheckpoint": [
+            "G001",
+            "G002",
+            "G003"
+          ],
+          "requiredGoalSetHashBeforeCheckpoint": "97b8975f892d304c6e80fde3acb3231b371fe74b961c3a2452bfdebbe9e6b197"
+        },
+        "checkpointLedgerEventId": "a87a8d22-37b8-4351-9f5f-dbffa755867b"
+      }
+    }
+  ],
+  "createdAt": "2026-06-10T02:00:36.926Z",
+  "updatedAt": "2026-06-10T03:10:14.471Z"
+}

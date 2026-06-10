@@ -21,7 +21,9 @@ export type MessageSummary = {
 
 export type MessageFull = MessageSummary & {
   cc: string;
+  bcc: string; // drafts may carry Bcc — must survive a draft-resume roundtrip
   rfc822MsgId: string; // RFC 2822 Message-ID header (for In-Reply-To/References)
+  references: string; // original References header (for RFC 5322 chain accumulation)
   bodyHtml: string | null;
   bodyText: string | null;
   attachments: { id: string; filename: string; mimeType: string; size: number }[];
@@ -134,7 +136,9 @@ function toFull(m: gmail_v1.Schema$Message): MessageFull {
   return {
     ...summary,
     cc: header(m.payload?.headers, "Cc"),
+    bcc: header(m.payload?.headers, "Bcc"),
     rfc822MsgId: header(m.payload?.headers, "Message-ID"),
+    references: header(m.payload?.headers, "References"),
     bodyHtml: acc.html,
     bodyText: acc.text,
     attachments: acc.attachments,
