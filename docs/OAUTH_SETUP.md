@@ -52,10 +52,11 @@ Gmail/Calendar API는 사용자 인증이 필요해서 **API 키가 아니라 OA
 
 ## 2. 프로젝트 생성 + API 사용 설정 (Gmail + Calendar)
 
-1. https://console.cloud.google.com → 상단 프로젝트 선택 → **새 프로젝트**(New Project) (이름 아무거나)
-2. **API 및 서비스**(APIs & Services) → **라이브러리**(Library) 에서 각각 검색 후 **사용**(Enable):
-   - **Gmail API**
-   - **Google Calendar API**  ← 캘린더 탭용. **"CalDAV API" 아님!**
+1. **프로젝트 생성** — 🔗 https://console.cloud.google.com/projectcreate
+   → 이름 아무거나(예: `mail`) → **만들기** → 10초쯤 기다린다. (이후 링크는 이 프로젝트가 선택된 채 열린다.)
+2. **API 두 개 켜기** — 아래 링크에서 각각 파란 **사용**(Enable) 버튼 한 번씩:
+   - Gmail API → 🔗 https://console.cloud.google.com/apis/library/gmail.googleapis.com
+   - Google Calendar API → 🔗 https://console.cloud.google.com/apis/library/calendar-json.googleapis.com  ← **"CalDAV API" 아님!**
 - ★ 둘 다 먼저 안 켜면 클라이언트를 만들어도 호출이 막힌다.
   - 캘린더에서 `403 ... Calendar API has not been used in project` 가 뜨면 이 단계를 빼먹은 것.
 
@@ -63,7 +64,7 @@ Gmail/Calendar API는 사용자 인증이 필요해서 **API 키가 아니라 OA
 
 ## 3. OAuth 동의 화면 (OAuth consent screen / 새 UI는 "대상(Audience)")
 
-- **API 및 서비스 → OAuth 동의 화면**
+- 🔗 https://console.cloud.google.com/auth/overview *(구버전 콘솔: **API 및 서비스 → OAuth 동의 화면**)*
 - 사용자 유형(User Type): **외부**(External) → 만들기
 - 앱 이름 / 지원 이메일 등 필수값만 입력
 - **테스트 사용자**(Test users) → **사용자 추가**(+ ADD USERS) 에 **로그인할 본인 Gmail 주소** 추가
@@ -76,7 +77,7 @@ Gmail/Calendar API는 사용자 인증이 필요해서 **API 키가 아니라 OA
 
 ## 4. OAuth 클라이언트 ID 생성 (+ 리디렉션 URI)
 
-- **API 및 서비스 → 사용자 인증 정보**(Credentials) → **사용자 인증 정보 만들기**(Create Credentials) → **OAuth 클라이언트 ID**
+- 🔗 https://console.cloud.google.com/auth/clients → **+ 클라이언트 만들기**(Create client) *(구버전: **API 및 서비스 → 사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID**)*
 - 애플리케이션 유형(Application type): **웹 애플리케이션**(Web application) ← ★ 반드시 이거
   - ★ 데스크톱/TV 등으로 만들면 **승인된 리디렉션 URI 입력칸이 아예 안 나온다**
     (이름만 수정 가능한 화면이 뜸). 유형은 생성 후 변경 불가 → 잘못 만들었으면 삭제하고 새로 생성.

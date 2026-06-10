@@ -71,24 +71,37 @@ bun install
 
 ### 3. Google OAuth 클라이언트 발급 — 최초 1회, 약 5분
 
-이 앱은 "각자 자기가 만든 Google 앱"으로 본인 계정에 붙는 구조다. [console.cloud.google.com](https://console.cloud.google.com)에 본인 Google 계정으로 로그인한 뒤, 아래 표를 위에서부터 순서대로:
+이 앱은 "각자 자기가 만든 Google 앱"으로 본인 계정에 붙는 구조다. 먼저 본인 Google 계정으로 로그인해 둔다 → [accounts.google.com](https://accounts.google.com).
+아래 ①~⑤를 순서대로. 각 단계의 **🔗 링크를 클릭하면 그 화면으로 바로 이동**한다 (①에서 만든 프로젝트가 자동으로 선택된 채 열린다).
 
-| # | 콘솔에서 가는 곳 | 할 일 |
-|---|---|---|
-| ① | 상단 프로젝트 선택 → **새 프로젝트** | 이름 아무거나(예: `mail`) → 만들기 |
-| ② | **API 및 서비스 → 라이브러리** | `Gmail API` 검색 → **사용**, `Google Calendar API` 검색 → **사용** *("CalDAV API" 아님)* |
-| ③ | **API 및 서비스 → OAuth 동의 화면** | 사용자 유형 **외부** → 앱 이름·지원 이메일만 입력 → **테스트 사용자(Test users)에 본인 Gmail 주소 추가** → 게시 상태는 **"테스트"** 그대로 둠 |
-| ④ | **API 및 서비스 → 사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID** | 애플리케이션 유형 **웹 애플리케이션** → **승인된 리디렉션 URI**에 아래 값을 정확히 추가 → 만들기 |
-| ⑤ | 생성 직후 뜨는 창 | **클라이언트 ID**와 **클라이언트 보안 비밀번호(Secret)** 복사해 두기 |
+**① 프로젝트 생성**
+🔗 https://console.cloud.google.com/projectcreate
+→ **프로젝트 이름**에 아무거나 입력(예: `mail`) → **만들기** → 생성될 때까지 10초쯤 기다린다.
 
-④에 넣을 리디렉션 URI (한 글자도 다르면 안 됨 — `http`, 끝에 `/` 없음):
+**② Gmail · Calendar API 켜기** *(각 링크에서 파란 **사용**(Enable) 버튼 한 번씩)*
+🔗 Gmail API → https://console.cloud.google.com/apis/library/gmail.googleapis.com → **사용**
+🔗 Calendar API → https://console.cloud.google.com/apis/library/calendar-json.googleapis.com → **사용**
 
+**③ OAuth 동의 화면 + 테스트 사용자**
+🔗 https://console.cloud.google.com/auth/overview
+→ 처음이면 **시작하기(Get started)**: 앱 이름·지원 이메일만 채우고, 대상(Audience)은 **외부(External)** 선택 → 완료.
+→ 그다음 왼쪽 **대상(Audience)** 탭 → **테스트 사용자(Test users)** 항목의 **+ 사용자 추가**에 **본인 Gmail 주소**를 넣는다. *(게시 상태는 "테스트"로 그대로 둔다 — 개인용이라 검수 불필요)*
+
+**④ OAuth 클라이언트 ID 만들기**
+🔗 https://console.cloud.google.com/auth/clients
+→ **+ 클라이언트 만들기(Create client)** → **애플리케이션 유형: 웹 애플리케이션(Web application)** 선택
+→ **승인된 리디렉션 URI(Authorized redirect URIs)** 의 **+ URI 추가**에 아래를 정확히 붙여넣기:
 ```
 http://localhost:8787/auth/callback
 ```
+→ **만들기(Create)**.
 
-> ⚠️ 여기서 빠뜨리면 나는 에러 3종 — ② 안 켬: `403 ... has not been used in project` / ③ 테스트 사용자 안 넣음: `403 access_denied` / ④ URI 불일치: `redirect_uri_mismatch`.
-> 화면이 다르거나 막히면 스텝별 상세 가이드: [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md)
+**⑤ 두 값 복사**
+만들기 직후 뜨는 창(또는 ④ 목록에서 방금 만든 클라이언트 클릭)에서 **클라이언트 ID**와 **클라이언트 보안 비밀번호(Client secret)** 를 복사해 둔다 → 다음 4단계에서 `.env`에 붙여넣는다.
+
+> 💡 콘솔 UI가 위 화면과 다르게 보이면 (구버전), 왼쪽 메뉴 **API 및 서비스 → OAuth 동의 화면 / 사용자 인증 정보**로 가면 같은 자리다. 막히면 → [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md)
+>
+> ⚠️ 빠뜨리면 나는 에러 3종 — **②** 안 켬 → `403 ... has not been used in project` · **③** 테스트 사용자 안 넣음 → `403 access_denied` · **④** URI 한 글자라도 다름(`http`/끝 `/`) → `redirect_uri_mismatch`
 
 ### 4. `.env` 작성
 
