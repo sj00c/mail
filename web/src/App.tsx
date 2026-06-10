@@ -26,6 +26,61 @@ import {
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
 
+// 상단바 아이콘: 이모지 대신 인라인 SVG (외부 에셋 없이 선형 아이콘)
+function SvgIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+const IconPen = () => (
+  <SvgIcon>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </SvgIcon>
+);
+
+const IconSend = () => (
+  <SvgIcon>
+    <path d="m22 2-7 20-4-9-9-4Z" />
+    <path d="M22 2 11 13" />
+  </SvgIcon>
+);
+
+const IconSliders = () => (
+  <SvgIcon>
+    <line x1="4" y1="21" x2="4" y2="14" />
+    <line x1="4" y1="10" x2="4" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12" y2="3" />
+    <line x1="20" y1="21" x2="20" y2="16" />
+    <line x1="20" y1="12" x2="20" y2="3" />
+    <line x1="1" y1="14" x2="7" y2="14" />
+    <line x1="9" y1="8" x2="15" y2="8" />
+    <line x1="17" y1="16" x2="23" y2="16" />
+  </SvgIcon>
+);
+
+const IconLogout = () => (
+  <SvgIcon>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <polyline points="16 17 21 12 16 7" />
+    <line x1="21" y1="12" x2="9" y2="12" />
+  </SvgIcon>
+);
+
 export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   // A failed status check is "server unreachable", not "logged out" —
@@ -44,7 +99,7 @@ export function App() {
   if (bootErr) {
     return (
       <div className="center login">
-        <h1>📬 Mail</h1>
+        <h1>Mail</h1>
         <p>서버에 연결할 수 없습니다.</p>
         <button className="btn primary" onClick={() => setRetry((r) => r + 1)}>
           다시 시도
@@ -60,7 +115,7 @@ export function App() {
 function Login() {
   return (
     <div className="center login">
-      <h1>📬 Mail</h1>
+      <h1>Mail</h1>
       <p>Gmail 계정을 연결하세요.</p>
       <a className="btn primary" href="/auth/login">
         Gmail 연결하기
@@ -480,7 +535,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">📬 Mail</div>
+        <div className="brand">
+          <span className="brand-mark">
+            <IconSend />
+          </span>
+          Mail
+        </div>
         <form
           className="search"
           onSubmit={(e) => {
@@ -492,7 +552,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           }}
         >
           <input
-            placeholder="검색 (Gmail 문법: from:, subject:, has:attachment …)"
+            placeholder="Search"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -509,20 +569,34 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             </button>
           )}
         </form>
+        <span className="topbar-spacer" />
+        <button
+          className="btn primary compose-btn"
+          onClick={() => openCompose(undefined)}
+        >
+          <IconPen />새 메일
+        </button>
         <div className="account">
-          <button className="btn primary" onClick={() => openCompose(undefined)}>
-            ✏️ 새 메일
-          </button>
+          {email && (
+            <span
+              className="avatar xs"
+              style={{ background: avatarColor(email.toLowerCase()) }}
+              title={email}
+            >
+              {email.charAt(0).toUpperCase()}
+            </span>
+          )}
           <span className="email">{email}</span>
           <button
-            className="btn"
+            className="icon-btn"
             title="설정 (서명)"
             onClick={() => setSettingsOpen(true)}
           >
-            ⚙
+            <IconSliders />
           </button>
           <button
-            className="btn"
+            className="icon-btn"
+            title="로그아웃"
             onClick={() =>
               guard(async () => {
                 await api.logout();
@@ -530,7 +604,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               })
             }
           >
-            로그아웃
+            <IconLogout />
           </button>
         </div>
       </header>

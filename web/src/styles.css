@@ -157,10 +157,57 @@ body {
   z-index: 10;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   font-weight: 700;
-  font-size: 18px;
+  font-size: 17px;
   white-space: nowrap;
   letter-spacing: -0.3px;
+}
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #3b76e6 0%, #1d4fc4 100%);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(33, 96, 216, 0.35);
+}
+.brand-mark svg {
+  width: 14px;
+  height: 14px;
+}
+.topbar-spacer {
+  flex: 1;
+}
+.compose-btn {
+  gap: 7px;
+}
+.icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.icon-btn:hover {
+  background: rgba(16, 24, 40, 0.07);
+  color: var(--text);
+}
+.avatar.xs {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+  font-weight: 700;
 }
 .search {
   flex: 1;
@@ -170,11 +217,15 @@ body {
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 0 12px;
-  max-width: 640px;
+  max-width: 560px;
   transition:
     background 0.18s ease,
     border-color 0.18s ease,
     box-shadow 0.18s ease;
+}
+.search input::placeholder {
+  color: #98a1b0;
+  letter-spacing: 0.2px;
 }
 .search:focus-within {
   background: var(--panel);
@@ -440,6 +491,8 @@ body {
 }
 .msg-from {
   font-size: 13px;
+  font-weight: 600; /* 발신자는 항상 강하게 — 행의 시각적 앵커 */
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1190,7 +1243,7 @@ textarea.ev-input {
 }
 .scard-from {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
