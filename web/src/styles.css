@@ -1462,7 +1462,7 @@ mark {
 .recip-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   max-width: 100%;
   background: var(--accent-bg);
   color: #1a3f8a;
@@ -1473,7 +1473,30 @@ mark {
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
+  cursor: pointer; /* 클릭하여 수정 */
+}
+.recip-chip:hover {
+  border-color: var(--accent);
+  background: #dde9fd;
+}
+.recip-chip-name {
+  font-weight: 600;
+  overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 160px;
+}
+.recip-chip-mail {
+  color: #4a6aa8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 이름이 함께 있으면 이메일을 살짝 작게 — 둘 다 보이되 이름이 먼저 */
+.recip-chip-name + .recip-chip-mail {
+  font-size: 11.5px;
+  opacity: 0.85;
+}
+.recip-chip.invalid .recip-chip-mail {
+  color: var(--danger);
 }
 .recip-chip.invalid {
   background: #fdecea;

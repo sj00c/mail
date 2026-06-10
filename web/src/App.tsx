@@ -502,10 +502,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           }
           if (fresh.length > 0) {
             void refreshLabels();
-            // Refresh even while the calendar view hides the list — otherwise
-            // the seen-ids update below consumes the new-mail signal and the
-            // inbox stays stale after switching back.
-            if (activeLabel === "INBOX" && !query) load(true);
+            // 새 메일을 목록 "맨 앞에 병합"한다 — load(true) 전체 리로드는
+            // '더 보기'로 불러온 페이지·스크롤을 날린다. INBOX·검색없음일 때만.
+            if (activeLabel === "INBOX" && !query) {
+              setMessages((prev) => {
+                const have = new Set(prev.map((m) => m.id));
+                const add = res.messages.filter((m) => !have.has(m.id));
+                if (add.length === 0) return prev;
+                return [...add, ...prev];
+              });
+            }
           }
         }
         lastSeenIds.current = res.messages.map((m) => m.id);
@@ -1829,9 +1835,13 @@ function tokenHasEmail(tok: string): boolean {
   return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(parseAddr(tok).email);
 }
 
-// 수신자 칩 입력 — 문자열(콤마 구분)을 그대로 value로 유지하면서, 토큰을
-// 박스(칩)로 보여준다. 콤마/엔터/탭/세미콜론/붙여넣기로 확정, 백스페이스로
-// 마지막 칩 삭제. send/saveDraft는 기존처럼 문자열을 읽는다.
+// 수신자 칩 입력. value는 콤마 구분 문자열(send/draft가 그대로 읽음)이고,
+// 확정된 토큰은 칩으로, 입력 중인 것은 인풋에 둔다.
+//  · 확정: 콤마/세미콜론/엔터/탭, 그리고 "완성된 단독 이메일 뒤 공백"
+//    (표시명에는 공백이 있을 수 있어 "이름 <메일>" 입력은 공백으로 끊지 않음)
+//  · 칩 본문 클릭 또는 빈 인풋에서 백스페이스 → 그 칩을 인풋으로 되돌려 수정
+//  · ✕ → 삭제
+//  · blur 시 입력 중이던 텍스트도 확정 → 보내기 직전 누락 방지
 function RecipientField({
   label,
   value,
@@ -1844,15 +1854,23 @@ function RecipientField({
   autoFocus?: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const items = splitAddrList(value);
-  const commit = (raw: string) => {
-    const next = raw.trim().replace(/[,;]+$/, "").trim();
-    if (!next) return;
-    onChange([...items, next].join(", "));
-    setDraft("");
+
+  const setItems = (next: string[]) => onChange(next.filter(Boolean).join(", "));
+  const addTokens = (toks: string[]) => {
+    const clean = toks.map((t) => t.trim()).filter(Boolean);
+    if (clean.length) setItems([...items, ...clean]);
   };
-  const removeAt = (i: number) =>
-    onChange(items.filter((_, j) => j !== i).join(", "));
+  const removeAt = (i: number) => setItems(items.filter((_, j) => j !== i));
+  // 칩을 인풋으로 되돌려 수정. 입력 중이던 draft가 있으면 먼저 칩으로 확정.
+  const editAt = (i: number) => {
+    const tok = items[i];
+    const rest = items.filter((_, j) => j !== i);
+    setItems(draft.trim() ? [...rest, draft.trim()] : rest);
+    setDraft(tok);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
 
   return (
     <label className="recip-field">
@@ -1860,20 +1878,32 @@ function RecipientField({
       <span className="recip-box">
         {items.map((tok, i) => {
           const a = parseAddr(tok);
+          const hasName = !!a.name && a.name !== a.email;
           return (
             <span
               key={`${tok}-${i}`}
               className={`recip-chip${tokenHasEmail(tok) ? "" : " invalid"}`}
-              title={a.email}
+              title={`${tok} (클릭하여 수정)`}
+              onClick={() => editAt(i)}
             >
-              {a.name || a.email}
-              <button type="button" className="recip-x" onClick={() => removeAt(i)}>
+              {/* 이메일은 항상 표시 — 이름만 보이면 누구에게 가는지 확인 불가 */}
+              {hasName && <span className="recip-chip-name">{a.name}</span>}
+              <span className="recip-chip-mail">{a.email}</span>
+              <button
+                type="button"
+                className="recip-x"
+                onClick={(e) => {
+                  e.stopPropagation(); // 칩 수정과 구분
+                  removeAt(i);
+                }}
+              >
                 ✕
               </button>
             </span>
           );
         })}
         <input
+          ref={inputRef}
           className="recip-input"
           // eslint-disable-next-line jsx-a11y/no-autofocus
           autoFocus={autoFocus}
@@ -1881,30 +1911,52 @@ function RecipientField({
           placeholder={items.length === 0 ? `${label} 추가` : ""}
           onChange={(e) => {
             const v = e.target.value;
-            // 콤마/세미콜론 입력 즉시 칩으로 확정
-            if (/[,;]/.test(v)) commit(v);
-            else setDraft(v);
+            if (/[,;]/.test(v)) {
+              // 구분자 기준으로 끊어 앞부분은 확정, 마지막 조각만 draft로
+              const parts = v.split(/[,;]+/);
+              const last = parts.pop() ?? "";
+              addTokens(parts);
+              setDraft(last);
+            } else if (/\s$/.test(v)) {
+              // 완성된 "단독 이메일" 뒤 공백 → 자동 칩 (표시명 입력은 제외)
+              const t = v.trim();
+              if (t && !t.includes("<") && tokenHasEmail(t)) {
+                addTokens([t]);
+                setDraft("");
+              } else {
+                setDraft(v);
+              }
+            } else {
+              setDraft(v);
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === "Tab") {
               if (draft.trim()) {
                 e.preventDefault();
-                commit(draft);
+                addTokens([draft]);
+                setDraft("");
               }
             } else if (e.key === "Backspace" && !draft && items.length) {
+              // 통째 삭제 대신 마지막 칩을 인풋으로 되돌려 수정
               e.preventDefault();
-              removeAt(items.length - 1);
+              editAt(items.length - 1);
             }
           }}
           onPaste={(e) => {
             const text = e.clipboardData.getData("text");
             if (/[,;\n]/.test(text)) {
               e.preventDefault();
-              const toks = splitAddrList(text.replace(/\n/g, ","));
-              if (toks.length) onChange([...items, ...toks].join(", "));
+              addTokens(splitAddrList(text.replace(/\n/g, ",")));
             }
           }}
-          onBlur={() => commit(draft)}
+          // 입력 중이던 주소도 확정 — 안 하면 보내기 시 누락된다.
+          onBlur={() => {
+            if (draft.trim()) {
+              addTokens([draft]);
+              setDraft("");
+            }
+          }}
         />
       </span>
     </label>
@@ -1956,21 +2008,50 @@ function Compose({
       ? `"${chosenAlias.displayName.replace(/"/g, "")}" <${chosenAlias.email}>`
       : chosenAlias.email
     : undefined;
-  // 에디터 초기 HTML (마운트 시 1회). composeKey로 매번 재마운트되므로
-  // init은 마운트당 고정 — 의존성 비워도 안전.
+  // 인라인 이미지(cid:) 미리보기 매핑 (마운트 1회). 전달/드래프트 인라인 첨부를
+  // blob URL로 만들어 에디터에 보여주고, 발송 직전 cid:로 되돌린다.
   const editorRef = useRef<HTMLDivElement>(null);
+  const cidMaps = useRef<{ cidToUrl: Map<string, string>; urlToCid: Map<string, string> }>({
+    cidToUrl: new Map(),
+    urlToCid: new Map(),
+  });
+  useMemo(() => {
+    const cidToUrl = new Map<string, string>();
+    const urlToCid = new Map<string, string>();
+    for (const a of init?.attachments ?? []) {
+      if (!a.contentId) continue;
+      try {
+        const url = base64ToObjectUrl(a.data, a.mimeType);
+        cidToUrl.set(a.contentId, url);
+        urlToCid.set(url, a.contentId);
+      } catch {
+        /* bad base64 — leave cid as-is (broken preview, still sends) */
+      }
+    }
+    cidMaps.current = { cidToUrl, urlToCid };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(
+    () => () => cidMaps.current.urlToCid.forEach((_, url) => URL.revokeObjectURL(url)),
+    [],
+  );
+
   const initialHtml = useMemo(() => {
     // 드래프트 이어쓰기: 저장된 HTML. Gmail-web 드래프트엔 위험 마크업이 있을 수
     // 있으므로 에디터(메인 문서)에 넣기 전 위생 처리한다.
+    let html: string;
     if (init?.draftId || init?.bodyHtml) {
-      return init?.bodyHtml ? sanitizeMailHtml(init.bodyHtml) : "<div><br></div>";
+      html = init?.bodyHtml ? sanitizeMailHtml(init.bodyHtml) : "<div><br></div>";
+    } else {
+      // 새 메일 / 답장 / 전달: 입력칸 + 서명 + 인용
+      const sigHtml = getSignatureHtml();
+      const sigText = getSignature();
+      const sig = sigHtml || (sigText ? textToHtml(sigText) : "");
+      const sigBlock = sig ? `<br><div class="mail-signature">--<br>${sig}</div>` : "";
+      html = `<div><br></div>${sigBlock}${buildQuotedHtml(init)}`;
     }
-    // 새 메일 / 답장 / 전달: 입력칸 + 서명 + 인용
-    const sigHtml = getSignatureHtml();
-    const sigText = getSignature();
-    const sig = sigHtml || (sigText ? textToHtml(sigText) : "");
-    const sigBlock = sig ? `<br><div class="mail-signature">--<br>${sig}</div>` : "";
-    return `<div><br></div>${sigBlock}${buildQuotedHtml(init)}`;
+    // cid: → blob URL (에디터에서 인라인 이미지가 보이도록)
+    return resolveCidSrc(html, cidMaps.current.cidToUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2055,7 +2136,12 @@ function Compose({
   // 에디터 HTML(위생 처리) + 그로부터 파생한 text/plain 대체본 + 첨부 페이로드.
   // 서명·인용은 에디터 콘텐츠에 이미 들어 있으므로 발송 시 따로 덧붙이지 않는다.
   const composedPayload = () => {
-    const html = sanitizeMailHtml(editorRef.current?.innerHTML ?? "");
+    // blob URL(미리보기) → cid: 복원 후 위생 처리 → multipart/related 재연결 유지
+    const restored = restoreCidSrc(
+      editorRef.current?.innerHTML ?? "",
+      cidMaps.current.urlToCid,
+    );
+    const html = sanitizeMailHtml(restored);
     return {
       to,
       cc: cc || undefined,
@@ -2280,6 +2366,45 @@ function blobToBase64(blob: Blob): Promise<string> {
 /** RFC 5322: replies accumulate References = original References + its Message-ID. */
 function replyReferences(m: MessageFull): string | undefined {
   return [m.references, m.rfc822MsgId].filter(Boolean).join(" ") || undefined;
+}
+
+// ---- 작성창 인라인 이미지(cid:) 미리보기 ----
+// 에디터는 메인 문서라 cid:를 해석하지 못한다. 전달/드래프트의 인라인 이미지는
+// 메모리 base64로 들고 있으므로, 표시용 blob URL로 바꿔 보여주고 발송 직전 다시
+// cid:로 되돌려 multipart/related 재연결이 깨지지 않게 한다.
+function base64ToObjectUrl(b64: string, mime: string): string {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime || "application/octet-stream" }));
+}
+
+function resolveCidSrc(html: string, cidToUrl: Map<string, string>): string {
+  if (cidToUrl.size === 0) return html;
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("img[src]").forEach((img) => {
+      const src = img.getAttribute("src") ?? "";
+      if (!/^cid:/i.test(src)) return;
+      let cid = src.slice(4);
+      try {
+        cid = decodeURIComponent(cid);
+      } catch {
+        /* malformed escape */
+      }
+      const url = cidToUrl.get(cid.replace(/^<|>$/g, ""));
+      if (url) img.setAttribute("src", url);
+    });
+    return doc.body?.innerHTML ?? html;
+  } catch {
+    return html;
+  }
+}
+
+function restoreCidSrc(html: string, urlToCid: Map<string, string>): string {
+  let out = html;
+  for (const [url, cid] of urlToCid) out = out.split(url).join(`cid:${cid}`);
+  return out;
 }
 
 /** Re-download an attachment for forward/draft-resume. Throws on HTTP errors
