@@ -2912,32 +2912,32 @@ function DriveView({ onLogout }: { onLogout: () => void }) {
               onDoubleClick={() => f.isFolder && openFolder(f.id)}
             >
               <span className="drive-icon">{f.isFolder ? "📁" : "📄"}</span>
-              <button
-                className="drive-name"
-                title={f.name}
-                onClick={() =>
-                  f.isFolder
-                    ? openFolder(f.id)
-                    : window.open(f.webViewLink ?? "#", "_blank", "noopener")
-                }
-              >
-                {f.name}
-                {f.shared && <span className="drive-badge">공유됨</span>}
-              </button>
+              {f.isFolder ? (
+                <button
+                  className="drive-name"
+                  title={f.name}
+                  onClick={() => openFolder(f.id)}
+                >
+                  {f.name}
+                  {f.shared && <span className="drive-badge">공유됨</span>}
+                </button>
+              ) : (
+                // 파일 이름 클릭 = 바로 다운로드 (서버가 Content-Disposition: attachment).
+                <a
+                  className="drive-name"
+                  title={`${f.name} — 클릭하면 다운로드`}
+                  href={api.driveDownloadUrl(f.id)}
+                  download={f.name}
+                >
+                  {f.name}
+                  {f.shared && <span className="drive-badge">공유됨</span>}
+                </a>
+              )}
               <span className="drive-size">{f.isFolder ? "" : formatBytes(f.size)}</span>
               <span className="drive-date">
                 {f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString() : ""}
               </span>
               <span className="drive-row-actions">
-                {!f.isFolder && (
-                  <a
-                    className="drive-act"
-                    href={api.driveDownloadUrl(f.id)}
-                    title="다운로드"
-                  >
-                    ⬇
-                  </a>
-                )}
                 <button className="drive-act" title="이름 변경" onClick={() => rename(f)}>
                   ✎
                 </button>

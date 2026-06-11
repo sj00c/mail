@@ -1787,6 +1787,8 @@ mark {
   display: flex;
   align-items: center;
   gap: 8px;
+  text-decoration: none;
+  min-width: 0;
 }
 .drive-row.folder .drive-name {
   font-weight: 600;
