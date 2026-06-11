@@ -10,5 +10,10 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:/usr/bin:/bin:$PATH"
 export NODE_ENV=production
 
-bun run build
+# 부팅 직후엔 시스템 부하로 vite 빌드가 수십 초씩 걸려 그동안 포트가 안 열린다.
+# 소스가 dist보다 새로울 때만 재빌드해 평소 재시작/재부팅은 즉시 뜨게 한다.
+if [ ! -f dist/index.html ] || \
+   [ -n "$(find web vite.config.ts package.json -newer dist/index.html -print -quit 2>/dev/null)" ]; then
+  bun run build
+fi
 exec bun server/index.ts
