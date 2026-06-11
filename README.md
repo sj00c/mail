@@ -147,11 +147,26 @@ curl -s localhost:8787/auth/status     # {"authed":true} 면 성공
 | 개발 | `bun run dev` | `localhost:5173` | 코드 수정·핫리로드 (Vite + API 서버 2개 프로세스) |
 | **프로덕션** | `bun run build && bun run start` | `localhost:8787` | **일상 사용** — 프로세스 하나가 SPA까지 서빙 (gzip, 장기 캐시) |
 
-터미널을 닫아도 켜두고 싶다면 (macOS / Linux):
+### 자동 시작 — 켜두면 알아서 돌아가게 (선택)
+
+매번 터미널에서 켜기 싫다면 OS에 등록해 두면 **로그인 시 자동 시작 + 죽으면 자동 재시작**된다.
+한 번만 등록하면 재부팅·크래시에도 알아서 켜진다.
+
+> sleep(노트북 닫기)은 프로세스를 멈췄다 깨우는 것뿐이라 자동으로 이어진다 — 등록과 무관하게 잘 된다.
+> WiFi↔랜 전환도 영향 없다(서버는 `localhost`에 묶여 있음). 등록은 **재부팅·완전 종료·크래시**를 위한 것.
+
+| OS | 등록 | 해제 |
+|---|---|---|
+| **macOS** (launchd) | `bash deploy/install.sh` | `bash deploy/uninstall.sh` |
+| **Windows** (작업 스케줄러) | `powershell -ExecutionPolicy Bypass -File deploy\install.ps1` | `powershell -File deploy\uninstall.ps1` |
+
+> 등록 스크립트는 자동으로 빌드 후 `localhost:8787`에 띄운다. 로그(macOS): `~/Library/Logs/mail.local.log`.
+> 코드를 업데이트(`git pull`)하면 다음 자동 재시작 때 새로 빌드되어 반영된다.
+
+한 번만 임시로 띄우려면:
 
 ```sh
-bun run build
-nohup bun run start > /tmp/mail.log 2>&1 &     # 끄기: lsof -ti:8787 | xargs kill
+bun run build && bun run start     # 끄기: Ctrl-C (또는 lsof -ti:8787 | xargs kill)
 ```
 
 ## 환경 변수 (`.env`)
@@ -216,6 +231,10 @@ web/src/
   styles.css   디자인 토큰 + 전체 스타일
 docs/
   OAUTH_SETUP.md   클론한 사람용 처음부터 따라하는 셋업 가이드
+deploy/
+  install.sh / uninstall.sh    macOS 자동 시작 (launchd)
+  install.ps1 / uninstall.ps1  Windows 자동 시작 (작업 스케줄러)
+  run.sh / run.cmd             빌드 후 서버 기동 진입점
 ```
 
 > CI(`.github/workflows/ci.yml`)가 push/PR마다 `typecheck` + `build`를 검증한다.
