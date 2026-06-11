@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"bun run dev:server\" \"bun run dev:web\"",
-    "dev:server": "bun --watch server/index.ts",
+    "dev:server": "bun --use-system-ca --watch server/index.ts",
     "dev:web": "vite",
     "build": "vite build",
-    "start": "NODE_ENV=production bun server/index.ts",
+    "start": "NODE_ENV=production bun --use-system-ca server/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
