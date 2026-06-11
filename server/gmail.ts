@@ -1,5 +1,6 @@
 import { gmail as gmailApi, type gmail_v1 } from "@googleapis/gmail";
 import { getAuthedClient } from "./auth.ts";
+import { uploadAndShare } from "./drive.ts";
 
 async function api(): Promise<gmail_v1.Gmail> {
   const auth = await getAuthedClient();
@@ -390,6 +391,11 @@ export type MailInput = {
   references?: string;
   attachments?: OutAttachment[];
   bodyHtml?: string; // optional HTML alternative (서식 있는 서명 등)
+  // Oversize files that can't ride in the MIME body (Gmail caps the whole
+  // message at ~35MB). At send time these are uploaded to Drive, shared
+  // anyone-with-link, and rendered as link rows appended to the body — exactly
+  // what the Gmail web client does past 25MB.
+  driveAttachments?: { filename: string; mimeType: string; data: string }[];
 };
 
 function buildMime(input: MailInput): string {
@@ -498,11 +504,60 @@ function asRaw(mime: string): string {
   return Buffer.from(mime, "utf-8").toString("base64url");
 }
 
+function humanSize(n: number): string {
+  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
+  if (n >= 1 << 10) return (n / (1 << 10)).toFixed(0) + " KB";
+  return n + " B";
+}
+
+/**
+ * Upload any `driveAttachments` to Drive (anyone-with-link), then fold the
+ * resulting links into the message body. Returns a MailInput with
+ * `driveAttachments` cleared so buildMime never tries to MIME-embed them.
+ * No-op (returns input as-is) when there are none.
+ */
+async function resolveDriveLinks(input: MailInput): Promise<MailInput> {
+  const big = input.driveAttachments ?? [];
+  if (big.length === 0) return input;
+
+  const shared = await Promise.all(
+    big.map((a) =>
+      uploadAndShare({ name: a.filename, mimeType: a.mimeType, data: a.data }),
+    ),
+  );
+
+  const textLines = [
+    "",
+    "── Google Drive 첨부 ──",
+    ...shared.map((s) => `• ${s.name} (${humanSize(s.size)})\n  ${s.link}`),
+  ];
+  const body = input.body + "\n" + textLines.join("\n");
+
+  let bodyHtml = input.bodyHtml;
+  if (bodyHtml !== undefined) {
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const rows = shared
+      .map(
+        (s) =>
+          `<div style="margin:4px 0"><a href="${esc(s.link)}" style="text-decoration:none">📎 ${esc(s.name)}</a> <span style="color:#5f6368">(${humanSize(s.size)})</span></div>`,
+      )
+      .join("");
+    bodyHtml +=
+      `<div style="margin-top:16px;padding-top:12px;border-top:1px solid #e0e0e0">` +
+      `<div style="color:#5f6368;font-size:12px;margin-bottom:6px">Google Drive 첨부</div>${rows}</div>`;
+  }
+
+  return { ...input, body, bodyHtml, driveAttachments: undefined };
+}
+
 export async function sendMessage(
   input: MailInput,
 ): Promise<{ id: string; threadId: string }> {
   const g = await api();
-  const mime = buildMime(input);
+  const resolved = await resolveDriveLinks(input);
+  const mime = buildMime(resolved);
   const res =
     Buffer.byteLength(mime, "utf-8") > MEDIA_UPLOAD_THRESHOLD
       ? await g.users.messages.send({

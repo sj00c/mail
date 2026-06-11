@@ -36,6 +36,17 @@ import {
   searchEvents,
   updateEvent,
 } from "./calendar.ts";
+import {
+  listFiles,
+  searchFiles,
+  getBreadcrumb,
+  getQuota,
+  downloadFile,
+  createFolder,
+  trashFile,
+  renameFile,
+  uploadFile,
+} from "./drive.ts";
 
 const PORT = Number(process.env.PORT ?? 8787);
 
@@ -58,7 +69,25 @@ function needAuthError(err: unknown): boolean {
   // Treat as logged-out (401) so the UI returns to the login screen instead
   // of looping on opaque 500s.
   const data = (err as { response?: { data?: { error?: string } } }).response?.data;
-  return err.message.includes("invalid_grant") || data?.error === "invalid_grant";
+  if (err.message.includes("invalid_grant") || data?.error === "invalid_grant")
+    return true;
+  // Any Google-side 401 ("Login Required", insufficient/added scope) means the
+  // stored token can't make this call — bounce to login so re-consent picks up
+  // the new scope (e.g. Drive added after the token was first minted).
+  if (httpStatusOf(err) === 401) return true;
+  // A token minted before a scope was added 403s with a scope/identity message
+  // (not a per-file permission denial) — that too needs re-consent. Match the
+  // specific Google strings so genuine 403s (e.g. deleting another's file) still
+  // surface as errors instead of silently logging the user out.
+  if (httpStatusOf(err) === 403) {
+    const m = err.message;
+    return (
+      /insufficient/i.test(m) ||
+      /unregistered callers/i.test(m) ||
+      /ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(m)
+    );
+  }
+  return false;
 }
 
 function escapeHtml(s: string): string {
@@ -266,6 +295,75 @@ api.post("/drafts/:id/delete", async (c) => {
 api.get("/signature", async (c) => c.json(await getGmailSignature()));
 
 api.get("/settings/account", async (c) => c.json(await getAccountSettings()));
+
+// ---- drive routes ----
+api.get("/drive/quota", async (c) => c.json(await getQuota()));
+
+api.get("/drive/files", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  const pageToken = c.req.query("pageToken") || undefined;
+  if (q) return c.json(await searchFiles(q, pageToken));
+  const folderId = c.req.query("folderId") || undefined;
+  return c.json(await listFiles({ folderId, pageToken }));
+});
+
+api.get("/drive/breadcrumb", async (c) => {
+  const folderId = c.req.query("folderId");
+  if (!folderId) return c.json([]);
+  return c.json(await getBreadcrumb(folderId));
+});
+
+api.get("/drive/files/:id/download", async (c) => {
+  const { buffer, filename, mimeType } = await downloadFile(c.req.param("id"));
+  // Header-safe ASCII fallback + RFC 5987 encoded full name (Korean filenames etc.).
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(filename).replace(
+    /['()*]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return new Response(new Uint8Array(buffer), {
+    headers: {
+      "Content-Type": mimeType || "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
+    },
+  });
+});
+
+api.post("/drive/folders", async (c) => {
+  const { name, parentId } = await c.req.json<{ name?: string; parentId?: string }>();
+  if (!name?.trim()) return c.json({ error: "name required" }, 400);
+  return c.json(await createFolder(name.trim(), parentId));
+});
+
+api.post("/drive/upload", async (c) => {
+  const body = await c.req.json<{
+    name?: string;
+    mimeType?: string;
+    data?: string;
+    parentId?: string;
+  }>();
+  if (!body.name?.trim() || typeof body.data !== "string")
+    return c.json({ error: "name and data required" }, 400);
+  return c.json(
+    await uploadFile({
+      name: body.name.trim(),
+      mimeType: body.mimeType ?? "application/octet-stream",
+      data: body.data,
+      parentId: body.parentId,
+    }),
+  );
+});
+
+api.put("/drive/files/:id", async (c) => {
+  const { name } = await c.req.json<{ name?: string }>();
+  if (!name?.trim()) return c.json({ error: "name required" }, 400);
+  return c.json(await renameFile(c.req.param("id"), name.trim()));
+});
+
+api.post("/drive/files/:id/trash", async (c) => {
+  await trashFile(c.req.param("id"));
+  return c.json({ ok: true });
+});
 
 // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).
 api.onError((e, c) => {

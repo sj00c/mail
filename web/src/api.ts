@@ -84,6 +84,28 @@ export type AccountSettings = {
   vacation: { enabled: boolean; subject: string; endTime: string | null };
 };
 
+export type DriveFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  isFolder: boolean;
+  size: number | null;
+  modifiedTime: string;
+  iconLink: string | null;
+  webViewLink: string | null;
+  starred: boolean;
+  shared: boolean;
+  owned: boolean;
+};
+
+export type DriveQuota = {
+  limit: number | null;
+  usage: number;
+  usageInDrive: number;
+};
+
+export type DriveBreadcrumb = { id: string; name: string };
+
 export class AuthError extends Error {}
 
 export class HttpError extends Error {
@@ -187,6 +209,7 @@ export const api = {
     inReplyTo?: string;
     references?: string;
     attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
+    driveAttachments?: { filename: string; mimeType: string; data: string }[];
   }) =>
     req<{ id: string; threadId: string }>("/api/send", {
       method: "POST",
@@ -241,6 +264,46 @@ export const api = {
   accountSettings: () => req<AccountSettings>("/api/settings/account"),
   attachmentUrl: (id: string, aid: string, filename: string) =>
     `/api/messages/${id}/attachments/${aid}?filename=${encodeURIComponent(filename)}`,
+  // ---- drive ----
+  driveQuota: () => req<DriveQuota>("/api/drive/quota"),
+  driveFiles: (params: { folderId?: string; q?: string; pageToken?: string } = {}) => {
+    const u = new URLSearchParams();
+    if (params.q) u.set("q", params.q);
+    else if (params.folderId) u.set("folderId", params.folderId);
+    if (params.pageToken) u.set("pageToken", params.pageToken);
+    return req<{ files: DriveFile[]; nextPageToken?: string }>(
+      `/api/drive/files?${u.toString()}`,
+    );
+  },
+  driveBreadcrumb: (folderId: string) =>
+    req<DriveBreadcrumb[]>(
+      `/api/drive/breadcrumb?folderId=${encodeURIComponent(folderId)}`,
+    ),
+  driveDownloadUrl: (id: string) => `/api/drive/files/${encodeURIComponent(id)}/download`,
+  driveCreateFolder: (name: string, parentId?: string) =>
+    req<DriveFile>("/api/drive/folders", {
+      method: "POST",
+      body: JSON.stringify({ name, parentId }),
+    }),
+  driveUpload: (body: {
+    name: string;
+    mimeType: string;
+    data: string;
+    parentId?: string;
+  }) =>
+    req<DriveFile>("/api/drive/upload", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  driveRename: (id: string, name: string) =>
+    req<DriveFile>(`/api/drive/files/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  driveTrash: (id: string) =>
+    req<{ ok: boolean }>(`/api/drive/files/${encodeURIComponent(id)}/trash`, {
+      method: "POST",
+    }),
 };
 
 // Parse "Name <email@x>" → { name, email }

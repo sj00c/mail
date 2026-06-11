@@ -1,20 +1,22 @@
 # Mail
 
-**내 머신에서 `localhost`로 띄워 쓰는 개인용 Gmail + Google 캘린더 클라이언트.**
+**내 머신에서 `localhost`로 띄워 쓰는 개인용 Gmail + Google 캘린더 + Google 드라이브 클라이언트.**
 사내 보안망이 Gmail 웹(`mail.google.com`)은 막아도 Gmail API / OAuth는 통과하는 환경을 위해 만들었다.
 
 | | |
 |---|---|
-| **백엔드** | Bun · Hono · Gmail / Calendar REST API |
+| **백엔드** | Bun · Hono · Gmail / Calendar / Drive REST API |
 | **프론트** | React · Vite |
 | **인증** | OAuth2 — refresh token은 **이 머신에만** 저장 (`server/.data/token.json`) |
 | **외부 연결** | Google API 단 하나. 그 외 어떤 서버와도 통신하지 않는다 |
 
 #### 기능
 
-- **메일** — 받은편지함·라벨, 스레드 보기, HTML 본문(스크립트 차단 샌드박스)·인라인 이미지·첨부, 읽음·별표·스팸·보관·삭제, 작성·답장·전체답장·전달, 다중 수신자·참조·숨은참조·첨부(25MB)·서명, 임시저장·드래프트 이어쓰기, 새 메일 데스크톱 알림
+- **메일** — 받은편지함·라벨, 스레드 보기, HTML 본문(스크립트 차단 샌드박스)·인라인 이미지·첨부, 읽음·별표·스팸·보관·삭제, 작성·답장·전체답장·전달, 다중 수신자·참조·숨은참조·서명, 임시저장·드래프트 이어쓰기, 새 메일 데스크톱 알림
+  - **큰 첨부 자동 Drive 전환** — MIME 한도(25MB)를 넘는 첨부는 발송 시 자동으로 Google Drive에 올라가 "링크 공유"로 본문에 삽입된다 (Gmail 웹이 25MB 초과 시 하는 동작과 동일). 인라인 이미지는 항상 본문에 직접 첨부된다.
+- **드라이브** — 내 드라이브 폴더 탐색(브레드크럼)·전체 검색, 업로드·다운로드(Google 문서는 Office 형식으로 내보내기)·새 폴더·이름 변경·휴지통 이동, 저장용량 표시. 삭제는 휴지통(복구 가능)만 — 영구 삭제는 없다.
 - **캘린더** — 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 일정 생성·수정·삭제, 종일·멀티데이 일정, 60초 자동 갱신
-- **통합 검색** — 검색하면 **일정 카드 + 메일 카드**가 나란히 뜨고(검색어 하이라이트), `?q=검색어` URL로 바로 열 수도 있다
+- **통합 검색** — 검색하면 **일정 · 메일 · 드라이브 파일**이 세 칼럼 카드로 나란히 뜨고(검색어 하이라이트), `?q=검색어` URL로 바로 열 수도 있다
 - **설정 자동 동기화** — 로그인하면 Gmail 서명을 자동으로 가져오고, 보내는 주소 별칭·기본 답장주소·휴가 자동응답 상태가 함께 딸려온다
 
 ## 화면
@@ -60,9 +62,10 @@
 🔗 https://console.cloud.google.com/projectcreate
 → **프로젝트 이름**에 아무거나 입력(예: `mail`) → **만들기** → 생성될 때까지 10초쯤 기다린다.
 
-**② Gmail · Calendar API 켜기** *(각 링크에서 파란 **사용**(Enable) 버튼 한 번씩)*
+**② Gmail · Calendar · Drive API 켜기** *(각 링크에서 파란 **사용**(Enable) 버튼 한 번씩)*
 🔗 Gmail API → https://console.cloud.google.com/apis/library/gmail.googleapis.com → **사용**
 🔗 Calendar API → https://console.cloud.google.com/apis/library/calendar-json.googleapis.com → **사용**
+🔗 Drive API → https://console.cloud.google.com/apis/library/drive.googleapis.com → **사용**
 
 **③ OAuth 동의 화면 + 테스트 사용자**
 🔗 https://console.cloud.google.com/auth/overview
@@ -189,7 +192,7 @@ bun run build && bun run start     # 끄기: Ctrl-C (또는 lsof -ti:8787 | xarg
 
 ## 검색
 
-상단 검색창은 Gmail 문법을 그대로 지원하고, 결과 페이지에 일정과 메일이 카드로 나란히 표시된다.
+상단 검색창은 Gmail 문법을 그대로 지원하고, 결과 페이지에 **일정 · 메일 · 드라이브 파일**이 세 칼럼 카드로 나란히 표시된다. (드라이브는 파일명 + 본문 전문(fullText) 검색)
 
 ```
 from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d   label:work
@@ -206,6 +209,7 @@ from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d  
   |---|---|
   | `gmail.modify` | 읽기 · 발송 · 라벨 · 읽음표시 · 보관 · 휴지통. **영구 삭제는 불가** (안전장치) |
   | `calendar` | 캘린더 / 일정 조회 · 생성 · 수정 · 삭제 |
+  | `drive` | 드라이브 파일 조회 · 업로드 · 다운로드 · 휴지통 · 큰 첨부 링크 공유. 기존 파일까지 탐색해야 해서 `drive.file`이 아닌 전체 `drive` |
 
 - **서명·계정 설정** — 브라우저 localStorage에 저장되며, 다른 계정으로 로그인하면 이전 계정의 서명은 자동으로 지워진다.
 
@@ -215,9 +219,9 @@ from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d  
 |---|---|
 | `403 access_denied` | OAuth 동의 화면의 **테스트 사용자**에 본인 Gmail이 없음 |
 | `redirect_uri_mismatch` | `PORT` / `OAUTH_REDIRECT` / 콘솔 리디렉션 URI 불일치 |
-| `403 ... has not been used in project` | Gmail API 또는 Calendar API 사용 설정 안 함 |
+| `403 ... has not been used in project` | Gmail / Calendar / Drive API 중 사용 설정 안 한 것이 있음 (②) |
 | 로그인 화면으로 자꾸 돌아감 | 토큰 만료·회수 — 다시 "Gmail 연결하기" |
-| 캘린더 쓰기가 안 됨 | 구버전(읽기 전용 scope) 토큰 — 로그아웃 후 재로그인 |
+| 캘린더 쓰기가 안 됨 / 드라이브 탭이 비거나 로그인으로 튕김 | 구버전(드라이브·쓰기 scope 없는) 토큰 — 로그아웃 후 재로그인하면 새 권한으로 재발급된다 |
 
 더 자세한 표는 [`docs/OAUTH_SETUP.md`](docs/OAUTH_SETUP.md) 하단 참고.
 
@@ -229,8 +233,9 @@ server/
   auth.ts      OAuth2 + 토큰 저장/갱신 (state 검증, 원자적 쓰기)
   gmail.ts     Gmail API 래퍼 (목록/스레드/발송/드래프트/라벨/첨부/설정)
   calendar.ts  Calendar API 래퍼 (일정 CRUD/검색/캘린더 목록)
+  drive.ts     Drive API 래퍼 (탐색/검색/업로드/다운로드/휴지통 + 큰 첨부 링크 공유)
 web/src/
-  App.tsx      전체 UI (사이드바 / 메일 / 캘린더 / 통합 검색 / 작성)
+  App.tsx      전체 UI (사이드바 / 메일 / 캘린더 / 드라이브 / 통합 검색 / 작성)
   api.ts       프론트 API 클라이언트 + 타입
   styles.css   디자인 토큰 + 전체 스타일
 docs/

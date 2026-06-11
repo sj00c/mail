@@ -22,6 +22,9 @@ import {
   type MessageFull,
   type MessageSummary,
   type SendAsInfo,
+  type DriveFile,
+  type DriveQuota,
+  type DriveBreadcrumb,
 } from "./api.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
@@ -136,13 +139,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       return "";
     }
   })();
-  const [view, setView] = useState<"mail" | "calendar">(() => {
+  const [view, setView] = useState<"mail" | "calendar" | "drive">(() => {
     try {
       // q가 있으면 검색이 우선 — 검색 결과는 mail 뷰에서만 렌더된다.
       if (initialQuery) return "mail";
-      return new URLSearchParams(window.location.search).get("view") === "calendar"
-        ? "calendar"
-        : "mail";
+      const v = new URLSearchParams(window.location.search).get("view");
+      return v === "calendar" || v === "drive" ? v : "mail";
     } catch {
       return "mail";
     }
@@ -744,9 +746,23 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               ))}
             </div>
           )}
+
+          <button
+            className={`nav-section ${view === "drive" ? "active" : ""}`}
+            onClick={() => {
+              setView("drive");
+              setQuery("");
+              setSearchInput("");
+            }}
+          >
+            <span className="chev">{view === "drive" ? "▾" : "▸"}</span>
+            <span>🗂 드라이브</span>
+          </button>
         </nav>
 
-        {view === "calendar" ? (
+        {view === "drive" ? (
+          <DriveView onLogout={bgLogout} />
+        ) : view === "calendar" ? (
           <CalendarView
             onLogout={bgLogout}
             hiddenCals={hiddenCals}
@@ -2102,9 +2118,12 @@ function Compose({
       try {
         const read = await Promise.all(picked.map(fileToBase64));
         const added = read.reduce((s, f) => s + f.size, 0);
-        if (totalSize.current + added > MAX_ATTACH_BYTES) {
+        // 25MB 초과분은 발송 시 자동으로 Drive 링크로 전환되므로 막지 않는다.
+        // 다만 브라우저가 base64를 메모리에 들고 POST하므로 과도한 총량은 차단.
+        const HARD_CAP = 200 * 1024 * 1024;
+        if (totalSize.current + added > HARD_CAP) {
           throw new Error(
-            `첨부 합계가 25MB를 초과합니다 (${Math.round((totalSize.current + added) / 1024 / 1024)}MB). Gmail 발송 한도를 넘으면 반송됩니다.`,
+            `첨부 합계가 200MB를 초과합니다 (${Math.round((totalSize.current + added) / 1024 / 1024)}MB). 아주 큰 파일은 드라이브 탭에서 직접 업로드해 링크를 공유하세요.`,
           );
         }
         totalSize.current += added;
@@ -2123,25 +2142,48 @@ function Compose({
   };
 
   const assertSendableSize = () => {
-    // Forwarded attachments arrive via init and bypass addFiles — enforce
-    // the limit at the exit too, or oversized forwards bounce at Gmail.
+    // 임시저장 경로: Drive 분할이 없으므로(중복 업로드 방지) MIME 한도를 그대로
+    // 강제한다. Forwarded attachments arrive via init and bypass addFiles —
+    // enforce the limit at the exit too, or oversized forwards bounce at Gmail.
     const total = files.reduce((s, f) => s + f.size, 0);
     if (total > MAX_ATTACH_BYTES) {
       throw new Error(
-        `첨부 합계가 25MB를 초과합니다 (${Math.round(total / 1024 / 1024)}MB). 일부 첨부를 제거하세요.`,
+        `첨부 합계가 25MB를 초과합니다 (${Math.round(total / 1024 / 1024)}MB). 임시저장은 25MB까지만 가능합니다 (발송은 초과분을 자동으로 드라이브 링크로 보냅니다).`,
+      );
+    }
+  };
+
+  // 발송 경로: MIME 한도 초과 일반 첨부는 Drive로 빠지므로 막지 않는다. 단
+  // 인라인(cid) 이미지는 Drive로 옮길 수 없으니 그것만으로 한도를 넘으면 차단.
+  const assertInlineFits = () => {
+    const inlineTotal = files
+      .filter((f) => f.contentId)
+      .reduce((s, f) => s + f.size, 0);
+    if (inlineTotal > MAX_ATTACH_BYTES) {
+      throw new Error(
+        `본문 인라인 이미지 합계가 25MB를 초과합니다 (${Math.round(inlineTotal / 1024 / 1024)}MB). 일부 이미지를 제거하세요.`,
       );
     }
   };
 
   // 에디터 HTML(위생 처리) + 그로부터 파생한 text/plain 대체본 + 첨부 페이로드.
   // 서명·인용은 에디터 콘텐츠에 이미 들어 있으므로 발송 시 따로 덧붙이지 않는다.
-  const composedPayload = () => {
+  //
+  // mode="send": MIME 한도(25MB)를 넘는 일반 첨부는 Drive로 올려 본문 링크로
+  // 전환한다(Gmail 웹과 동일). 인라인(cid) 이미지는 본문이 참조하므로 항상 MIME.
+  // mode="draft": Drive는 발송 때만 — 임시저장 시 매번 업로드하면 중복 파일이
+  // 쌓이므로 분할하지 않고 전부 MIME로 둔다(한도 초과는 assertSendableSize가 차단).
+  const composedPayload = (mode: "send" | "draft" = "send") => {
     // blob URL(미리보기) → cid: 복원 후 위생 처리 → multipart/related 재연결 유지
     const restored = restoreCidSrc(
       editorRef.current?.innerHTML ?? "",
       cidMaps.current.urlToCid,
     );
     const html = sanitizeMailHtml(restored);
+    const { mime, drive } =
+      mode === "send"
+        ? partitionAttachments(files, MAX_ATTACH_BYTES)
+        : { mime: files, drive: [] as typeof files };
     return {
       to,
       cc: cc || undefined,
@@ -2155,13 +2197,16 @@ function Compose({
       threadId: init?.threadId,
       inReplyTo: init?.inReplyTo,
       references: init?.references ?? init?.inReplyTo,
-      attachments: files.length
-        ? files.map(({ filename, mimeType, data, contentId }) => ({
+      attachments: mime.length
+        ? mime.map(({ filename, mimeType, data, contentId }) => ({
             filename,
             mimeType,
             data,
             contentId,
           }))
+        : undefined,
+      driveAttachments: drive.length
+        ? drive.map(({ filename, mimeType, data }) => ({ filename, mimeType, data }))
         : undefined,
     };
   };
@@ -2170,8 +2215,8 @@ function Compose({
     run(async () => {
       setSending(true);
       try {
-        assertSendableSize();
-        await api.send(composedPayload());
+        assertInlineFits();
+        await api.send(composedPayload("send"));
         if (draftId) {
           // Post-send cleanup only — a failed draft delete must never make a
           // SENT mail look failed (re-click would double-send).
@@ -2188,7 +2233,7 @@ function Compose({
       setSending(true);
       try {
         assertSendableSize();
-        const payload = composedPayload();
+        const payload = composedPayload("draft");
         if (draftId) {
           try {
             await api.updateDraft(draftId, payload);
@@ -2348,6 +2393,30 @@ function fileToBase64(file: File): Promise<{
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+// Split attachments so the MIME message stays under Gmail's ~35MB cap. Inline
+// (cid) images are referenced by the body and can't move — they always ride in
+// MIME and are charged against the budget first. Remaining file attachments
+// fill what's left of the budget (raw bytes); whatever overflows is sent as a
+// Drive link instead, exactly like Gmail web does past 25MB.
+function partitionAttachments(files: ComposeAttachment[], budget: number) {
+  const mime: ComposeAttachment[] = [];
+  const drive: ComposeAttachment[] = [];
+  let used = files
+    .filter((f) => f.contentId)
+    .reduce((s, f) => s + f.size, 0);
+  for (const f of files) {
+    if (f.contentId) {
+      mime.push(f); // inline, already counted in `used`
+    } else if (used + f.size <= budget) {
+      mime.push(f);
+      used += f.size;
+    } else {
+      drive.push(f);
+    }
+  }
+  return { mime, drive };
 }
 
 /** Base64 (no data: prefix) of an already-downloaded blob (전달 첨부 재사용). */
@@ -2540,6 +2609,32 @@ function MailCard({
   );
 }
 
+function DriveCard({ f, terms }: { f: DriveFile; terms: string[] }) {
+  return (
+    <a
+      className="scard drive-card"
+      href={f.webViewLink ?? "#"}
+      target="_blank"
+      rel="noreferrer"
+      title={f.name}
+    >
+      <span className="avatar drive-card-icon">{f.isFolder ? "📁" : "📄"}</span>
+      <span className="scard-main">
+        <span className="scard-top">
+          <span className="scard-from">{highlightText(f.name, terms)}</span>
+          <span className="scard-date">
+            {f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString() : ""}
+          </span>
+        </span>
+        <span className="scard-sub">
+          {f.isFolder ? "폴더" : formatBytes(f.size)}
+          {f.shared ? " · 공유됨" : ""}
+        </span>
+      </span>
+    </a>
+  );
+}
+
 function EventCard({
   e,
   terms,
@@ -2593,6 +2688,271 @@ function EventCard({
   );
 }
 
+function formatBytes(n: number | null): string {
+  if (n == null) return "—";
+  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
+  if (n >= 1 << 10) return (n / (1 << 10)).toFixed(0) + " KB";
+  return n + " B";
+}
+function DriveView({ onLogout }: { onLogout: () => void }) {
+  const [files, setFiles] = useState<DriveFile[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [folderId, setFolderId] = useState("root");
+  const [crumbs, setCrumbs] = useState<DriveBreadcrumb[]>([]);
+  const [quota, setQuota] = useState<DriveQuota | null>(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const reload = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  // List (or search) + breadcrumb whenever the folder/query/refresh changes.
+  useEffect(() => {
+    let cancelled = false;
+    setFiles(null);
+    setErr(null);
+    const params = query ? { q: query } : { folderId };
+    api
+      .driveFiles(params)
+      .then((res) => {
+        if (!cancelled) setFiles(res.files);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof AuthError) onLogout();
+        else setErr((e as Error).message);
+      });
+    // Breadcrumb only matters when browsing (not searching).
+    if (!query && folderId !== "root") {
+      api
+        .driveBreadcrumb(folderId)
+        .then((c) => !cancelled && setCrumbs(c))
+        .catch(() => !cancelled && setCrumbs([]));
+    } else {
+      setCrumbs([]);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [folderId, query, refreshKey, onLogout]);
+
+  // Storage quota — load once (and after uploads/trash via refreshKey).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .driveQuota()
+      .then((q) => !cancelled && setQuota(q))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  const openFolder = (id: string) => {
+    setQuery("");
+    setSearchInput("");
+    setFolderId(id);
+  };
+
+  const onUpload = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      for (const f of Array.from(list)) {
+        const data = await blobToBase64(f);
+        await api.driveUpload({
+          name: f.name,
+          mimeType: f.type || "application/octet-stream",
+          data,
+          parentId: query ? undefined : folderId,
+        });
+      }
+      reload();
+    } catch (e) {
+      if (e instanceof AuthError) onLogout();
+      else setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const newFolder = async () => {
+    const name = window.prompt("새 폴더 이름")?.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      await api.driveCreateFolder(name, folderId === "root" ? undefined : folderId);
+      reload();
+    } catch (e) {
+      if (e instanceof AuthError) onLogout();
+      else setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rename = async (f: DriveFile) => {
+    const name = window.prompt("새 이름", f.name)?.trim();
+    if (!name || name === f.name) return;
+    setBusy(true);
+    try {
+      await api.driveRename(f.id, name);
+      reload();
+    } catch (e) {
+      if (e instanceof AuthError) onLogout();
+      else setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const trash = async (f: DriveFile) => {
+    if (!window.confirm(`"${f.name}"을(를) 휴지통으로 이동할까요?`)) return;
+    setBusy(true);
+    try {
+      await api.driveTrash(f.id);
+      reload();
+    } catch (e) {
+      if (e instanceof AuthError) onLogout();
+      else setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const usedPct =
+    quota && quota.limit ? Math.min(100, (quota.usage / quota.limit) * 100) : null;
+
+  return (
+    <section className="drive">
+      <div className="drive-head">
+        <div className="drive-crumbs">
+          <button className="crumb" onClick={() => openFolder("root")}>
+            🗂 내 드라이브
+          </button>
+          {crumbs.map((c) => (
+            <span key={c.id}>
+              <span className="crumb-sep">›</span>
+              <button className="crumb" onClick={() => openFolder(c.id)}>
+                {c.name}
+              </button>
+            </span>
+          ))}
+          {query && <span className="crumb-sep">› 검색: "{query}"</span>}
+        </div>
+        <div className="drive-actions">
+          <form
+            className="drive-search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setQuery(searchInput.trim());
+            }}
+          >
+            <input
+              type="search"
+              placeholder="드라이브 검색"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </form>
+          <button className="btn" disabled={busy || !!query} onClick={newFolder}>
+            + 폴더
+          </button>
+          <button
+            className="btn primary"
+            disabled={busy}
+            onClick={() => fileInput.current?.click()}
+          >
+            업로드
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => onUpload(e.target.files)}
+          />
+        </div>
+      </div>
+
+      {quota && (
+        <div className="drive-quota">
+          <div className="drive-quota-bar">
+            <div
+              className="drive-quota-fill"
+              style={{ width: usedPct != null ? `${usedPct}%` : "0%" }}
+            />
+          </div>
+          <span className="drive-quota-text">
+            {formatBytes(quota.usage)}
+            {quota.limit ? ` / ${formatBytes(quota.limit)} 사용` : " 사용 (무제한)"}
+          </span>
+        </div>
+      )}
+
+      {err && <div className="drive-error">{err}</div>}
+
+      <div className="drive-list">
+        {files === null ? (
+          <div className="empty">불러오는 중…</div>
+        ) : files.length === 0 ? (
+          <div className="empty">
+            {query ? "검색 결과가 없습니다." : "이 폴더가 비어 있습니다."}
+          </div>
+        ) : (
+          files.map((f) => (
+            <div
+              key={f.id}
+              className={`drive-row${f.isFolder ? " folder" : ""}`}
+              onDoubleClick={() => f.isFolder && openFolder(f.id)}
+            >
+              <span className="drive-icon">{f.isFolder ? "📁" : "📄"}</span>
+              <button
+                className="drive-name"
+                title={f.name}
+                onClick={() =>
+                  f.isFolder
+                    ? openFolder(f.id)
+                    : window.open(f.webViewLink ?? "#", "_blank", "noopener")
+                }
+              >
+                {f.name}
+                {f.shared && <span className="drive-badge">공유됨</span>}
+              </button>
+              <span className="drive-size">{f.isFolder ? "" : formatBytes(f.size)}</span>
+              <span className="drive-date">
+                {f.modifiedTime ? new Date(f.modifiedTime).toLocaleDateString() : ""}
+              </span>
+              <span className="drive-row-actions">
+                {!f.isFolder && (
+                  <a
+                    className="drive-act"
+                    href={api.driveDownloadUrl(f.id)}
+                    title="다운로드"
+                  >
+                    ⬇
+                  </a>
+                )}
+                <button className="drive-act" title="이름 변경" onClick={() => rename(f)}>
+                  ✎
+                </button>
+                <button className="drive-act" title="휴지통" onClick={() => trash(f)}>
+                  🗑
+                </button>
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SearchResults({
   query,
   messages,
@@ -2618,6 +2978,8 @@ function SearchResults({
 }) {
   const [events, setEvents] = useState<CalEvent[] | null>(null);
   const [evErr, setEvErr] = useState<string | null>(null);
+  const [files, setFiles] = useState<DriveFile[] | null>(null);
+  const [fileErr, setFileErr] = useState<string | null>(null);
   const [detailEv, setDetailEv] = useState<CalEvent | null>(null);
   const [editor, setEditor] = useState<{
     initial: Partial<EventInput>;
@@ -2638,6 +3000,25 @@ function SearchResults({
         if (cancelled) return;
         if (e instanceof AuthError) onLogout();
         else setEvErr((e as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, refreshKey, onLogout]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFiles(null);
+    setFileErr(null);
+    api
+      .driveFiles({ q: query })
+      .then((res) => {
+        if (!cancelled) setFiles(res.files);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof AuthError) onLogout();
+        else setFileErr((e as Error).message);
       });
     return () => {
       cancelled = true;
@@ -2676,7 +3057,7 @@ function SearchResults({
         <h2>“{query}”</h2>
         <span className="muted">
           일정 {events ? `${visibleCount}건` : "…"} · 메일 {messages.length}
-          {hasMore ? "+" : ""}건
+          {hasMore ? "+" : ""}건 · 드라이브 {files ? `${files.length}건` : "…"}
         </span>
       </div>
       <div className="search-cols">
@@ -2741,6 +3122,21 @@ function SearchResults({
             <button className="btn more" onClick={onMore}>
               더 보기
             </button>
+          )}
+        </section>
+        <section className="search-col">
+          <div className="search-col-head">🗂 드라이브</div>
+          {fileErr ? (
+            <div className="scard-empty">⚠️ {fileErr}</div>
+          ) : !files ? (
+            <>
+              <div className="skel" />
+              <div className="skel" />
+            </>
+          ) : files.length === 0 ? (
+            <div className="scard-empty">일치하는 파일이 없습니다.</div>
+          ) : (
+            files.map((f) => <DriveCard key={f.id} f={f} terms={terms} />)
           )}
         </section>
       </div>

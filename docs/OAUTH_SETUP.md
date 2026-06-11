@@ -15,7 +15,7 @@
 
 1. `git clone … && cd mail && bun install`
 2. Google Cloud Console에서 **새 프로젝트** 생성
-3. **Gmail API + Google Calendar API** 둘 다 **사용**(Enable)
+3. **Gmail API + Google Calendar API + Google Drive API** 셋 다 **사용**(Enable)
 4. **OAuth 동의 화면**: 외부(External) + **테스트 사용자에 본인 Gmail 추가**
 5. **OAuth 클라이언트 ID**(웹 애플리케이션) 생성 + 리디렉션 URI `http://localhost:8787/auth/callback`
 6. `cp .env.example .env` → Client ID/Secret 채우기 (따옴표 X)
@@ -40,24 +40,25 @@ bun install
 
 ## 1. "API 키" 아님 — OAuth 2.0 클라이언트를 만든다
 
-Gmail/Calendar API는 사용자 인증이 필요해서 **API 키가 아니라 OAuth 2.0 클라이언트(ID + Secret)** 를 쓴다.
+Gmail/Calendar/Drive API는 사용자 인증이 필요해서 **API 키가 아니라 OAuth 2.0 클라이언트(ID + Secret)** 를 쓴다.
 콘솔의 "API 키 만들기"는 무시. 우리가 만드는 건 **OAuth 클라이언트 ID(웹 애플리케이션)** 다.
 
-흐름: `프로젝트 생성 → API 2개 사용 → OAuth 동의 화면 → OAuth 클라이언트 ID(웹) → .env → 실행 → 로그인`
+흐름: `프로젝트 생성 → API 3개 사용 → OAuth 동의 화면 → OAuth 클라이언트 ID(웹) → .env → 실행 → 로그인`
 
 > 사내 보안망 때문에 `console.cloud.google.com` 이 막혔다면, 망 밖 기기(폰 핫스팟 등)에서
 > 클라이언트만 만들어 **Client ID/Secret 두 값만** 가져와도 된다.
 
 ---
 
-## 2. 프로젝트 생성 + API 사용 설정 (Gmail + Calendar)
+## 2. 프로젝트 생성 + API 사용 설정 (Gmail + Calendar + Drive)
 
 1. **프로젝트 생성** — 🔗 https://console.cloud.google.com/projectcreate
    → 이름 아무거나(예: `mail`) → **만들기** → 10초쯤 기다린다. (이후 링크는 이 프로젝트가 선택된 채 열린다.)
-2. **API 두 개 켜기** — 아래 링크에서 각각 파란 **사용**(Enable) 버튼 한 번씩:
+2. **API 세 개 켜기** — 아래 링크에서 각각 파란 **사용**(Enable) 버튼 한 번씩:
    - Gmail API → 🔗 https://console.cloud.google.com/apis/library/gmail.googleapis.com
    - Google Calendar API → 🔗 https://console.cloud.google.com/apis/library/calendar-json.googleapis.com  ← **"CalDAV API" 아님!**
-- ★ 둘 다 먼저 안 켜면 클라이언트를 만들어도 호출이 막힌다.
+   - Google Drive API → 🔗 https://console.cloud.google.com/apis/library/drive.googleapis.com
+- ★ 셋 다 먼저 안 켜면 클라이언트를 만들어도 호출이 막힌다.
   - 캘린더에서 `403 ... Calendar API has not been used in project` 가 뜨면 이 단계를 빼먹은 것.
 
 ---
@@ -161,7 +162,7 @@ curl -s localhost:8787/api/profile     # 내 이메일
 | 인증은 되는데 토큰 교환 실패 | .env 시크릿에 따옴표/공백 | 따옴표 제거, raw 값만 |
 | OAuth 후 빈 페이지/8787로 튕김 | dev인데 8787로 떨어짐 | 정상. dev는 콜백 후 5173으로 자동 복귀 (안 되면 `bun run dev` 재시작) |
 | 7일 후 갑자기 로그인 풀림 | 테스트 앱 refresh token 만료 | "Gmail 연결하기" 다시 클릭 |
-| 캘린더 권한만 없다고 나옴 | 캘린더 scope 추가 전 토큰 | 로그아웃 후 다시 로그인 (동의 화면에서 캘린더 권한까지 허용) |
+| 캘린더/드라이브 권한만 없다고 나옴, 또는 드라이브 탭이 비거나 로그인으로 튕김 | 해당 scope 추가 전 토큰 | 로그아웃 후 다시 로그인 (동의 화면에서 새 권한까지 허용) |
 
 ---
 
@@ -169,6 +170,7 @@ curl -s localhost:8787/api/profile     # 내 이메일
 
 - `gmail.modify` — 읽기 / 발송(첨부 포함) / 라벨 / 읽음표시 / 보관 / 휴지통. **영구 삭제 불가**(안전장치).
 - `calendar` — 캘린더 / 일정 **조회·생성·수정·삭제**.
+- `drive` — 드라이브 파일 **탐색·검색·업로드·다운로드·휴지통** + 메일 큰 첨부의 **링크 공유**. 기존 파일까지 탐색해야 해 `drive.file`이 아닌 전체 `drive`.
 - scope를 바꾸면 기존 토큰엔 새 권한이 없으므로 **로그아웃 후 다시 로그인**해야 적용된다.
 
 ---

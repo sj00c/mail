@@ -6,6 +6,7 @@
       "name": "mail-ui",
       "dependencies": {
         "@googleapis/calendar": "9.8.0",
+        "@googleapis/drive": "12.1.0",
         "@googleapis/gmail": "^12.0.0",
         "google-auth-library": "^9.15.0",
         "hono": "^4.6.14",
@@ -115,6 +116,8 @@
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
 
     "@googleapis/calendar": ["@googleapis/calendar@9.8.0", "", { "dependencies": { "googleapis-common": "^7.0.0" } }, "sha512-5IG4x/bOvdDFLEzNX/HyvN4LUtuMFTv4eYqZcgwSWBHiBwCfN1zIVLPP6ENbIOR5sIceLpOS35NqknoaAiTJ1g=="],
+
+    "@googleapis/drive": ["@googleapis/drive@12.1.0", "", { "dependencies": { "googleapis-common": "^7.0.0" } }, "sha512-Y5JyrpjHxdo4uJTr/7MLE5NXpBjdU6JBOVWgMcLH7HdqwiZx9QTv+YloQ5SwExMlfDWcOEHmzMcyYWv4HoVtSA=="],
 
     "@googleapis/gmail": ["@googleapis/gmail@12.0.1", "", { "dependencies": { "googleapis-common": "^7.0.0" } }, "sha512-74KIG6Ks3/mrjLwz5omate5N6drrJdZSCjwQr1hkPrXQ7LAvHST8bG8+L7O1NrHE+oddPgZ9XP4X5xwX5K1tPg=="],
 
