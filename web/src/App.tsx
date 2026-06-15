@@ -22,12 +22,16 @@ import {
   type MessageFull,
   type MessageSummary,
   type SendAsInfo,
+  type Contact,
   type DriveFile,
   type DriveQuota,
   type DriveBreadcrumb,
 } from "./api.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
+
+// 안정된 빈 배열 — 선택이 없을 때 checkedIds가 매번 새 []를 반환하지 않도록.
+const EMPTY_IDS: string[] = [];
 
 // 상단바 아이콘: 이모지 대신 인라인 SVG (외부 에셋 없이 선형 아이콘)
 function SvgIcon({ children }: { children: ReactNode }) {
@@ -170,6 +174,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   // Gmail 계정 설정(별칭/답장주소/휴가응답) — 로그인 시 자동으로 딸려온다.
   const [acctSettings, setAcctSettings] = useState<AccountSettings | null>(null);
   const [hiddenCals, setHiddenCals] = useState<Set<string>>(new Set());
+  // 목록 체크박스로 고른 메일 id (일괄 처리용). shift-범위선택용 마지막 인덱스.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const lastCheckedIdx = useRef<number | null>(null);
   const [calLoading, setCalLoading] = useState(false);
   const [calErr, setCalErr] = useState<string | null>(null);
 
@@ -433,6 +440,73 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     setMessages((prev) => prev.filter((m) => m.id !== id));
   }, []);
 
+  // ---- 목록 체크박스 선택 + 일괄 처리 ----
+  // 체크박스 토글. shift-클릭이면 직전 클릭 행과의 사이를 한꺼번에 켜고/끈다.
+  const onToggleCheck = useCallback((id: string, shiftKey: boolean) => {
+    const list = messagesRef.current;
+    const idx = list.findIndex((m) => m.id === id);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (shiftKey && lastCheckedIdx.current != null && idx >= 0) {
+        const [a, b] = [lastCheckedIdx.current, idx].sort((x, y) => x - y);
+        const turnOn = !prev.has(id); // 클릭 행의 '다음 상태'를 범위 전체에 적용
+        for (let i = a; i <= b; i++) {
+          if (turnOn) next.add(list[i].id);
+          else next.delete(list[i].id);
+        }
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    if (idx >= 0) lastCheckedIdx.current = idx;
+  }, []);
+
+  // 선택된 행 중 실제로 현재 목록에 남아 있는 id만 (폴링으로 사라진 것 방어).
+  // 선택이 없는 평상시(대부분)엔 목록 전체 스캔을 건너뛰고 안정된 빈 배열을
+  // 돌려준다 — 매 렌더 새 배열을 만들면 하위 useMemo가 전부 무효화된다.
+  const checkedIds = useMemo(
+    () =>
+      selectedIds.size === 0
+        ? EMPTY_IDS
+        : messages.filter((m) => selectedIds.has(m.id)).map((m) => m.id),
+    [messages, selectedIds],
+  );
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    lastCheckedIdx.current = null;
+  }, []);
+
+  const patchMany = useCallback(
+    (ids: Set<string>, patch: Partial<MessageSummary>) => {
+      setMessages((prev) =>
+        prev.map((m) => (ids.has(m.id) ? { ...m, ...patch } : m)),
+      );
+    },
+    [],
+  );
+  const removeMany = useCallback((ids: Set<string>) => {
+    setMessages((prev) => prev.filter((m) => !ids.has(m.id)));
+  }, []);
+  // 선택 행들의 단일 라벨을 더하거나 빼 labelIds를 갱신 (별표 등).
+  const toggleLabelMany = useCallback(
+    (ids: Set<string>, label: string, add: boolean) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!ids.has(m.id)) return m;
+          const has = m.labelIds.includes(label);
+          if (add && !has) return { ...m, labelIds: [...m.labelIds, label] };
+          if (!add && has)
+            return { ...m, labelIds: m.labelIds.filter((l) => l !== label) };
+          return m;
+        }),
+      );
+    },
+    [],
+  );
+
   // Selection requested by a notification click — the label-change effect
   // below would otherwise wipe it (it resets selection on label switch).
   const pendingSelect = useRef<{
@@ -453,6 +527,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     // its cross-query nextToken behind 더 보기) rendered under the new label.
     setMessages([]);
     setNextToken(undefined);
+    setSelectedIds(new Set()); // 라벨/검색 전환 시 선택 해제
+    lastCheckedIdx.current = null;
     load(true);
   }, [activeLabel, query, load]);
 
@@ -540,6 +616,64 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const userLabels = labels
     .filter((l) => l.type === "user")
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // ---- 일괄 처리 액션 (목록 체크박스 선택분 대상) ----
+  const inTrashView = !query && activeLabel === "TRASH";
+  const isInboxView = !query && activeLabel === "INBOX";
+  const isStarredView = !query && activeLabel === "STARRED";
+  const checkedSet = useMemo(() => new Set(checkedIds), [checkedIds]);
+  // 선택분이 모두 별표 상태면 버튼은 '해제'로 동작 (Gmail식 토글).
+  const allStarred = useMemo(
+    () =>
+      checkedIds.length > 0 &&
+      messages.every((m) => !checkedSet.has(m.id) || m.labelIds.includes("STARRED")),
+    [messages, checkedSet, checkedIds],
+  );
+  const allChecked = messages.length > 0 && checkedIds.length === messages.length;
+
+  const runBulk = (fn: (ids: string[], set: Set<string>) => Promise<void>) =>
+    guard(async () => {
+      const ids = checkedIds;
+      if (ids.length === 0) return;
+      await fn(ids, new Set(ids));
+      clearSelection();
+      void refreshLabels();
+    });
+  const bulkRead = (read: boolean) =>
+    runBulk(async (ids, set) => {
+      await api.batchModify(ids, read ? { remove: ["UNREAD"] } : { add: ["UNREAD"] });
+      patchMany(set, { unread: !read });
+    });
+  const bulkStar = () =>
+    runBulk(async (ids, set) => {
+      const add = !allStarred;
+      await api.batchModify(ids, add ? { add: ["STARRED"] } : { remove: ["STARRED"] });
+      // 별표 뷰에서 해제하면 그 행은 목록에서 빠진다.
+      if (!add && isStarredView) removeMany(set);
+      else toggleLabelMany(set, "STARRED", add);
+    });
+  const bulkArchive = () =>
+    runBulk(async (ids, set) => {
+      await api.batchModify(ids, { remove: ["INBOX"] });
+      removeMany(set);
+    });
+  const bulkTrash = () =>
+    runBulk(async (ids, set) => {
+      await api.batchTrash(ids);
+      removeMany(set);
+    });
+  const bulkRestore = () =>
+    runBulk(async (ids, set) => {
+      await api.batchModify(ids, { add: ["INBOX"], remove: ["TRASH"] });
+      removeMany(set);
+    });
+  const toggleAll = () => {
+    if (allChecked) clearSelection();
+    else {
+      setSelectedIds(new Set(messages.map((m) => m.id)));
+      lastCheckedIdx.current = null;
+    }
+  };
 
   // Shared between the normal reader pane and the search slide-over.
   const readerEl = selected ? (
@@ -784,6 +918,63 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         ) : (
           <>
             <section className="list">
+              {messages.length > 0 && (
+                <div className="bulk-bar">
+                  <TriCheck
+                    checked={allChecked}
+                    indeterminate={checkedIds.length > 0}
+                    onChange={toggleAll}
+                    ariaLabel="전체 선택"
+                  />
+                  {checkedIds.length > 0 ? (
+                    <>
+                      <span className="bulk-count">{checkedIds.length}개 선택</span>
+                      <span className="bulk-actions">
+                        {inTrashView ? (
+                          <button className="btn sm" onClick={bulkRestore}>
+                            ♻️ 복원
+                          </button>
+                        ) : (
+                          <>
+                            <button className="btn sm" onClick={() => bulkRead(true)}>
+                              ✉️ 읽음
+                            </button>
+                            <button className="btn sm" onClick={() => bulkRead(false)}>
+                              📩 안읽음
+                            </button>
+                            <button className="btn sm" onClick={bulkStar}>
+                              {allStarred ? "★ 별표 해제" : "☆ 별표"}
+                            </button>
+                            {isInboxView && (
+                              <button className="btn sm" onClick={bulkArchive}>
+                                📥 보관
+                              </button>
+                            )}
+                            <button className="btn sm danger" onClick={bulkTrash}>
+                              🗑 삭제
+                            </button>
+                          </>
+                        )}
+                      </span>
+                      <button
+                        className="bulk-clear"
+                        onClick={clearSelection}
+                        aria-label="선택 해제"
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="bulk-hint"
+                      onClick={toggleAll}
+                    >
+                      전체 선택
+                    </button>
+                  )}
+                </div>
+              )}
               {messages.length === 0 && !loading && (
                 <div className="empty">메일이 없습니다.</div>
               )}
@@ -792,7 +983,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                   key={m.id}
                   m={m}
                   active={selected?.id === m.id}
+                  checked={selectedIds.has(m.id)}
                   onSelect={onSelectMsg}
+                  onToggleCheck={onToggleCheck}
                 />
               ))}
               {loading && <div className="empty">불러오는 중…</div>}
@@ -1045,22 +1238,80 @@ function listParty(m: MessageSummary): { name: string; email: string } {
   return { name, email: first.email };
 }
 
+// 체크박스 + "일부만 선택"(indeterminate) 상태 — indeterminate는 속성으로만
+// 설정 가능해 ref로 동기화한다.
+function TriCheck({
+  checked,
+  indeterminate,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: () => void;
+  ariaLabel?: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      aria-label={ariaLabel}
+    />
+  );
+}
+
 const MessageRow = memo(function MessageRow({
   m,
   active,
+  checked,
   onSelect,
+  onToggleCheck,
 }: {
   m: MessageSummary;
   active: boolean;
+  checked: boolean;
   onSelect: (id: string, threadId: string) => void;
+  onToggleCheck: (id: string, shiftKey: boolean) => void;
 }) {
   const addr = listParty(m);
   const label = listDateLabel(m.date);
+  // 행 자체는 button을 못 쓴다 — 안에 체크박스(인터랙티브)가 들어가 nesting
+  // 위반이 되므로 div + role/tabIndex로 동일한 키보드 동작을 준다.
   return (
-    <button
-      className={`msg-row ${active ? "active" : ""} ${m.unread ? "unread" : ""}`}
+    <div
+      className={`msg-row ${active ? "active" : ""} ${m.unread ? "unread" : ""} ${
+        checked ? "checked" : ""
+      }`}
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(m.id, m.threadId)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(m.id, m.threadId);
+        }
+      }}
     >
+      {/* 항상 보이는 전용 선택 칸. 클릭은 이 셀이 받고(행 높이만큼 넓은 영역),
+          체크박스는 시각 표시만(pointer-events:none) 한다. */}
+      <span
+        className="msg-check-cell"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label={`${addr.name || addr.email} 선택`}
+        onClick={(e) => {
+          e.stopPropagation(); // 행 클릭(리더 열기)으로 번지지 않게
+          onToggleCheck(m.id, e.shiftKey);
+        }}
+      >
+        <input type="checkbox" className="msg-check" checked={checked} tabIndex={-1} readOnly />
+      </span>
       <span
         className="avatar sm"
         style={{ background: avatarColor(addr.email.toLowerCase()) }}
@@ -1078,7 +1329,7 @@ const MessageRow = memo(function MessageRow({
         </span>
         <span className="msg-snippet">{m.snippet}</span>
       </span>
-    </button>
+    </div>
   );
 });
 
@@ -1199,6 +1450,40 @@ function Reader({
           >
             ↪ 전달
           </button>
+          {thread && thread.length > 1 && (
+            <button
+              className="btn"
+              title="이 대화의 모든 메시지를 시간순으로 묶어 전달"
+              onClick={() =>
+                guard(async () => {
+                  // 첨부는 스레드 전체에서 수집. cid가 겹치면(드물지만 메시지가
+                  // 다르면 가능) 먼저 온 것을 유지 — 본문 cid: 참조를 메시지별로
+                  // 다시 쓰지 않는 한 구분할 방법이 없다.
+                  const all = await Promise.all(
+                    thread.flatMap((tm) =>
+                      tm.attachments.map((a) => downloadAttachment(tm.id, a)),
+                    ),
+                  );
+                  const seenCid = new Set<string>();
+                  const attachments = all.filter((a) => {
+                    if (!a.contentId) return true;
+                    if (seenCid.has(a.contentId)) return false;
+                    seenCid.add(a.contentId);
+                    return true;
+                  });
+                  onReply({
+                    subject: fwdSubject(msg.subject),
+                    forward: true,
+                    quoteHtml: threadQuoteHtml(thread),
+                    quoteSubject: msg.subject,
+                    attachments,
+                  });
+                })
+              }
+            >
+              ↪↪ 전체 전달
+            </button>
+          )}
           <button
             className="btn"
             onClick={() =>
@@ -1324,6 +1609,29 @@ function reSubject(s: string): string {
 }
 function fwdSubject(s: string): string {
   return /^\s*(fwd?|forward):/i.test(s) ? s : `Fwd: ${s}`;
+}
+
+// 전체 전달: 스레드의 모든 메시지를 시간순으로, 메시지별 보낸사람/날짜 헤더를
+// 붙여 하나의 인용 HTML로 조립한다. sanitize는 buildQuotedHtml(forward)이
+// 전체에 대해 한 번 수행하므로 여기서는 조립만 한다.
+function threadQuoteHtml(msgs: MessageFull[]): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return msgs
+    .map((m) => {
+      const addr = parseAddr(m.from);
+      const when = new Date(m.date).toLocaleString("ko-KR");
+      const body = m.bodyHtml || textToHtml(m.bodyText || m.snippet || "");
+      return (
+        `<div style="margin:0 0 20px">` +
+        `<div style="font-size:12.5px;line-height:1.7;color:#5f6368;` +
+        `border-bottom:1px solid #e3e7ee;padding-bottom:6px;margin-bottom:10px">` +
+        `<b>${esc(addr.name)}</b> &lt;${esc(addr.email)}&gt; · ${esc(when)}<br>` +
+        `받는사람: ${esc(m.to)}${m.cc ? `<br>참조: ${esc(m.cc)}` : ""}</div>` +
+        `${body}</div>`
+      );
+    })
+    .join("");
 }
 
 // Reply / reply-all targets:
@@ -1568,11 +1876,16 @@ function HtmlBody({
     const f = ref.current;
     const doc = f?.contentDocument;
     if (!f || !doc) return;
+    // scrollHeight는 현재 뷰포트(=iframe 높이)보다 작아지지 않아 인용 접기로
+    // 본문이 줄어도 높이가 따라 줄지 않는다 — 측정 전에 리셋한다. 두 스타일
+    // 쓰기와 측정이 같은 태스크 안이라 중간 페인트(깜빡임)는 없다.
+    const prev = f.style.height;
+    f.style.height = "8px";
     const h = Math.max(
       doc.body?.scrollHeight ?? 0,
       doc.documentElement?.scrollHeight ?? 0,
     );
-    if (h) f.style.height = `${h + 8}px`;
+    f.style.height = h ? `${h + 8}px` : prev;
   }, []);
 
   const onLoad = useCallback(() => {
@@ -1584,6 +1897,9 @@ function HtmlBody({
     });
     setTimeout(resize, 400);
     setTimeout(resize, 1200);
+    // 인용 접기(<details>) 토글 시 본문 높이가 바뀐다 — toggle은 버블링하지
+    // 않으므로 캡처 단계에서 받아 재계산.
+    doc.addEventListener("toggle", resize, true);
     // Handle only mailto/# clicks here. http(s) links are left to the
     // browser's NATIVE anchor navigation (prepareEmailHtml guarantees
     // target=_blank + rel on every anchor): real link clicks are exempt from
@@ -1863,15 +2179,43 @@ function RecipientField({
   value,
   onChange,
   autoFocus,
+  suggestions,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   autoFocus?: boolean;
+  suggestions?: Contact[];
 }) {
   const [draft, setDraft] = useState("");
+  // 자동완성: 드롭다운에서 ↑↓로 고른 항목. -1 = 선택 없음(Enter는 입력값 확정).
+  const [hi, setHi] = useState(-1);
+  // Escape로 닫은 상태 — 다음 입력 변경까지 드롭다운을 띄우지 않는다.
+  const [dismissed, setDismissed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const items = splitAddrList(value);
+
+  // 이미 칩으로 추가된 주소는 제안에서 뺀다.
+  const matches = useMemo(() => {
+    const q = draft.trim().toLowerCase();
+    if (dismissed || !q || !suggestions?.length) return [];
+    const used = new Set(items.map((t) => parseAddr(t).email.toLowerCase()));
+    return suggestions
+      .filter(
+        (s) =>
+          !used.has(s.email.toLowerCase()) &&
+          (s.email.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)),
+      )
+      .slice(0, 8);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, suggestions, value, dismissed]);
+
+  const pick = (s: Contact) => {
+    addTokens([s.name ? `${s.name} <${s.email}>` : s.email]);
+    setDraft("");
+    setHi(-1);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
 
   const setItems = (next: string[]) => onChange(next.filter(Boolean).join(", "));
   const addTokens = (toks: string[]) => {
@@ -1927,6 +2271,8 @@ function RecipientField({
           placeholder={items.length === 0 ? `${label} 추가` : ""}
           onChange={(e) => {
             const v = e.target.value;
+            setHi(-1); // 입력이 바뀌면 드롭다운 선택은 초기화
+            setDismissed(false);
             if (/[,;]/.test(v)) {
               // 구분자 기준으로 끊어 앞부분은 확정, 마지막 조각만 draft로
               const parts = v.split(/[,;]+/);
@@ -1947,8 +2293,21 @@ function RecipientField({
             }
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Tab") {
-              if (draft.trim()) {
+            if (e.key === "ArrowDown" && matches.length) {
+              e.preventDefault();
+              setHi((h) => (h + 1) % matches.length);
+            } else if (e.key === "ArrowUp" && matches.length) {
+              e.preventDefault();
+              setHi((h) => (h <= 0 ? matches.length - 1 : h - 1));
+            } else if (e.key === "Escape" && matches.length) {
+              e.preventDefault();
+              setHi(-1);
+              setDismissed(true); // 드롭다운만 닫는다 (입력값은 유지)
+            } else if (e.key === "Enter" || e.key === "Tab") {
+              if (hi >= 0 && matches[hi]) {
+                e.preventDefault();
+                pick(matches[hi]);
+              } else if (draft.trim()) {
                 e.preventDefault();
                 addTokens([draft]);
                 setDraft("");
@@ -1972,11 +2331,46 @@ function RecipientField({
               addTokens([draft]);
               setDraft("");
             }
+            setHi(-1);
           }}
         />
+        {matches.length > 0 && (
+          <ul className="recip-suggest" role="listbox">
+            {matches.map((s, i) => (
+              <li
+                key={s.email}
+                role="option"
+                aria-selected={i === hi}
+                className={i === hi ? "active" : ""}
+                // mousedown: click이면 blur가 먼저 와서 draft가 칩으로 확정돼
+                // 버린다 — 포커스를 안 뺏고 바로 선택.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(s);
+                }}
+                onMouseEnter={() => setHi(i)}
+              >
+                {s.name && <span className="recip-sug-name">{s.name}</span>}
+                <span className="recip-sug-mail">{s.email}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </span>
     </label>
   );
+}
+
+// 연락처는 작성창 첫 오픈 때 한 번만 가져와 모듈 캐시. 실패는 조용히 빈 목록 —
+// contacts 스코프가 없는 구 토큰에서 자동완성 하나 때문에 로그인으로 보내지
+// 않는다 (재시도는 다음 작성창 오픈 때).
+let contactsPromise: Promise<Contact[]> | null = null;
+function loadContactsOnce(): Promise<Contact[]> {
+  contactsPromise ??= api.contacts().catch(() => {
+    contactsPromise = null;
+    return [];
+  });
+  return contactsPromise;
 }
 
 function Compose({
@@ -2017,6 +2411,18 @@ function Compose({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sendAs]);
+  // 받는사람 자동완성용 연락처 (실패 시 빈 목록 — 기능만 조용히 꺼진다).
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  useEffect(() => {
+    let live = true;
+    void loadContactsOnce().then((cs) => {
+      if (live && cs.length) setContacts(cs);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   // chosenAlias가 아직 비어 있어도(레이스) 기본 별칭으로 폴백해 표시값과 일치.
   const chosenAlias = aliases.find((s) => s.email === fromEmail) ?? defaultAlias();
   const fromHeader = chosenAlias
@@ -2298,9 +2704,20 @@ function Compose({
             ))}
           </select>
         )}
-        <RecipientField label="받는사람" value={to} onChange={setTo} autoFocus />
-        <RecipientField label="참조" value={cc} onChange={setCc} />
-        <RecipientField label="숨은참조" value={bcc} onChange={setBcc} />
+        <RecipientField
+          label="받는사람"
+          value={to}
+          onChange={setTo}
+          autoFocus
+          suggestions={contacts}
+        />
+        <RecipientField label="참조" value={cc} onChange={setCc} suggestions={contacts} />
+        <RecipientField
+          label="숨은참조"
+          value={bcc}
+          onChange={setBcc}
+          suggestions={contacts}
+        />
         <input
           placeholder="제목"
           value={subject}
@@ -2533,18 +2950,28 @@ const AVATAR_COLORS = [
   "#d81b60",
 ];
 
+// 발신자→색은 결정적이고 같은 주소가 목록에 반복 등장하므로 해시를 캐시한다.
+const avatarColorCache = new Map<string, string>();
 function avatarColor(key: string): string {
+  const cached = avatarColorCache.get(key);
+  if (cached) return cached;
   let h = 0;
   for (const ch of key) h = (h * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+  const color = AVATAR_COLORS[h % AVATAR_COLORS.length];
+  avatarColorCache.set(key, color);
+  return color;
 }
 
+// Intl 포매터는 생성 비용이 크다 — toLocale*는 호출마다 새로 만든다. 목록의
+// 모든 행이 listDateLabel을 부르므로 포매터를 한 번 만들어 재사용한다.
+const TIME_FMT = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" });
+const MONTHDAY_FMT = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" });
 function listDateLabel(iso: string): string {
   const date = new Date(iso);
   const now = new Date();
   return date.toDateString() === now.toDateString()
-    ? date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
+    ? TIME_FMT.format(date)
+    : MONTHDAY_FMT.format(date);
 }
 
 function SlideOver({
@@ -3978,6 +4405,56 @@ function htmlToText(html: string): string {
   }
 }
 
+// ---- 인용/전달 체인 접기 (뷰어 전용) ----
+// "전달→전달→전달"로 쌓인 본문은 한 덩어리 벽이 된다. 클라이언트별 인용 컨테이너를
+// <details>로 감싸 단계마다 접고 펼 수 있게 한다 — 전달 본문(그 메일의 알맹이)은
+// 펼친 채 라벨만 붙이고, 답장 히스토리(스레드 뷰에 이미 위로 보이는 중복)는 접는다.
+// iframe은 무스크립트라 네이티브 <details> 토글을 그대로 쓴다 (높이는 부모가
+// toggle 이벤트로 재계산).
+const QUOTE_ROOT_SEL =
+  'div.gmail_quote, blockquote[type="cite"], div.yahoo_quoted, div[id^="divRplyFwdMsg"], div.mail-fwd, div.mail-quote';
+const FWD_MARK = /forwarded message|전달된 메일|begin forwarded|original message|원본 메일/i;
+
+function foldQuoteChains(doc: Document): void {
+  const roots = [...doc.querySelectorAll(QUOTE_ROOT_SEL)];
+  let folded = 0;
+  for (const el of roots) {
+    // Apple Mail 전달은 "Begin forwarded message:" 마커가 blockquote 밖 앞줄에
+    // 있다 — 컨테이너 머리말과 직전 형제 텍스트를 함께 본다.
+    const head = (el.textContent ?? "").slice(0, 400);
+    const prev = (el.previousElementSibling?.textContent ?? "").slice(-200);
+    const isFwd =
+      el.matches(".mail-fwd") || FWD_MARK.test(head) || FWD_MARK.test(prev);
+    const text = (el.textContent ?? "").trim();
+    // 한두 줄짜리 인용까지 접으면 클릭만 늘어난다.
+    if (!isFwd && text.length < 150) continue;
+    const details = doc.createElement("details");
+    details.className = "quote-fold";
+    if (isFwd) details.setAttribute("open", "");
+    const summary = doc.createElement("summary");
+    summary.textContent = isFwd ? "전달된 메일" : "⋯ 이전 대화 내용";
+    el.replaceWith(details);
+    details.append(summary, el);
+    folded++;
+  }
+  if (!folded) return;
+  const st = doc.createElement("style");
+  st.textContent =
+    `details.quote-fold{margin:10px 0}` +
+    `details.quote-fold>summary{list-style:none;cursor:pointer;user-select:none;` +
+    `display:inline-block;font:600 12px/1 -apple-system,system-ui,sans-serif;` +
+    `letter-spacing:.2px;color:#5f6368;background:#f1f3f6;border:1px solid #e3e7ee;` +
+    `border-radius:999px;padding:5px 12px}` +
+    `details.quote-fold>summary::-webkit-details-marker{display:none}` +
+    `details.quote-fold>summary::before{content:"▸ ";color:#8a93a3}` +
+    `details.quote-fold[open]>summary::before{content:"▾ "}` +
+    `details.quote-fold[open]>summary{margin-bottom:8px}` +
+    // 펼쳤을 때 단계 경계가 보이도록 접힌 블록에 왼쪽 가이드라인을 깐다
+    // (인라인 스타일이 이미 있는 gmail_quote 등은 자기 스타일이 우선).
+    `details.quote-fold>:not(summary){border-left:3px solid #e3e7ee;padding-left:12px}`;
+  doc.head.append(st);
+}
+
 // Rendered email/description HTML lives in a sandboxed iframe (no scripts).
 // Rewrite every link to open in a new top-level tab and drop the referrer,
 // so links actually work (instead of navigating inside the sandboxed frame -> 403).
@@ -4042,6 +4519,7 @@ function prepareEmailHtml(
       a.setAttribute("target", "_blank");
       a.setAttribute("rel", "noopener noreferrer");
     });
+    foldQuoteChains(doc);
     if (bodyStyle) {
       const prev = doc.body.getAttribute("style") ?? "";
       doc.body.setAttribute("style", `${bodyStyle};${prev}`);

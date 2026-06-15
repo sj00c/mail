@@ -12,7 +12,7 @@
 
 #### 기능
 
-- **메일** — 받은편지함·라벨, 스레드 보기, HTML 본문(스크립트 차단 샌드박스)·인라인 이미지·첨부, 읽음·별표·스팸·보관·삭제, 작성·답장·전체답장·전달, 다중 수신자·참조·숨은참조·서명, 임시저장·드래프트 이어쓰기, 새 메일 데스크톱 알림
+- **메일** — 받은편지함·라벨, 스레드 보기, HTML 본문(스크립트 차단 샌드박스)·인라인 이미지·첨부, 읽음·별표·스팸·보관·삭제, 작성·답장·전체답장·전달, 다중 수신자·참조·숨은참조·서명, 받는사람 자동완성(주소록 + 자주 주고받은 주소), 임시저장·드래프트 이어쓰기, 새 메일 데스크톱 알림
   - **큰 첨부 자동 Drive 전환** — MIME 한도(25MB)를 넘는 첨부는 발송 시 자동으로 Google Drive에 올라가 "링크 공유"로 본문에 삽입된다 (Gmail 웹이 25MB 초과 시 하는 동작과 동일). 인라인 이미지는 항상 본문에 직접 첨부된다.
 - **드라이브** — 내 드라이브 폴더 탐색(브레드크럼)·전체 검색, 업로드·다운로드(Google 문서는 Office 형식으로 내보내기)·새 폴더·이름 변경·휴지통 이동, 저장용량 표시. 삭제는 휴지통(복구 가능)만 — 영구 삭제는 없다.
 - **캘린더** — 월 그리드 / 목록 뷰, 캘린더별 표시 토글, 일정 생성·수정·삭제, 종일·멀티데이 일정, 60초 자동 갱신
@@ -62,10 +62,11 @@
 🔗 https://console.cloud.google.com/projectcreate
 → **프로젝트 이름**에 아무거나 입력(예: `mail`) → **만들기** → 생성될 때까지 10초쯤 기다린다.
 
-**② Gmail · Calendar · Drive API 켜기** *(각 링크에서 파란 **사용**(Enable) 버튼 한 번씩)*
+**② Gmail · Calendar · Drive · People API 켜기** *(각 링크에서 파란 **사용**(Enable) 버튼 한 번씩)*
 🔗 Gmail API → https://console.cloud.google.com/apis/library/gmail.googleapis.com → **사용**
 🔗 Calendar API → https://console.cloud.google.com/apis/library/calendar-json.googleapis.com → **사용**
 🔗 Drive API → https://console.cloud.google.com/apis/library/drive.googleapis.com → **사용**
+🔗 People API → https://console.cloud.google.com/apis/library/people.googleapis.com → **사용** *(받는사람 자동완성용 주소록 읽기)*
 
 **③ OAuth 동의 화면 + 테스트 사용자**
 🔗 https://console.cloud.google.com/auth/overview
@@ -210,6 +211,7 @@ from:someone@x.com   subject:송장   has:attachment   is:unread newer_than:7d  
   | `gmail.modify` | 읽기 · 발송 · 라벨 · 읽음표시 · 보관 · 휴지통. **영구 삭제는 불가** (안전장치) |
   | `calendar` | 캘린더 / 일정 조회 · 생성 · 수정 · 삭제 |
   | `drive` | 드라이브 파일 조회 · 업로드 · 다운로드 · 휴지통 · 큰 첨부 링크 공유. 기존 파일까지 탐색해야 해서 `drive.file`이 아닌 전체 `drive` |
+  | `contacts.readonly` · `contacts.other.readonly` | **읽기 전용** — 받는사람 자동완성 (주소록 + 자주 주고받은 주소). 연락처 수정은 불가 |
 
 - **서명·계정 설정** — 브라우저 localStorage에 저장되며, 다른 계정으로 로그인하면 이전 계정의 서명은 자동으로 지워진다.
 

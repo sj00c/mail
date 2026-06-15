@@ -15,6 +15,7 @@
     "@googleapis/calendar": "9.8.0",
     "@googleapis/drive": "12.1.0",
     "@googleapis/gmail": "^12.0.0",
+    "@googleapis/people": "3.0.9",
     "google-auth-library": "^9.15.0",
     "hono": "^4.6.14"
   },

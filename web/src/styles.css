@@ -452,6 +452,11 @@ body {
   transition: background 0.13s ease;
   font-family: inherit;
   color: var(--text);
+  /* 화면 밖 행은 레이아웃·페인트를 건너뛴다(브라우저 네이티브 가상화). 긴
+     목록 스크롤 비용을 크게 줄인다. intrinsic-size는 한 행의 대략 높이로
+     스크롤바 점프를 최소화. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 66px;
 }
 .msg-row:hover {
   background: #f6f8fb;
@@ -1227,6 +1232,9 @@ textarea.ev-input {
     box-shadow 0.16s ease,
     transform 0.16s ease,
     border-color 0.16s ease;
+  /* 메일 행과 동일하게 화면 밖 카드는 페인트를 건너뛴다 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 74px;
 }
 .scard:hover {
   box-shadow: var(--shadow-2);
@@ -1339,6 +1347,103 @@ mark {
   height: 34px;
   font-size: 14px;
   margin-top: 1px;
+}
+
+/* ---- 목록 선택: 항상 보이는 전용 칸 ---- */
+.msg-check-cell {
+  flex: none;
+  align-self: stretch; /* 행 높이만큼 — 누르기 쉬운 넓은 클릭 영역 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 행 패딩을 일부 상쇄해 칸을 왼쪽 끝까지 붙이고 세로로도 넓힌다.
+     클릭 영역은 넓게 유지하면서 체크박스만 작게 보이게 한다. */
+  margin: -12px 0 -12px -6px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.msg-check {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  pointer-events: none; /* 클릭은 셀이 받는다 — 체크박스는 시각 표시만 */
+  opacity: 0.45; /* 미선택 시 은은하게, 호버/선택 시 또렷하게 */
+  transition: opacity 0.12s ease;
+}
+.msg-row:hover .msg-check,
+.msg-row.checked .msg-check {
+  opacity: 1;
+}
+.msg-row.checked {
+  background: var(--accent-bg);
+}
+
+/* ---- 일괄 처리 액션 바 ---- */
+.bulk-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--panel-glass);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.bulk-bar > input[type="checkbox"] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.bulk-count {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+/* 선택이 없을 때 전체선택 체크박스 옆 안내 — 눌러도 전체 토글 */
+.bulk-hint {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  user-select: none;
+}
+.bulk-hint:hover {
+  color: var(--text);
+}
+.bulk-actions {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.btn.sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.bulk-clear {
+  flex: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+.bulk-clear:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text);
 }
 
 /* 일정 카드 날짜 박스 */
@@ -1458,6 +1563,51 @@ mark {
   align-items: center;
   gap: 5px;
   padding: 5px 0;
+  position: relative; /* 자동완성 드롭다운 기준점 */
+}
+
+/* ---- 받는사람 자동완성 ---- */
+.recip-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  max-height: 264px;
+  overflow-y: auto;
+}
+.recip-suggest li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.recip-suggest li.active {
+  background: var(--accent-bg);
+}
+.recip-sug-name {
+  font-weight: 600;
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recip-sug-mail {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .recip-chip {
   display: inline-flex;

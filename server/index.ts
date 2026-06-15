@@ -23,6 +23,8 @@ import {
   listLabels,
   listMessages,
   modifyMessage,
+  batchModifyMessages,
+  batchTrashMessages,
   sendMessage,
   trashMessage,
 } from "./gmail.ts";
@@ -36,6 +38,7 @@ import {
   searchEvents,
   updateEvent,
 } from "./calendar.ts";
+import { clearContactsCache, listContacts } from "./contacts.ts";
 import {
   listFiles,
   searchFiles,
@@ -142,6 +145,7 @@ app.get("/auth/callback", async (c) => {
 app.post("/auth/logout", async (c) => {
   await logout();
   clearCalendarCache(); // cached calendar list is account-scoped
+  clearContactsCache();
   return c.json({ ok: true });
 });
 
@@ -151,6 +155,9 @@ const api = new Hono();
 api.get("/profile", async (c) => c.json(await getProfile()));
 
 api.get("/labels", async (c) => c.json(await listLabels()));
+
+// 받는사람 자동완성용 — 주소록 + 자주 주고받은 주소 (이메일 기준 병합).
+api.get("/contacts", async (c) => c.json(await listContacts()));
 
 // Query params come from the URL — validate before they become RangeErrors
 // deep inside Date/Google API calls (NaN days previously exploded as a 500).
@@ -255,6 +262,23 @@ api.post("/messages/:id/modify", async (c) => {
 
 api.post("/messages/:id/trash", async (c) => {
   await trashMessage(c.req.param("id"));
+  return c.json({ ok: true });
+});
+
+// 일괄 처리(목록 체크박스 선택). ids는 클라이언트가 보낸 메시지 id 배열.
+api.post("/messages/batchModify", async (c) => {
+  const body = await c.req.json<{
+    ids?: string[];
+    add?: string[];
+    remove?: string[];
+  }>();
+  await batchModifyMessages(body.ids ?? [], { add: body.add, remove: body.remove });
+  return c.json({ ok: true });
+});
+
+api.post("/messages/batchTrash", async (c) => {
+  const body = await c.req.json<{ ids?: string[] }>();
+  await batchTrashMessages(body.ids ?? []);
   return c.json({ ok: true });
 });
 

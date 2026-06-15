@@ -139,11 +139,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type Contact = { name: string; email: string };
+
 export const api = {
   authStatus: () => req<{ authed: boolean }>("/auth/status"),
   logout: () => req<{ ok: boolean }>("/auth/logout", { method: "POST" }),
   profile: () => req<{ email: string }>("/api/profile"),
   labels: () => req<Label[]>("/api/labels"),
+  contacts: () => req<Contact[]>("/api/contacts"),
   calendarEvents: (opts: { days?: number; from?: string; to?: string } = {}) => {
     const u = new URLSearchParams();
     if (opts.days) u.set("days", String(opts.days));
@@ -196,6 +199,16 @@ export const api = {
     }),
   trash: (id: string) =>
     req<{ ok: boolean }>(`/api/messages/${id}/trash`, { method: "POST" }),
+  batchModify: (ids: string[], body: { add?: string[]; remove?: string[] }) =>
+    req<{ ok: boolean }>("/api/messages/batchModify", {
+      method: "POST",
+      body: JSON.stringify({ ids, ...body }),
+    }),
+  batchTrash: (ids: string[]) =>
+    req<{ ok: boolean }>("/api/messages/batchTrash", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   send: (body: {
     to: string;
     cc?: string;

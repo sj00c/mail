@@ -722,6 +722,34 @@ export async function trashMessage(id: string): Promise<void> {
   await g.users.messages.trash({ userId: "me", id });
 }
 
+// 일괄 라벨 변경: batchModify는 한 번의 호출로 최대 1000개까지 같은 라벨
+// 추가/제거를 적용한다 (개별 modify를 N번 때리는 것보다 훨씬 적은 쿼터).
+export async function batchModifyMessages(
+  ids: string[],
+  changes: { add?: string[]; remove?: string[] },
+): Promise<void> {
+  if (ids.length === 0) return;
+  const g = await api();
+  await g.users.messages.batchModify({
+    userId: "me",
+    requestBody: {
+      ids,
+      addLabelIds: changes.add,
+      removeLabelIds: changes.remove,
+    },
+  });
+}
+
+// 일괄 휴지통 이동: batchDelete는 "영구 삭제"라 이 앱의 안전장치(영구삭제 금지)에
+// 어긋난다 — 복구 가능한 개별 trash를 병렬로 돌린다. 한 페이지(수십 개) 규모라
+// 동시 호출로 충분하고, 하나가 실패해도 Promise.all이 그 에러를 그대로 올린다.
+export async function batchTrashMessages(ids: string[]): Promise<void> {
+  const g = await api();
+  await Promise.all(
+    ids.map((id) => g.users.messages.trash({ userId: "me", id })),
+  );
+}
+
 export async function getProfile(): Promise<{ email: string }> {
   const g = await api();
   const res = await g.users.getProfile({ userId: "me" });

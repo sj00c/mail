@@ -7,10 +7,14 @@ import { dirname, join } from "node:path";
 // + Google Drive read/write (browse/upload/download/trash + share-link for large
 //   mail attachments). Full `drive` (not drive.file) so the Drive tab can list
 //   pre-existing files, not just ones this app created.
+// + contacts read-only (둘 다): 받는사람 자동완성 — 주소록(contacts) +
+//   "자주 주고받은 주소"(contacts.other, Gmail이 자동 수집한 목록).
 export const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/calendar",
   "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/contacts.other.readonly",
 ];
 
 const TOKEN_PATH = join(import.meta.dir, ".data", "token.json");
