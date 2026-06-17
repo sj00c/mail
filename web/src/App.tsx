@@ -1069,11 +1069,70 @@ function textToHtml(text: string): string {
     .replace(/\n/g, "<br>");
 }
 
+// 서명 블록 HTML (`<div class="mail-signature">…`). HTML 서명이 있으면 그대로,
+// 없으면 평문 서명을 줄바꿈 보존해 감싼다. 인라인 이미지(data: URI)는 발송 시
+// dataUrisToCid가 cid 첨부로 변환한다.
+function getSignatureBlockHtml(): string {
+  const sigHtml = getSignatureHtml();
+  const sigText = getSignature();
+  const sig = sigHtml || (sigText ? textToHtml(sigText) : "");
+  return sig ? `<div class="mail-signature">--<br>${sig}</div>` : "";
+}
+
+// 서명/붙여넣기로 본문에 박힌 data:image base64 → cid 인라인 첨부. 이메일
+// 클라이언트는 data: URI 이미지를 막으므로, 발송 직전 multipart/related cid로
+// 옮겨야 모든 수신함에서 보인다. 반환 html은 src가 cid:로 치환된 것.
+let inlineCidSeq = 0;
+function dataUrisToCid(html: string): { html: string; inline: ComposeAttachment[] } {
+  if (!/data:image\//i.test(html)) return { html, inline: [] };
+  const inline: ComposeAttachment[] = [];
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("img").forEach((img) => {
+      const src = img.getAttribute("src") ?? "";
+      const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(src);
+      if (!m) return;
+      const mimeType = m[1].toLowerCase();
+      const data = m[2].replace(/\s/g, "");
+      const cid = `inline-${Date.now().toString(36)}-${inlineCidSeq++}@mail.local`;
+      const ext = (mimeType.split("/")[1] || "png").split("+")[0];
+      inline.push({
+        filename: `image-${inlineCidSeq}.${ext}`,
+        mimeType,
+        data,
+        size: Math.floor((data.length * 3) / 4),
+        contentId: cid,
+      });
+      img.setAttribute("src", `cid:${cid}`);
+    });
+    return { html: doc.body?.innerHTML ?? html, inline };
+  } catch {
+    return { html, inline: [] };
+  }
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
-  const [sig, setSig] = useState(getSignature());
-  const [sigHtml, setSigHtml] = useState(getSignatureHtml());
+  const sigEditorRef = useRef<HTMLDivElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const importedTextRef = useRef<string | null>(null);
+  // 저장된 HTML 서명(없으면 평문을 HTML로). 에디터는 uncontrolled라 1회만 읽는다.
+  const initialSig = useMemo(() => {
+    const html = getSignatureHtml();
+    const text = getSignature();
+    return html || (text ? textToHtml(text) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 붙여넣기/드롭한 이미지는 서명 본문에 인라인으로 박는다 (data: URI → 발송 시 cid).
+  const insertImages = (files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (imgs.length === 0) return;
+    void Promise.all(imgs.map(fileToBase64)).then((list) => {
+      sigEditorRef.current?.focus();
+      for (const im of list) {
+        document.execCommand("insertImage", false, `data:${im.mimeType};base64,${im.data}`);
+      }
+    });
+  };
 
   const importFromGmail = async () => {
     setImportMsg(null);
@@ -1083,11 +1142,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         setImportMsg("Gmail에 저장된 서명이 없습니다.");
         return;
       }
-      const text = htmlToText(html);
-      importedTextRef.current = text;
-      setSig(text);
-      setSigHtml(html);
-      setImportMsg("가져왔습니다 — 이미지·서식은 발송 시 원본 그대로 포함됩니다.");
+      if (sigEditorRef.current) sigEditorRef.current.innerHTML = sanitizeMailHtml(html);
+      setImportMsg("가져왔습니다 — 자유롭게 편집한 뒤 저장하세요.");
     } catch (e) {
       if (e instanceof AuthError) {
         setImportMsg("로그인이 만료되었습니다. 새로고침 후 다시 로그인하세요.");
@@ -1095,6 +1151,24 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         setImportMsg(`가져오기 실패: ${(e as Error).message}`);
       }
     }
+  };
+
+  const save = () => {
+    try {
+      const html = sanitizeMailHtml(sigEditorRef.current?.innerHTML ?? "");
+      const text = htmlToText(html).trim();
+      // 이미지만 있는 서명은 text가 비므로 <img> 유무도 함께 본다.
+      if (text !== "" || /<img\b/i.test(html)) {
+        localStorage.setItem(SIGNATURE_HTML_KEY, html);
+        localStorage.setItem(SIGNATURE_KEY, text);
+      } else {
+        localStorage.removeItem(SIGNATURE_HTML_KEY);
+        localStorage.removeItem(SIGNATURE_KEY);
+      }
+    } catch {
+      // private mode 등: 저장 대상 없음
+    }
+    onClose();
   };
 
   return (
@@ -1107,49 +1181,24 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="muted settings-label">
-          서명 — 발송 시 본문 끝에 자동 추가 (비워두면 사용 안 함)
+          서명 — 글꼴·크기·색·이미지까지. 발송 시 본문 끝에 자동 추가 (비우면 사용 안 함)
         </div>
-        <textarea
-          className="signature-input"
-          placeholder={"예)\n홍길동 드림\n010-0000-0000"}
-          value={sig}
-          onChange={(e) => setSig(e.target.value)}
-        />
-        {sigHtml && (
-          <>
-            <div className="muted settings-label">
-              서식 서명 미리보기 (Gmail 원본 — 발송 시 이 모습 그대로)
-            </div>
-            <div
-              className="signature-preview"
-              // own signature from the user's Gmail settings — trusted content
-              dangerouslySetInnerHTML={{ __html: sigHtml }}
-            />
-          </>
-        )}
+        <div className="signature-editor">
+          <RichEditor
+            editorRef={sigEditorRef}
+            initialHtml={initialSig}
+            onFiles={insertImages}
+            rich
+            placeholder={"예) 홍길동 드림 · 010-0000-0000 · 로고 이미지 삽입 가능"}
+          />
+        </div>
         {importMsg && <div className="muted settings-label">{importMsg}</div>}
         <div className="modal-foot">
           <button className="btn" onClick={() => void importFromGmail()}>
             Gmail 서명 가져오기
           </button>
           <span className="modal-spacer" />
-          <button
-            className="btn primary"
-            onClick={() => {
-              try {
-                localStorage.setItem(SIGNATURE_KEY, sig);
-                // Manual edits after import diverge from the HTML original —
-                // text becomes the single source of truth again.
-                const keepHtml =
-                  sigHtml && sig.trim() === (importedTextRef.current ?? htmlToText(sigHtml)).trim();
-                if (keepHtml) localStorage.setItem(SIGNATURE_HTML_KEY, sigHtml);
-                else localStorage.removeItem(SIGNATURE_HTML_KEY);
-              } catch {
-                // private mode etc: nothing to persist to
-              }
-              onClose();
-            }}
-          >
+          <button className="btn primary" onClick={save}>
             저장
           </button>
         </div>
@@ -2093,26 +2142,79 @@ function RichEditor({
   editorRef,
   initialHtml,
   onFiles,
+  rich,
+  placeholder,
 }: {
   editorRef: React.RefObject<HTMLDivElement>;
   initialHtml: string;
   onFiles: (files: File[]) => void;
+  rich?: boolean; // 폰트·크기·색상·이미지 삽입 툴 노출
+  placeholder?: string;
 }) {
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  // contentEditable은 select/color/파일다이얼로그로 포커스를 뺏기면 caret을 잃는다.
+  // 에디터를 누를/칠 때마다 range를 저장해 두고, 서식 적용 직전 복원한다.
+  const savedRange = useRef<Range | null>(null);
+
   // 마운트 시 1회만 주입 — contentEditable은 uncontrolled로 둔다.
   useEffect(() => {
     if (editorRef.current) editorRef.current.innerHTML = initialHtml;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const saveSel = () => {
+    const sel = window.getSelection?.();
+    if (
+      sel &&
+      sel.rangeCount > 0 &&
+      editorRef.current &&
+      editorRef.current.contains(sel.anchorNode)
+    ) {
+      savedRange.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+  const restoreSel = () => {
+    const sel = window.getSelection?.();
+    if (sel && savedRange.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRange.current);
+    }
+  };
+
   const cmd = (command: string, value?: string) => {
     editorRef.current?.focus();
+    try {
+      // 폰트/크기/색을 <font> 대신 인라인 style로 — 이메일 클라이언트 호환이 낫다.
+      document.execCommand("styleWithCSS", false, "true");
+    } catch {
+      /* 미지원 브라우저는 레거시 태그로 폴백 */
+    }
     document.execCommand(command, false, value);
+  };
+  // 저장된 selection 복원 후 적용 (font/size/color/image 공용)
+  const applyWithSel = (command: string, value: string) => {
+    restoreSel();
+    cmd(command, value);
   };
   const makeLink = () => {
     const sel = window.getSelection?.()?.toString();
     const url = window.prompt("링크 URL:", sel && /^https?:/i.test(sel) ? sel : "https://");
     if (url) cmd("createLink", url);
   };
+  // 본문 인라인 이미지 — data: URI로 삽입하고, 발송 시 dataUrisToCid가 cid 첨부로 옮긴다.
+  const insertInlineImages = (files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (imgs.length === 0) return;
+    void Promise.all(imgs.map(fileToBase64)).then((list) => {
+      restoreSel();
+      editorRef.current?.focus();
+      for (const im of list) {
+        document.execCommand("insertImage", false, `data:${im.mimeType};base64,${im.data}`);
+      }
+      saveSel();
+    });
+  };
+
   // 버튼이 selection을 빼앗지 않게 mousedown 기본동작 차단 후 click에서 실행
   const tool = (
     label: ReactNode,
@@ -2130,25 +2232,118 @@ function RichEditor({
     </button>
   );
 
+  const FONTS: [string, string][] = [
+    ["Arial, sans-serif", "Arial"],
+    ["'Malgun Gothic', sans-serif", "맑은 고딕"],
+    ["'Nanum Gothic', sans-serif", "나눔고딕"],
+    ["Georgia, serif", "Georgia"],
+    ["'Times New Roman', serif", "Times"],
+    ["'Courier New', monospace", "Courier"],
+    ["Verdana, sans-serif", "Verdana"],
+  ];
+  const SIZES: [string, string][] = [
+    ["2", "작게"],
+    ["3", "보통"],
+    ["5", "크게"],
+    ["6", "더 크게"],
+    ["7", "아주 크게"],
+  ];
+
   return (
     <div className="rich-compose">
       <div className="rich-toolbar">
         {tool(<b>B</b>, () => cmd("bold"), "굵게")}
         {tool(<i>I</i>, () => cmd("italic"), "기울임")}
         {tool(<u>U</u>, () => cmd("underline"), "밑줄")}
+        {rich && (
+          <>
+            <span className="rich-sep" />
+            <select
+              className="rich-select"
+              title="글꼴"
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value;
+                e.target.value = "";
+                if (v) applyWithSel("fontName", v);
+              }}
+            >
+              <option value="" disabled>
+                글꼴
+              </option>
+              {FONTS.map(([v, label]) => (
+                <option key={v} value={v} style={{ fontFamily: v }}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="rich-select"
+              title="글자 크기"
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value;
+                e.target.value = "";
+                if (v) applyWithSel("fontSize", v);
+              }}
+            >
+              <option value="" disabled>
+                크기
+              </option>
+              {SIZES.map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="color"
+              className="rich-color"
+              title="글자 색"
+              defaultValue="#202124"
+              onMouseDown={saveSel}
+              onChange={(e) => applyWithSel("foreColor", e.target.value)}
+            />
+          </>
+        )}
         <span className="rich-sep" />
         {tool("• 목록", () => cmd("insertUnorderedList"), "글머리 목록")}
         {tool("1. 목록", () => cmd("insertOrderedList"), "번호 목록")}
         <span className="rich-sep" />
         {tool("🔗", makeLink, "링크")}
+        {rich &&
+          tool(
+            "🖼",
+            () => {
+              saveSel();
+              imgInputRef.current?.click();
+            },
+            "이미지 삽입",
+          )}
         {tool("✕서식", () => cmd("removeFormat"), "서식 지우기")}
+        {rich && (
+          <input
+            ref={imgInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              insertInlineImages(picked);
+            }}
+          />
+        )}
       </div>
       <div
         ref={editorRef}
         className="rich-body"
         contentEditable
         suppressContentEditableWarning
-        data-placeholder="내용을 입력하세요"
+        data-placeholder={placeholder ?? "내용을 입력하세요"}
+        onMouseUp={saveSel}
+        onKeyUp={saveSel}
         onPaste={(e) => {
           const pasted = Array.from(e.clipboardData.files);
           if (pasted.length) {
@@ -2466,11 +2661,9 @@ function Compose({
       html = init?.bodyHtml ? sanitizeMailHtml(init.bodyHtml) : "<div><br></div>";
     } else {
       // 새 메일 / 답장 / 전달: 입력칸 + 서명 + 인용
-      const sigHtml = getSignatureHtml();
-      const sigText = getSignature();
-      const sig = sigHtml || (sigText ? textToHtml(sigText) : "");
-      const sigBlock = sig ? `<br><div class="mail-signature">--<br>${sig}</div>` : "";
-      html = `<div><br></div>${sigBlock}${buildQuotedHtml(init)}`;
+      const sigBlock = getSignatureBlockHtml();
+      const sig = sigBlock ? `<br>${sigBlock}` : "";
+      html = `<div><br></div>${sig}${buildQuotedHtml(init)}`;
     }
     // cid: → blob URL (에디터에서 인라인 이미지가 보이도록)
     return resolveCidSrc(html, cidMaps.current.cidToUrl);
@@ -2494,6 +2687,31 @@ function Compose({
   // The draft being edited can vanish mid-edit (sent/deleted in Gmail web) —
   // after the create-fallback, later saves must target the new draft.
   const [draftId, setDraftId] = useState(init?.draftId);
+
+  // 서명은 새 메일/답장/전달에만 자동 주입된다(드래프트 이어쓰기는 제외).
+  // 작성 중 한 번에 빼거나 다시 넣을 수 있게 토글한다.
+  const hasSig = !init?.draftId && !init?.bodyHtml && !!getSignatureBlockHtml();
+  const [sigOn, setSigOn] = useState(hasSig);
+  const toggleSignature = () => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const existing = ed.querySelector(".mail-signature");
+    if (existing) {
+      const prev = existing.previousSibling;
+      if (prev && prev.nodeName === "BR") prev.remove();
+      existing.remove();
+      setSigOn(false);
+    } else {
+      const block = getSignatureBlockHtml();
+      if (!block) return;
+      const tmp = document.createElement("div");
+      tmp.innerHTML = `<br>${block}`;
+      // 입력칸(첫 자식) 바로 뒤, 인용보다 앞에 되돌린다.
+      const anchor = ed.firstChild ? ed.firstChild.nextSibling : null;
+      for (const node of Array.from(tmp.childNodes)) ed.insertBefore(node, anchor);
+      setSigOn(true);
+    }
+  };
 
   const run = (fn: () => Promise<void>) => {
     setFormErr(null);
@@ -2580,16 +2798,19 @@ function Compose({
   // mode="draft": Drive는 발송 때만 — 임시저장 시 매번 업로드하면 중복 파일이
   // 쌓이므로 분할하지 않고 전부 MIME로 둔다(한도 초과는 assertSendableSize가 차단).
   const composedPayload = (mode: "send" | "draft" = "send") => {
-    // blob URL(미리보기) → cid: 복원 후 위생 처리 → multipart/related 재연결 유지
+    // blob URL(미리보기) → cid: 복원 → 위생 처리 → multipart/related 재연결 유지
     const restored = restoreCidSrc(
       editorRef.current?.innerHTML ?? "",
       cidMaps.current.urlToCid,
     );
-    const html = sanitizeMailHtml(restored);
+    // 서명·붙여넣기로 박힌 data:image → cid 인라인 첨부 (이메일은 data: 이미지를 막음)
+    const { html: cidHtml, inline: sigInline } = dataUrisToCid(restored);
+    const html = sanitizeMailHtml(cidHtml);
+    const allFiles = sigInline.length ? [...files, ...sigInline] : files;
     const { mime, drive } =
       mode === "send"
-        ? partitionAttachments(files, MAX_ATTACH_BYTES)
-        : { mime: files, drive: [] as typeof files };
+        ? partitionAttachments(allFiles, MAX_ATTACH_BYTES)
+        : { mime: allFiles, drive: [] as typeof files };
     return {
       to,
       cc: cc || undefined,
@@ -2727,6 +2948,7 @@ function Compose({
           editorRef={editorRef}
           initialHtml={initialHtml}
           onFiles={addFiles}
+          rich
         />
         {files.some((f) => !f.contentId) && (
           <div className="compose-atts">
@@ -2766,8 +2988,17 @@ function Compose({
           </label>
           <span className="muted attach-hint">
             끌어다 놓기 · 붙여넣기로도 첨부됩니다
-            {getSignature() && " · ✍ 서명 자동 추가"}
           </span>
+          {hasSig && (
+            <button
+              type="button"
+              className={`btn sig-toggle${sigOn ? " on" : ""}`}
+              title={sigOn ? "이 메일에서 서명 빼기" : "서명 다시 넣기"}
+              onClick={toggleSignature}
+            >
+              {sigOn ? "✍ 서명 포함" : "✍ 서명 없음"}
+            </button>
+          )}
           <span className="modal-spacer" />
           <button
             className="btn"

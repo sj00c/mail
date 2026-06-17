@@ -726,16 +726,7 @@ body {
   min-height: 0;
   line-height: 1.65;
 }
-/* 서명 입력 등 보조 textarea는 박스 유지 */
-.modal textarea.signature-input {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 12px;
-}
-.modal textarea.signature-input:focus {
-  border-color: var(--accent);
-  box-shadow: var(--ring);
-}
+/* (서명은 이제 리치 에디터로 편집 — 보조 textarea 스타일 제거됨) */
 .modal-foot {
   display: flex;
   align-items: center;
@@ -1741,6 +1732,33 @@ mark {
   background: var(--border);
   margin: 0 4px;
 }
+.rich-select {
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: #3c4453;
+  font-size: 12.5px;
+  padding: 0 4px;
+  cursor: pointer;
+  max-width: 96px;
+}
+.rich-color {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.rich-color::-webkit-color-swatch-wrapper {
+  padding: 3px;
+}
+.rich-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
 .rich-body {
   flex: 1;
   min-height: 0;
@@ -1789,22 +1807,29 @@ mark {
   font-size: 12px;
   margin: 4px 0 6px;
 }
-.signature-input {
-  min-height: 120px;
-  resize: vertical;
+.signature-editor {
+  margin-bottom: 8px;
+}
+/* 모달 안 서명 에디터는 compose처럼 flex로 늘지 않으니 높이를 직접 준다 */
+.signature-editor .rich-compose {
+  flex: none;
+}
+.signature-editor .rich-body {
+  min-height: 150px;
+  max-height: 280px;
 }
 .attach-hint {
   font-size: 11px;
   align-self: center;
 }
-.signature-preview {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  padding: 10px;
-  margin: 4px 0 8px;
-  max-height: 160px;
-  overflow: auto;
-  font-size: 13px;
+/* 작성창 서명 포함/제외 토글 */
+.sig-toggle {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.sig-toggle.on {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ---- drive ---- */
