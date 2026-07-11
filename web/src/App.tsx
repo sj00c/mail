@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   api,
@@ -675,11 +676,101 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     }
   };
 
+  // ---- 보내기 취소 (undo send) ----
+  // 발송을 N초(설정) 지연 큐에 넣고 토스트로 실행취소/즉시발송을 제공한다.
+  // 실제 api.send는 타이머 만료(또는 지금 보내기) 시에만 나간다.
+  const outboxTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const [outbox, setOutbox] = useState<
+    { key: number; payload: SendPayload; draftId?: string }[]
+  >([]);
+  const removeOutbox = useCallback((key: number) => {
+    const t = outboxTimers.current.get(key);
+    if (t) clearTimeout(t);
+    outboxTimers.current.delete(key);
+    setOutbox((prev) => prev.filter((o) => o.key !== key));
+  }, []);
+  const flushOutbox = useCallback(
+    (key: number, payload: SendPayload, draftId?: string) => {
+      removeOutbox(key);
+      void guard(async () => {
+        await api.send(payload);
+        // 발송 성공 후에만 원본 드래프트 정리 (실패 시 드래프트가 복구 수단).
+        if (draftId) await api.deleteDraft(draftId).catch(() => {});
+        load(true);
+        void refreshLabels();
+      });
+    },
+    [guard, load, refreshLabels, removeOutbox],
+  );
+  const queueSend = useCallback(
+    (payload: SendPayload, draftId?: string) => {
+      const key = Date.now() + Math.random();
+      outboxTimers.current.set(
+        key,
+        setTimeout(() => flushOutbox(key, payload, draftId), getUndoSec() * 1000),
+      );
+      setOutbox((prev) => [...prev, { key, payload, draftId }]);
+    },
+    [flushOutbox],
+  );
+  const cancelSend = useCallback(
+    (key: number) => {
+      const o = outbox.find((x) => x.key === key);
+      removeOutbox(key);
+      if (!o) return;
+      const p = o.payload;
+      // 작성창을 발송 직전 상태 그대로 복원한다 (첨부 포함).
+      openCompose({
+        to: p.to,
+        cc: p.cc,
+        bcc: p.bcc,
+        subject: p.subject,
+        from: p.from,
+        threadId: p.threadId,
+        inReplyTo: p.inReplyTo,
+        references: p.references,
+        draftId: o.draftId,
+        bodyHtml: p.bodyHtml ?? textToHtml(p.body),
+        attachments: [...(p.attachments ?? []), ...(p.driveAttachments ?? [])].map(
+          (a) => ({
+            filename: a.filename,
+            mimeType: a.mimeType,
+            data: a.data,
+            contentId: (a as { contentId?: string }).contentId,
+            size: Math.floor((a.data.length * 3) / 4),
+          }),
+        ),
+      });
+    },
+    [outbox, openCompose, removeOutbox],
+  );
+
+  // ---- 메일 → 일정 만들기 ----
+  const [evEditor, setEvEditor] = useState<{ initial: Partial<EventInput> } | null>(
+    null,
+  );
+  const createEventFromMail = useCallback(
+    (m: MessageFull) => {
+      void guard(async () => {
+        // 캘린더 뷰를 아직 안 열었으면 목록이 비어 있다 — 여기서 채운다.
+        if (calendars.length === 0) setCalendars(await api.calendars());
+        setEvEditor({
+          initial: {
+            summary: m.subject || "(제목 없음)",
+            description: `메일에서 만든 일정\n보낸사람: ${m.from}\n받은날짜: ${new Date(m.date).toLocaleString("ko-KR")}\n\n${m.snippet}`,
+          },
+        });
+      });
+    },
+    [guard, calendars.length],
+  );
+
   // Shared between the normal reader pane and the search slide-over.
   const readerEl = selected ? (
     <Reader
       id={selected.id}
       threadId={selected.threadId}
+      onCreateEvent={createEventFromMail}
       me={email}
       inTrash={!query && activeLabel === "TRASH"}
       guard={guard}
@@ -990,9 +1081,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               ))}
               {loading && <div className="empty">불러오는 중…</div>}
               {nextToken && !loading && (
-                <button className="btn more" onClick={() => load(false)}>
-                  더 보기
-                </button>
+                <>
+                  {/* 스크롤이 바닥 근처에 오면 자동으로 다음 페이지 로드 */}
+                  <MoreSentinel onMore={() => load(false)} />
+                  <button className="btn more" onClick={() => load(false)}>
+                    더 보기
+                  </button>
+                </>
               )}
             </section>
 
@@ -1012,6 +1107,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           key={composeKey}
           init={composeInit}
           sendAs={acctSettings?.sendAs}
+          onQueue={queueSend}
           onClose={() => {
             setComposeOpen(false);
             setComposeInit(undefined); // drop retained attachments (up to 25MB)
@@ -1032,6 +1128,37 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       )}
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+
+      {evEditor && (
+        <EventEditModal
+          calendars={calendars.filter(
+            (c) => c.accessRole === "owner" || c.accessRole === "writer",
+          )}
+          initial={evEditor.initial}
+          onLogout={bgLogout}
+          onClose={() => setEvEditor(null)}
+          onSaved={() => setEvEditor(null)}
+        />
+      )}
+
+      {outbox.length > 0 && (
+        <div className="undo-wrap">
+          {outbox.map((o) => (
+            <div key={o.key} className="undo-toast">
+              <span>메일을 곧 보냅니다…</span>
+              <button
+                className="undo-btn"
+                onClick={() => flushOutbox(o.key, o.payload, o.draftId)}
+              >
+                지금 보내기
+              </button>
+              <button className="undo-btn primary" onClick={() => cancelSend(o.key)}>
+                실행취소
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1111,6 +1238,49 @@ function dataUrisToCid(html: string): { html: string; inline: ComposeAttachment[
   }
 }
 
+// ---- 기본 글꼴 / 보내기 취소 설정 ----
+// 글꼴은 수신자 클라이언트에 그대로 전달되므로 web-safe(윈도·맥 공통 설치)
+// 스택만 노출한다 — 웹폰트는 메일에서 렌더 보장이 없다.
+const FONT_FAMILY_KEY = "mail.font.family";
+const FONT_SIZE_KEY = "mail.font.size";
+const UNDO_KEY = "mail.undo.sec";
+const FONT_FAMILIES = [
+  { label: "글꼴: 기본", css: "" },
+  { label: "고딕 (맑은 고딕)", css: "'Malgun Gothic','Apple SD Gothic Neo',sans-serif" },
+  { label: "명조 (바탕)", css: "Batang,AppleMyungjo,'Nanum Myeongjo',serif" },
+  { label: "Arial", css: "Arial,Helvetica,sans-serif" },
+  { label: "Georgia", css: "Georgia,'Times New Roman',serif" },
+  { label: "Verdana", css: "Verdana,Geneva,sans-serif" },
+  { label: "고정폭 (Courier)", css: "'Courier New',Courier,monospace" },
+] as const;
+const FONT_SIZES = [
+  { label: "크기: 기본", css: "" },
+  { label: "작게 (12px)", css: "12px" },
+  { label: "보통 (14px)", css: "14px" },
+  { label: "크게 (16px)", css: "16px" },
+  { label: "아주 크게 (18px)", css: "18px" },
+] as const;
+
+function getDefaultFont(): { family: string; size: string } {
+  try {
+    return {
+      family: localStorage.getItem(FONT_FAMILY_KEY) ?? "",
+      size: localStorage.getItem(FONT_SIZE_KEY) ?? "",
+    };
+  } catch {
+    return { family: "", size: "" };
+  }
+}
+
+function getUndoSec(): number {
+  try {
+    const v = Number(localStorage.getItem(UNDO_KEY) ?? "5");
+    return Number.isFinite(v) && v >= 0 ? Math.min(v, 30) : 5;
+  } catch {
+    return 5;
+  }
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const sigEditorRef = useRef<HTMLDivElement>(null);
   const [importMsg, setImportMsg] = useState<string | null>(null);
@@ -1133,6 +1303,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       }
     });
   };
+  const initialFont = useMemo(getDefaultFont, []);
+  const [fontFamily, setFontFamily] = useState(initialFont.family);
+  const [fontSize, setFontSize] = useState(initialFont.size);
+  const [undoSec, setUndoSec] = useState(String(getUndoSec()));
 
   const importFromGmail = async () => {
     setImportMsg(null);
@@ -1165,6 +1339,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         localStorage.removeItem(SIGNATURE_HTML_KEY);
         localStorage.removeItem(SIGNATURE_KEY);
       }
+      if (fontFamily) localStorage.setItem(FONT_FAMILY_KEY, fontFamily);
+      else localStorage.removeItem(FONT_FAMILY_KEY);
+      if (fontSize) localStorage.setItem(FONT_SIZE_KEY, fontSize);
+      else localStorage.removeItem(FONT_SIZE_KEY);
+      localStorage.setItem(UNDO_KEY, undoSec);
     } catch {
       // private mode 등: 저장 대상 없음
     }
@@ -1193,6 +1372,48 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           />
         </div>
         {importMsg && <div className="muted settings-label">{importMsg}</div>}
+        <div className="muted settings-label">
+          기본 글꼴 — 새로 쓰는 메일 본문에 적용 (수신자에게도 이 글꼴로 보입니다)
+        </div>
+        <div className="settings-row">
+          <select
+            className="ev-input"
+            value={fontFamily}
+            onChange={(e) => setFontFamily(e.target.value)}
+          >
+            {FONT_FAMILIES.map((f) => (
+              <option key={f.label} value={f.css}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="ev-input"
+            value={fontSize}
+            onChange={(e) => setFontSize(e.target.value)}
+          >
+            {FONT_SIZES.map((s) => (
+              <option key={s.label} value={s.css}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="muted settings-label">
+          보내기 취소 — 발송을 잠시 붙잡아 두고 실행취소 버튼을 제공
+        </div>
+        <div className="settings-row">
+          <select
+            className="ev-input"
+            value={undoSec}
+            onChange={(e) => setUndoSec(e.target.value)}
+          >
+            <option value="0">사용 안 함 (즉시 발송)</option>
+            <option value="5">5초</option>
+            <option value="10">10초</option>
+            <option value="20">20초</option>
+          </select>
+        </div>
         <div className="modal-foot">
           <button className="btn" onClick={() => void importFromGmail()}>
             Gmail 서명 가져오기
@@ -1391,6 +1612,7 @@ function Reader({
   onPatched,
   onRemoved,
   onReply,
+  onCreateEvent,
   onClose,
 }: {
   id: string;
@@ -1401,6 +1623,7 @@ function Reader({
   onPatched: (id: string, patch: Partial<MessageSummary>) => void;
   onRemoved: (id: string, scope: "inbox" | "trash" | "all") => void;
   onReply: (init: ComposeInit) => void;
+  onCreateEvent: (m: MessageFull) => void;
   onClose: () => void;
 }) {
   const [msg, setMsg] = useState<MessageFull | null>(null);
@@ -1498,6 +1721,13 @@ function Reader({
             }
           >
             ↪ 전달
+          </button>
+          <button
+            className="btn"
+            title="이 메일 내용으로 캘린더 일정 만들기"
+            onClick={() => onCreateEvent(msg)}
+          >
+            📅 일정
           </button>
           {thread && thread.length > 1 && (
             <button
@@ -1759,6 +1989,24 @@ const ThreadMessage = memo(function ThreadMessage({
     }
     return map;
   }, [m]);
+  // 첨부 → Drive 저장 진행/결과 표시 (메시지 단위).
+  const [driveMsg, setDriveMsg] = useState<string | null>(null);
+  const saveToDrive = (a: {
+    id: string;
+    filename: string;
+    mimeType: string;
+  }) => {
+    setDriveMsg(`Drive에 저장 중: ${a.filename}…`);
+    void guard(async () => {
+      try {
+        await api.attachmentToDrive(m.id, a.id, a.filename, a.mimeType);
+        setDriveMsg(`✅ Drive에 저장됨: ${a.filename}`);
+      } catch (e) {
+        setDriveMsg(null); // 에러는 guard 배너로 — 낙관 문구는 지운다
+        throw e;
+      }
+    });
+  };
   return (
     <div className="thread-msg">
       <div className="reader-meta">
@@ -1780,18 +2028,28 @@ const ThreadMessage = memo(function ThreadMessage({
           {m.attachments
             .filter((a) => !a.contentId) // inline images render in the body
             .map((a) => (
-              <a
-                key={a.id}
-                className="chip"
-                href={api.attachmentUrl(m.id, a.id, a.filename)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  void guard(() => saveAttachment(m.id, a));
-                }}
-              >
-                📎 {a.filename} ({Math.round(a.size / 1024)}KB)
-              </a>
+              <span key={a.id} className="chip">
+                <a
+                  className="chip-link"
+                  href={api.attachmentUrl(m.id, a.id, a.filename)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void guard(() => saveAttachment(m.id, a));
+                  }}
+                >
+                  📎 {a.filename} ({Math.round(a.size / 1024)}KB)
+                </a>
+                <button
+                  type="button"
+                  className="chip-x"
+                  title="내 Drive에 저장"
+                  onClick={() => saveToDrive(a)}
+                >
+                  ☁️
+                </button>
+              </span>
             ))}
+          {driveMsg && <div className="muted att-drive-msg">{driveMsg}</div>}
         </div>
       )}
       <div className="reader-body">
@@ -2031,6 +2289,9 @@ type ComposeInit = {
   draftId?: string; // editing this Gmail draft: update on save, delete on send
 };
 
+// api.send가 받는 발송 페이로드 — 보내기 취소 큐가 그대로 들고 있는다.
+type SendPayload = Parameters<typeof api.send>[0];
+
 // 답장/전달 시 에디터에 까는 인용 HTML. 원본 HTML을 그대로 blockquote에 넣어
 // 서식·인라인 이미지(cid:)를 보존한다.
 function buildQuotedHtml(init?: ComposeInit): string {
@@ -2144,12 +2405,14 @@ function RichEditor({
   onFiles,
   rich,
   placeholder,
+  bodyStyle,
 }: {
   editorRef: React.RefObject<HTMLDivElement>;
   initialHtml: string;
   onFiles: (files: File[]) => void;
   rich?: boolean; // 폰트·크기·색상·이미지 삽입 툴 노출
   placeholder?: string;
+  bodyStyle?: React.CSSProperties; // 기본 글꼴 미리보기 (발송 HTML과 시각 일치)
 }) {
   const imgInputRef = useRef<HTMLInputElement>(null);
   // contentEditable은 select/color/파일다이얼로그로 포커스를 뺏기면 caret을 잃는다.
@@ -2214,7 +2477,6 @@ function RichEditor({
       saveSel();
     });
   };
-
   // 버튼이 selection을 빼앗지 않게 mousedown 기본동작 차단 후 click에서 실행
   const tool = (
     label: ReactNode,
@@ -2232,70 +2494,49 @@ function RichEditor({
     </button>
   );
 
-  const FONTS: [string, string][] = [
-    ["Arial, sans-serif", "Arial"],
-    ["'Malgun Gothic', sans-serif", "맑은 고딕"],
-    ["'Nanum Gothic', sans-serif", "나눔고딕"],
-    ["Georgia, serif", "Georgia"],
-    ["'Times New Roman', serif", "Times"],
-    ["'Courier New', monospace", "Courier"],
-    ["Verdana, sans-serif", "Verdana"],
-  ];
-  const SIZES: [string, string][] = [
-    ["2", "작게"],
-    ["3", "보통"],
-    ["5", "크게"],
-    ["6", "더 크게"],
-    ["7", "아주 크게"],
-  ];
 
   return (
     <div className="rich-compose">
       <div className="rich-toolbar">
+        <select
+          className="rich-select"
+          title="글꼴 (선택 영역 또는 이후 입력에 적용)"
+          value=""
+          onMouseDown={saveSel}
+          onChange={(e) => {
+            if (e.target.value) applyWithSel("fontName", e.target.value);
+          }}
+        >
+          {FONT_FAMILIES.map((f) => (
+            <option key={f.label} value={f.css} disabled={!f.css}>
+              {f.label.replace("글꼴: 기본", "글꼴")}
+            </option>
+          ))}
+        </select>
+        <select
+          className="rich-select"
+          title="글자 크기 (선택 영역 또는 이후 입력에 적용)"
+          value=""
+          onMouseDown={saveSel}
+          onChange={(e) => {
+            if (e.target.value) applyWithSel("fontSize", e.target.value);
+          }}
+        >
+          <option value="" disabled>
+            크기
+          </option>
+          <option value="1">작게</option>
+          <option value="3">보통</option>
+          <option value="5">크게</option>
+          <option value="7">아주 크게</option>
+        </select>
+        <span className="rich-sep" />
         {tool(<b>B</b>, () => cmd("bold"), "굵게")}
         {tool(<i>I</i>, () => cmd("italic"), "기울임")}
         {tool(<u>U</u>, () => cmd("underline"), "밑줄")}
         {rich && (
           <>
             <span className="rich-sep" />
-            <select
-              className="rich-select"
-              title="글꼴"
-              defaultValue=""
-              onChange={(e) => {
-                const v = e.target.value;
-                e.target.value = "";
-                if (v) applyWithSel("fontName", v);
-              }}
-            >
-              <option value="" disabled>
-                글꼴
-              </option>
-              {FONTS.map(([v, label]) => (
-                <option key={v} value={v} style={{ fontFamily: v }}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <select
-              className="rich-select"
-              title="글자 크기"
-              defaultValue=""
-              onChange={(e) => {
-                const v = e.target.value;
-                e.target.value = "";
-                if (v) applyWithSel("fontSize", v);
-              }}
-            >
-              <option value="" disabled>
-                크기
-              </option>
-              {SIZES.map(([v, label]) => (
-                <option key={v} value={v}>
-                  {label}
-                </option>
-              ))}
-            </select>
             <input
               type="color"
               className="rich-color"
@@ -2339,6 +2580,7 @@ function RichEditor({
       <div
         ref={editorRef}
         className="rich-body"
+        style={bodyStyle}
         contentEditable
         suppressContentEditableWarning
         data-placeholder={placeholder ?? "내용을 입력하세요"}
@@ -2574,13 +2816,18 @@ function Compose({
   onClose,
   onSaved,
   onSent,
+  onQueue,
 }: {
   init?: ComposeInit;
   sendAs?: SendAsInfo[];
   onClose: () => void;
   onSaved: () => void;
   onSent: () => void;
+  // 보내기 취소 큐 — 있으면(그리고 대기시간>0) 발송을 부모 큐에 위임한다.
+  onQueue?: (payload: SendPayload, draftId?: string) => void;
 }) {
+  // 기본 글꼴 (설정) — 에디터 표시와 발송 HTML 래퍼에 동일하게 적용.
+  const defaultFont = useMemo(getDefaultFont, []);
   // 보내는 주소: 검증된 별칭이 둘 이상일 때만 선택 UI가 뜬다. Gmail은
   // 미검증 별칭의 From을 기본 주소로 강제 재작성하므로 verified만 노출.
   const aliases = (sendAs ?? []).filter((s) => s.verified);
@@ -2803,9 +3050,21 @@ function Compose({
       editorRef.current?.innerHTML ?? "",
       cidMaps.current.urlToCid,
     );
+    let html = sanitizeMailHtml(restored);
+    // 기본 글꼴: 본문 전체를 인라인 스타일 래퍼로 감싼다 (수신자에게도 적용).
+    // 드래프트 재저장 시 중복 래핑 방지 — 이미 래퍼로 시작하면 건너뛴다.
+    if (
+      (defaultFont.family || defaultFont.size) &&
+      !/^<div class="mail-font-wrap"/.test(html.trim())
+    ) {
+      const style =
+        (defaultFont.family ? `font-family:${defaultFont.family};` : "") +
+        (defaultFont.size ? `font-size:${defaultFont.size};` : "");
+      html = `<div class="mail-font-wrap" style="${style}">${html}</div>`;
+    }
     // 서명·붙여넣기로 박힌 data:image → cid 인라인 첨부 (이메일은 data: 이미지를 막음)
-    const { html: cidHtml, inline: sigInline } = dataUrisToCid(restored);
-    const html = sanitizeMailHtml(cidHtml);
+    const { html: cidHtml, inline: sigInline } = dataUrisToCid(html);
+    html = sanitizeMailHtml(cidHtml);
     const allFiles = sigInline.length ? [...files, ...sigInline] : files;
     const { mime, drive } =
       mode === "send"
@@ -2840,10 +3099,17 @@ function Compose({
 
   const send = () =>
     run(async () => {
+      assertInlineFits();
+      const payload = composedPayload("send");
+      if (onQueue && getUndoSec() > 0) {
+        // 지연 발송 큐로 위임 — 드래프트 정리도 실제 발송 시점에 한다.
+        onQueue(payload, draftId);
+        onSent();
+        return;
+      }
       setSending(true);
       try {
-        assertInlineFits();
-        await api.send(composedPayload("send"));
+        await api.send(payload);
         if (draftId) {
           // Post-send cleanup only — a failed draft delete must never make a
           // SENT mail look failed (re-click would double-send).
@@ -2949,6 +3215,10 @@ function Compose({
           initialHtml={initialHtml}
           onFiles={addFiles}
           rich
+          bodyStyle={{
+            fontFamily: defaultFont.family || undefined,
+            fontSize: defaultFont.size || undefined,
+          }}
         />
         {files.some((f) => !f.contentId) && (
           <div className="compose-atts">
@@ -3777,9 +4047,12 @@ function SearchResults({
             </>
           )}
           {hasMore && !loading && (
-            <button className="btn more" onClick={onMore}>
-              더 보기
-            </button>
+            <>
+              <MoreSentinel onMore={onMore} />
+              <button className="btn more" onClick={onMore}>
+                더 보기
+              </button>
+            </>
           )}
         </section>
         <section className="search-col">
@@ -3813,6 +4086,8 @@ function SearchResults({
                 allDay: d.allDay,
                 location: d.location,
                 description: d.description,
+                attendees: d.attendees.map((a) => a.email).filter(Boolean),
+                reminder: d.reminderDefault ? "default" : (d.reminderMinutes ?? "none"),
               },
               eventId: d.id,
             });
@@ -3874,10 +4149,18 @@ function CalendarView({
     (key: string, events: CalEvent[]) => setDayModal({ key, events }),
     [],
   );
-  // 날짜 칸 클릭 → 그 날짜로 종일 새 일정 모달 (에디터에서 시간 지정으로 전환 가능)
+  // 날짜 칸 클릭 → 그 날짜의 시간 일정(09:00–10:00)으로 새 일정 모달.
+  // 종일이 기본이면 시간 입력이 아예 안 보여 "시간 설정이 안 된다"로 읽힌다 —
+  // 시간 일정을 기본으로 열고, 종일은 체크박스로 전환.
   const createOnDay = useCallback(
     (dayKey: string) =>
-      setEditor({ initial: { allDay: true, start: dayKey, end: dayKey } }),
+      setEditor({
+        initial: {
+          allDay: false,
+          start: `${dayKey}T09:00`,
+          end: `${dayKey}T10:00`,
+        },
+      }),
     [],
   );
   const reload = useCallback(() => {
@@ -3955,6 +4238,8 @@ function CalendarView({
                 allDay: d.allDay,
                 location: d.location,
                 description: d.description,
+                attendees: d.attendees.map((a) => a.email).filter(Boolean),
+                reminder: d.reminderDefault ? "default" : (d.reminderMinutes ?? "none"),
               },
               eventId: d.id,
             });
@@ -4110,6 +4395,23 @@ function MonthGrid({
     return out;
   }, [startMs, endMs]);
   const todayKey = dateKey(new Date());
+  // 휠/트랙패드 스크롤로 이전·다음 달 이동. 트랙패드 관성 델타가 한 번에
+  // 여러 달을 넘기지 않게 누적 임계값 + 쿨다운으로 한 틱당 한 달만 이동.
+  const wheelAcc = useRef(0);
+  const wheelLockUntil = useRef(0);
+  const onWheel = (e: ReactWheelEvent) => {
+    const now = Date.now();
+    if (now < wheelLockUntil.current) {
+      wheelAcc.current = 0;
+      return;
+    }
+    wheelAcc.current += e.deltaY;
+    if (Math.abs(wheelAcc.current) < 100) return;
+    const dir = wheelAcc.current > 0 ? 1 : -1;
+    wheelAcc.current = 0;
+    wheelLockUntil.current = now + 450;
+    setCursor((c) => addMonths(c, dir));
+  };
 
   return (
     <>
@@ -4138,7 +4440,7 @@ function MonthGrid({
       ) : !events ? (
         <div className="empty">불러오는 중…</div>
       ) : (
-        <div className="month-grid">
+        <div className="month-grid" onWheel={onWheel}>
           {["일", "월", "화", "수", "목", "금", "토"].map((w) => (
             <div key={w} className="month-dow">
               {w}
@@ -4291,6 +4593,12 @@ function AgendaList({
             ))}
           </div>
         ))
+      )}
+      {events && !err && days < 365 && (
+        // 바닥에 닿으면 조회 범위를 자동 확장 (7→30→90→365일).
+        <MoreSentinel
+          onMore={() => setDays((d) => (d < 30 ? 30 : d < 90 ? 90 : 365))}
+        />
       )}
       </div>
     </>
@@ -4829,6 +5137,26 @@ function EventEditModal({
   const [description, setDescription] = useState(initial.description ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [attendees, setAttendees] = useState((initial.attendees ?? []).join(", "));
+  const [reminder, setReminder] = useState<string>(
+    initial.reminder === undefined || initial.reminder === "default"
+      ? "default"
+      : initial.reminder === "none"
+        ? "none"
+        : String(initial.reminder),
+  );
+  const [meet, setMeet] = useState(false);
+  // 참석자 자동완성 — 작성창과 같은 연락처 캐시를 공유한다.
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  useEffect(() => {
+    let live = true;
+    void loadContactsOnce().then((cs) => {
+      if (live && cs.length) setContacts(cs);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const toggleAllDay = (v: boolean) => {
     if (v === allDay) return;
@@ -4854,6 +5182,12 @@ function EventEditModal({
     setBusy(true);
     setErr(null);
     try {
+      const attToks = splitAddrList(attendees);
+      const badTok = attToks.find((t) => !/[^\s@]+@[^\s@]+\.[^\s@]+/.test(parseAddr(t).email));
+      if (badTok) {
+        setBusy(false);
+        return setErr(`참석자 주소가 올바르지 않습니다: ${badTok}`);
+      }
       const body: EventInput = {
         calendarId,
         summary,
@@ -4862,6 +5196,10 @@ function EventEditModal({
         description,
         start: allDay ? start : new Date(start).toISOString(),
         end: allDay ? addDays(end, 1) : new Date(end).toISOString(),
+        attendees: attToks.map((t) => parseAddr(t).email),
+        reminder:
+          reminder === "default" ? "default" : reminder === "none" ? "none" : Number(reminder),
+        createMeet: meet || undefined,
       };
       if (eventId) await api.updateEvent(eventId, body);
       else await api.createEvent(body);
@@ -4939,6 +5277,39 @@ function EventEditModal({
             value={location}
             onChange={(e) => setLocation(e.target.value)}
           />
+          <RecipientField
+            label="참석자"
+            value={attendees}
+            onChange={setAttendees}
+            suggestions={contacts}
+          />
+          <div className="ev-times">
+            <select
+              className="ev-input"
+              title="알림 (팝업)"
+              value={reminder}
+              onChange={(e) => setReminder(e.target.value)}
+            >
+              <option value="default">알림: 캘린더 기본</option>
+              <option value="none">알림 없음</option>
+              <option value="0">일정 시작 시</option>
+              <option value="10">10분 전</option>
+              <option value="30">30분 전</option>
+              <option value="60">1시간 전</option>
+              <option value="1440">1일 전</option>
+            </select>
+            <label
+              className="ev-allday"
+              title="저장 시 Google Meet 화상회의 링크가 생성됩니다"
+            >
+              <input
+                type="checkbox"
+                checked={meet}
+                onChange={(e) => setMeet(e.target.checked)}
+              />
+              Meet 추가
+            </label>
+          </div>
           <textarea
             className="ev-input"
             placeholder="설명 (선택)"
@@ -4966,4 +5337,36 @@ function EventEditModal({
       </div>
     </div>
   );
+}
+
+// 목록 바닥 근처에 들어오면 onMore를 호출하는 무한 스크롤 센티널.
+// "더 보기" 버튼은 폴백/접근성용으로 그대로 두고 그 위에 붙는다.
+function MoreSentinel({ onMore }: { onMore: () => void }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const onMoreRef = useRef(onMore);
+  onMoreRef.current = onMore;
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // root를 실제 스크롤 컨테이너(.list / .agenda-scroll …)로 잡는다 —
+    // viewport root는 조상 overflow 클리핑 때문에 rootMargin 선로딩이 죽는다.
+    let root: Element | null = null;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const s = getComputedStyle(p);
+      if (/(auto|scroll)/.test(s.overflowY)) {
+        root = p;
+        break;
+      }
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((en) => en.isIntersecting)) onMoreRef.current();
+      },
+      // 바닥 도달 직전에 미리 로드해 체감 끊김을 없앤다.
+      { root, rootMargin: "300px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return <div ref={ref} aria-hidden />;
 }

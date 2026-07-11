@@ -253,6 +253,21 @@ api.get("/messages/:id/attachments/:aid", async (c) => {
     },
   });
 });
+// 첨부파일을 내 Drive에 저장 (Gmail → Drive, 브라우저 왕복 없이 서버에서 직행).
+api.post("/messages/:id/attachments/:aid/drive", async (c) => {
+  const { filename, mimeType } = (await c.req.json()) as {
+    filename?: string;
+    mimeType?: string;
+  };
+  if (!filename) return c.json({ error: "filename required" }, 400);
+  const buf = await getAttachment(c.req.param("id"), c.req.param("aid"));
+  const file = await uploadFile({
+    name: filename,
+    mimeType: mimeType || "application/octet-stream",
+    data: buf.toString("base64"),
+  });
+  return c.json(file);
+});
 
 api.post("/messages/:id/modify", async (c) => {
   const body = await c.req.json<{ add?: string[]; remove?: string[] }>();

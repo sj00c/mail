@@ -54,6 +54,8 @@ export type CalEventDetail = CalEvent & {
   organizer: string;
   hangoutLink: string;
   attendees: { name: string; email: string; status: string }[];
+  reminderDefault: boolean; // true → 캘린더 기본 알림 사용
+  reminderMinutes: number | null; // useDefault=false일 때 첫 popup 알림 (없으면 null)
 };
 
 /** Full detail for a single event (lazy-loaded on click). */
@@ -85,6 +87,13 @@ export async function getEvent(
       email: a.email ?? "",
       status: a.responseStatus ?? "",
     })),
+    reminderDefault: e.reminders?.useDefault !== false,
+    reminderMinutes:
+      e.reminders?.useDefault === false
+        ? (e.reminders.overrides?.find((o) => o.method === "popup")?.minutes ??
+          e.reminders.overrides?.[0]?.minutes ??
+          null)
+        : null,
   };
 }
 
@@ -96,10 +105,13 @@ export type EventInput = {
   allDay: boolean;
   location?: string;
   description?: string;
+  attendees?: string[]; // 참석자 이메일 — 지정 시 초대 메일 발송(sendUpdates)
+  reminder?: "default" | "none" | number; // popup 알림 (분 전); 생략 = 변경 없음
+  createMeet?: boolean; // true → Google Meet 회의 링크 생성
 };
 
 function toEventBody(i: EventInput): calendar_v3.Schema$Event {
-  return {
+  const body: calendar_v3.Schema$Event = {
     summary: i.summary,
     // null, not undefined: events.patch ignores absent fields, so clearing
     // 장소/설명 in the edit form must send an explicit null to erase them.
@@ -114,13 +126,45 @@ function toEventBody(i: EventInput): calendar_v3.Schema$Event {
       ? { date: i.end.slice(0, 10), dateTime: null }
       : { dateTime: new Date(i.end).toISOString(), date: null },
   };
+  // undefined → attendees 필드 자체를 안 보냄(patch: 기존 유지). 배열이면 그대로
+  // 교체 — 편집 폼은 항상 전체 목록을 보내므로 삭제도 이 경로로 반영된다.
+  if (i.attendees !== undefined) {
+    body.attendees = i.attendees.map((email) => ({ email }));
+  }
+  if (i.reminder !== undefined) {
+    body.reminders =
+      i.reminder === "default"
+        ? { useDefault: true, overrides: [] }
+        : {
+            useDefault: false,
+            overrides:
+              i.reminder === "none"
+                ? []
+                : [{ method: "popup", minutes: i.reminder }],
+          };
+  }
+  return body;
 }
 
 export async function createEvent(i: EventInput): Promise<{ id: string }> {
   const cal = await api();
   const res = await cal.events.insert({
     calendarId: i.calendarId,
-    requestBody: toEventBody(i),
+    // conferenceDataVersion=1 없이는 conferenceData가 조용히 무시된다.
+    conferenceDataVersion: i.createMeet ? 1 : undefined,
+    // 참석자가 있으면 Google이 초대 메일을 보내게 한다 (Gmail 웹과 동일).
+    sendUpdates: i.attendees?.length ? "all" : undefined,
+    requestBody: {
+      ...toEventBody(i),
+      conferenceData: i.createMeet
+        ? {
+            createRequest: {
+              requestId: crypto.randomUUID(),
+              conferenceSolutionKey: { type: "hangoutsMeet" },
+            },
+          }
+        : undefined,
+    },
   });
   return { id: res.data.id ?? "" };
 }
@@ -133,7 +177,21 @@ export async function updateEvent(
   await cal.events.patch({
     calendarId: i.calendarId,
     eventId,
-    requestBody: toEventBody(i),
+    conferenceDataVersion: i.createMeet ? 1 : undefined,
+    sendUpdates: i.attendees?.length ? "all" : undefined,
+    requestBody: {
+      ...toEventBody(i),
+      // 수정 시엔 명시 요청(createMeet)일 때만 회의를 새로 만든다 —
+      // 기존 회의 링크는 건드리지 않는다.
+      conferenceData: i.createMeet
+        ? {
+            createRequest: {
+              requestId: crypto.randomUUID(),
+              conferenceSolutionKey: { type: "hangoutsMeet" },
+            },
+          }
+        : undefined,
+    },
   });
 }
 

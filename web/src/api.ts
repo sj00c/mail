@@ -49,6 +49,8 @@ export type CalEventDetail = CalEvent & {
   organizer: string;
   hangoutLink: string;
   attendees: { name: string; email: string; status: string }[];
+  reminderDefault: boolean;
+  reminderMinutes: number | null;
 };
 
 export type EventInput = {
@@ -59,6 +61,9 @@ export type EventInput = {
   allDay: boolean;
   location?: string;
   description?: string;
+  attendees?: string[]; // 참석자 이메일 — 지정 시 초대 메일 발송
+  reminder?: "default" | "none" | number; // popup 알림 (분 전)
+  createMeet?: boolean; // Google Meet 회의 링크 생성
 };
 
 export type Calendar = {
@@ -277,6 +282,11 @@ export const api = {
   accountSettings: () => req<AccountSettings>("/api/settings/account"),
   attachmentUrl: (id: string, aid: string, filename: string) =>
     `/api/messages/${id}/attachments/${aid}?filename=${encodeURIComponent(filename)}`,
+  attachmentToDrive: (id: string, aid: string, filename: string, mimeType: string) =>
+    req<DriveFile>(`/api/messages/${id}/attachments/${aid}/drive`, {
+      method: "POST",
+      body: JSON.stringify({ filename, mimeType }),
+    }),
   // ---- drive ----
   driveQuota: () => req<DriveQuota>("/api/drive/quota"),
   driveFiles: (params: { folderId?: string; q?: string; pageToken?: string } = {}) => {
