@@ -192,9 +192,11 @@ export const api = {
     if (params.label) u.set("label", params.label);
     if (params.pageToken) u.set("pageToken", params.pageToken);
     if (params.maxResults) u.set("maxResults", String(params.maxResults));
-    return req<{ messages: MessageSummary[]; nextPageToken?: string }>(
-      `/api/messages?${u.toString()}`,
-    );
+    return req<{
+      messages: MessageSummary[];
+      nextPageToken?: string;
+      resultSizeEstimate: number;
+    }>(`/api/messages?${u.toString()}`);
   },
   thread: (id: string) => req<MessageFull[]>(`/api/threads/${id}`),
   modify: (id: string, body: { add?: string[]; remove?: string[] }) =>
@@ -214,6 +216,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids }),
     }),
+  prepareBulkAll: (body: {
+    q?: string;
+    label?: string;
+    action: "read" | "unread" | "trash";
+  }) =>
+    req<{ operationId: string; count: number; expiresAt: number }>(
+      "/api/messages/bulkAll/prepare",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+  confirmBulkAll: (operationId: string) =>
+    req<{ matched: number; succeeded: number; failed: number }>(
+      "/api/messages/bulkAll/confirm",
+      {
+        method: "POST",
+        body: JSON.stringify({ operationId }),
+      },
+    ),
   send: (body: {
     to: string;
     cc?: string;

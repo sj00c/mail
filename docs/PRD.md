@@ -65,6 +65,34 @@
 
 **이번에 안 한 것 (명시적 보류)**: Google Tasks 패널 — `tasks` 스코프 추가로 재로그인(사용자 OAuth 동의)이 필요해 이 세션에서 검증 불가. 서명의 Gmail 쪽 역동기화(`sendAs.patch`)도 동일하게 `gmail.settings.basic` 스코프 필요 — 앱 내 서명은 로컬 저장으로 완결.
 
+## 2.6 Gmail 대화·일괄처리 정비 (2026-07-13)
+
+| 문제 | 해결 | 검증 |
+|---|---|---|
+| 대화의 최신 메일마다 과거 인용이 반복되어 상위 메일 아래에 하위 메일이 전부 붙어 보임 | 대화 뷰와 답장/단일 전달은 각 메시지의 직접 작성 본문만 추출. 인용만 있는 실제 전달 메일은 원문 fallback으로 내용 유실 방지 | 실계정 2개 메일 스레드에서 카드 2개·중복 인용 제거 확인 |
+| 전체 전달이 하나의 큰 본문과 `---` 수준의 경계로 합쳐짐 | `forwardThread`를 단일 전달과 분리하고, 보낸사람·날짜·제목·받는사람을 가진 독립 `<section>` 카드로 구성 | 작성창에서 카드 2개, 제목 2개, 단일 전달 wrapper 0개, `---` separator 0개 확인 |
+| 서로 다른 원본 메일의 inline image CID 충돌 가능 | 전체 전달 시 메시지별 UUID CID namespace 생성, HTML `cid:`와 MIME Content-ID를 함께 rewrite | 코드 경로/typecheck/build 검증 |
+| send-as 별칭에서 보낸 메일의 답장이 본인에게 향할 수 있음 | 기본 주소 + 모든 verified send-as 주소를 own-address set으로 사용, Reply/Reply-all에서 본인 주소 전부 제외 | 타입·브라우저 회귀 확인 |
+| 읽음/안읽음이 굵기 차이로만 표현됨 | 목록 pill + 대화 카드 텍스트 상태(`읽음`/`안읽음`) 추가 | 브라우저에서 읽음 20/안읽음 5 상태 렌더 확인 |
+| 전체 선택이 현재 로드된 25개에만 적용됨 | `전체메일` 가상 뷰 + Gmail식 2단계 전체 선택. Prepare 단계가 전 페이지 ID를 먼저 고정·중복 제거하고 정확한 개수로 확인한 뒤 Confirm에서만 실행 | 실계정 전용 검색으로 2개 prepare→unread→trash, matched/succeeded=2·failed=0 확인 |
+| 대량 휴지통 이동의 영구삭제/쿼터 위험 | `batchDelete` 금지, recoverable `messages.trash`만 10개 동시 실행. 읽음은 1000개 단위 batchModify. 작업은 계정·5분 TTL에 바인딩하고 1회 소비, 성공/실패 개수 반환 | API E2E + 작업 후 검색 결과 0건 확인 |
+
+### Gmail 사용자 불편 조사 → 후보
+
+공식 문서와 2026년 Gmail 사용자 커뮤니티에서 반복되는 불편을 제품 후보로 정리했다.
+
+1. **긴 대화의 순서/맥락 파악** — 최신 메일이 아래에 있고 과거 인용이 중첩되어 답장 대상과 현재 내용을 찾기 어려움. 이번 릴리스에서 직접 본문 카드화까지 해결; 남은 후보는 대화 타임라인/메시지 접기.
+2. **검색 결과의 정확성 불신** — Gmail은 메시지에 라벨을 붙이지만 대화 단위 결과를 보여, `-label:` 같은 제외 검색도 같은 스레드의 다른 메시지 때문에 다시 나타날 수 있음. 후보: 검색 결과에 “왜 매칭됐는지”와 실제 매칭 메시지 표시.
+3. **스레드 전체 첨부 모아보기 부재** — 오래된 대화에서 첨부가 어느 답장에 있는지 찾기 어려움. 후보: 대화 상단의 첨부 갤러리 + 파일명/종류 필터 + 일괄 Drive 저장.
+4. **라벨이 많아질수록 탐색 불편** — 모바일 Gmail의 라벨 선택기에 검색이 없어 수백 개 라벨 사용자가 긴 목록을 스크롤. 후보: 라벨 검색·최근 라벨·드래그 적용.
+5. **저장공간 정리의 불투명성** — 큰 첨부 메일을 지워도 Drive/Photos 또는 휴지통 때문에 용량이 바로 줄지 않아 혼란. 후보: Gmail/Drive 용량 분해 + `larger:`/`older_than:` 기반 정리 도우미.
+6. **모바일/웹 검색 결과 차이** — 동기화·캐시 영향으로 오래된 메일이나 정확 문구를 모바일에서 못 찾았다는 보고. 이 앱은 서버 API 검색 결과와 raw Gmail query를 그대로 표시하되, 향후 `in:anywhere` 토글과 Spam/Trash 포함 여부를 명시.
+
+근거:
+- Google Gmail Help — 대화 보기: https://support.google.com/mail/answer/5900
+- Google Gmail Help — 검색 연산자와 메시지/대화 차이: https://support.google.com/mail/answer/7190
+- Google Gmail Help — 검색 기본값은 Spam/Trash 제외: https://support.google.com/mail/answer/6593
+- Gmail Community — 스레드 첨부 전체보기 요구: https://support.google.com/mail/thread/422934286
 ## 3. 최적화 백로그 (우선순위순)
 
 이미 적용돼 있는 것: 응답 gzip(`compress()`), 캘린더 목록 5분 캐시, 프론트 SWR 캐시(`calCache` 30s), 목록 부분 패치(전체 리로드 회피), 요청 시퀀스 가드, `fields` 파라미터로 응답 축소.

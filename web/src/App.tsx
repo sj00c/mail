@@ -30,6 +30,15 @@ import {
 } from "./api.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
+const SYSTEM_LABEL_NAMES: Record<string, string> = {
+  ALL: "전체메일",
+  INBOX: "받은편지함",
+  STARRED: "별표",
+  SENT: "보낸편지함",
+  DRAFT: "임시보관함",
+  SPAM: "스팸",
+  TRASH: "휴지통",
+};
 
 // 안정된 빈 배열 — 선택이 없을 때 checkedIds가 매번 새 []를 반환하지 않도록.
 const EMPTY_IDS: string[] = [];
@@ -160,6 +169,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const messagesRef = useRef<MessageSummary[]>([]);
   messagesRef.current = messages; // stable lookup for row-click routing
   const [nextToken, setNextToken] = useState<string | undefined>();
+  // Gmail resultSizeEstimate covers the active label/search across every page.
+  // Used for Gmail-style "select every result", not just rendered rows.
+  const [totalEstimate, setTotalEstimate] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -178,6 +190,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   // 목록 체크박스로 고른 메일 id (일괄 처리용). shift-범위선택용 마지막 인덱스.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const lastCheckedIdx = useRef<number | null>(null);
+  const [allResultsSelected, setAllResultsSelected] = useState(false);
+  const [bulkAllBusy, setBulkAllBusy] = useState(false);
   const [calLoading, setCalLoading] = useState(false);
   const [calErr, setCalErr] = useState<string | null>(null);
 
@@ -405,7 +419,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         try {
           try {
             const res = await api.messages({
-              label: queryRef.current ? undefined : labelRef.current,
+              label:
+                queryRef.current || labelRef.current === "ALL"
+                  ? undefined
+                  : labelRef.current,
               q: queryRef.current || undefined,
               pageToken: reset ? undefined : nextTokenRef.current,
             });
@@ -418,6 +435,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               return [...prev, ...res.messages.filter((m) => !seen.has(m.id))];
             });
             setNextToken(res.nextPageToken);
+            setTotalEstimate(res.resultSizeEstimate);
           } catch (e) {
             // A superseded request's failure is as irrelevant as its result —
             // don't raise an error banner over a correctly loaded newer list.
@@ -444,6 +462,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   // ---- 목록 체크박스 선택 + 일괄 처리 ----
   // 체크박스 토글. shift-클릭이면 직전 클릭 행과의 사이를 한꺼번에 켜고/끈다.
   const onToggleCheck = useCallback((id: string, shiftKey: boolean) => {
+    setAllResultsSelected(false);
     const list = messagesRef.current;
     const idx = list.findIndex((m) => m.id === id);
     setSelectedIds((prev) => {
@@ -477,6 +496,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   );
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
+    setAllResultsSelected(false);
     lastCheckedIdx.current = null;
   }, []);
 
@@ -529,6 +549,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     setMessages([]);
     setNextToken(undefined);
     setSelectedIds(new Set()); // 라벨/검색 전환 시 선택 해제
+    setAllResultsSelected(false);
     lastCheckedIdx.current = null;
     load(true);
   }, [activeLabel, query, load]);
@@ -618,12 +639,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     .filter((l) => l.type === "user")
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // ---- 일괄 처리 액션 (목록 체크박스 선택분 대상) ----
+  // ---- 일괄 처리 액션 (현재 페이지 또는 현재 보기 전체) ----
   const inTrashView = !query && activeLabel === "TRASH";
   const isInboxView = !query && activeLabel === "INBOX";
   const isStarredView = !query && activeLabel === "STARRED";
   const checkedSet = useMemo(() => new Set(checkedIds), [checkedIds]);
-  // 선택분이 모두 별표 상태면 버튼은 '해제'로 동작 (Gmail식 토글).
   const allStarred = useMemo(
     () =>
       checkedIds.length > 0 &&
@@ -631,6 +651,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     [messages, checkedSet, checkedIds],
   );
   const allChecked = messages.length > 0 && checkedIds.length === messages.length;
+  const activeLabelName =
+    SYSTEM_LABEL_NAMES[activeLabel] ||
+    labels.find((l) => l.id === activeLabel)?.name ||
+    activeLabel;
+  const bulkScope = query ? `“${query}” 검색 결과` : activeLabelName;
 
   const runBulk = (fn: (ids: string[], set: Set<string>) => Promise<void>) =>
     guard(async () => {
@@ -640,16 +665,59 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       clearSelection();
       void refreshLabels();
     });
-  const bulkRead = (read: boolean) =>
+
+  const runBulkAll = (action: "read" | "unread" | "trash") =>
+    guard(async () => {
+      const verb =
+        action === "read"
+          ? "읽음 처리"
+          : action === "unread"
+            ? "안읽음 처리"
+            : "휴지통으로 이동";
+      setBulkAllBusy(true);
+      try {
+        // Phase 1 freezes the exact ID set; the count shown in the destructive
+        // confirmation is exact (resultSizeEstimate above is only approximate).
+        const prepared = await api.prepareBulkAll({
+          q: query || undefined,
+          label:
+            query || activeLabel === "ALL" ? undefined : activeLabel,
+          action,
+        });
+        const prompt =
+          action === "trash"
+            ? `${bulkScope}의 모든 메일 ${prepared.count.toLocaleString()}개를 휴지통으로 이동합니다.\n새로 도착하는 메일은 포함되지 않습니다. 계속할까요?`
+            : `${bulkScope}의 모든 메일 ${prepared.count.toLocaleString()}개를 ${verb}할까요?`;
+        if (!confirm(prompt)) return;
+
+        const res = await api.confirmBulkAll(prepared.operationId);
+        const failed = res.failed ? ` · 실패 ${res.failed.toLocaleString()}개` : "";
+        setError(
+          `${bulkScope}: ${res.succeeded.toLocaleString()}개 메일 ${verb} 완료${failed}`,
+        );
+        setAllResultsSelected(false);
+        clearSelection();
+        load(true);
+        void refreshLabels();
+      } finally {
+        setBulkAllBusy(false);
+      }
+    });
+
+  const bulkRead = (read: boolean) => {
+    if (allResultsSelected) {
+      runBulkAll(read ? "read" : "unread");
+      return;
+    }
     runBulk(async (ids, set) => {
       await api.batchModify(ids, read ? { remove: ["UNREAD"] } : { add: ["UNREAD"] });
       patchMany(set, { unread: !read });
     });
+  };
   const bulkStar = () =>
     runBulk(async (ids, set) => {
       const add = !allStarred;
       await api.batchModify(ids, add ? { add: ["STARRED"] } : { remove: ["STARRED"] });
-      // 별표 뷰에서 해제하면 그 행은 목록에서 빠진다.
       if (!add && isStarredView) removeMany(set);
       else toggleLabelMany(set, "STARRED", add);
     });
@@ -658,17 +726,23 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       await api.batchModify(ids, { remove: ["INBOX"] });
       removeMany(set);
     });
-  const bulkTrash = () =>
+  const bulkTrash = () => {
+    if (allResultsSelected) {
+      runBulkAll("trash");
+      return;
+    }
     runBulk(async (ids, set) => {
       await api.batchTrash(ids);
       removeMany(set);
     });
+  };
   const bulkRestore = () =>
     runBulk(async (ids, set) => {
       await api.batchModify(ids, { add: ["INBOX"], remove: ["TRASH"] });
       removeMany(set);
     });
   const toggleAll = () => {
+    setAllResultsSelected(false);
     if (allChecked) clearSelection();
     else {
       setSelectedIds(new Set(messages.map((m) => m.id)));
@@ -771,7 +845,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       id={selected.id}
       threadId={selected.threadId}
       onCreateEvent={createEventFromMail}
-      me={email}
+      ownAddresses={[
+        email,
+        ...(acctSettings?.sendAs ?? []).map((s) => s.email),
+      ]}
       inTrash={!query && activeLabel === "TRASH"}
       guard={guard}
       onPatched={(id, patch) => {
@@ -944,6 +1021,15 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           </button>
           {view === "mail" && (
             <div className="nav-sub">
+              <LabelRow
+                label={{ id: "ALL", name: "전체메일", type: "system", unread: 0 }}
+                active={!query && activeLabel === "ALL"}
+                onClick={() => {
+                  setQuery("");
+                  setSearchInput("");
+                  setActiveLabel("ALL");
+                }}
+              />
               {systemLabels.map((l) => (
                 <LabelRow
                   key={l.id}
@@ -1019,7 +1105,23 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                   />
                   {checkedIds.length > 0 ? (
                     <>
-                      <span className="bulk-count">{checkedIds.length}개 선택</span>
+                      <span className="bulk-count">
+                        {allResultsSelected
+                          ? `${bulkScope} 전체 선택`
+                          : `${checkedIds.length}개 선택`}
+                      </span>
+                      {!allResultsSelected &&
+                        allChecked &&
+                        !inTrashView &&
+                        (nextToken || totalEstimate > messages.length) && (
+                          <button
+                            type="button"
+                            className="bulk-all-link"
+                            onClick={() => setAllResultsSelected(true)}
+                          >
+                            {bulkScope}의 모든 메일 선택
+                          </button>
+                        )}
                       <span className="bulk-actions">
                         {inTrashView ? (
                           <button className="btn sm" onClick={bulkRestore}>
@@ -1027,22 +1129,38 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                           </button>
                         ) : (
                           <>
-                            <button className="btn sm" onClick={() => bulkRead(true)}>
+                            <button
+                              className="btn sm"
+                              disabled={bulkAllBusy}
+                              onClick={() => bulkRead(true)}
+                            >
                               ✉️ 읽음
                             </button>
-                            <button className="btn sm" onClick={() => bulkRead(false)}>
+                            <button
+                              className="btn sm"
+                              disabled={bulkAllBusy}
+                              onClick={() => bulkRead(false)}
+                            >
                               📩 안읽음
                             </button>
-                            <button className="btn sm" onClick={bulkStar}>
-                              {allStarred ? "★ 별표 해제" : "☆ 별표"}
-                            </button>
-                            {isInboxView && (
-                              <button className="btn sm" onClick={bulkArchive}>
-                                📥 보관
-                              </button>
+                            {!allResultsSelected && (
+                              <>
+                                <button className="btn sm" onClick={bulkStar}>
+                                  {allStarred ? "★ 별표 해제" : "☆ 별표"}
+                                </button>
+                                {isInboxView && (
+                                  <button className="btn sm" onClick={bulkArchive}>
+                                    📥 보관
+                                  </button>
+                                )}
+                              </>
                             )}
-                            <button className="btn sm danger" onClick={bulkTrash}>
-                              🗑 삭제
+                            <button
+                              className="btn sm danger"
+                              disabled={bulkAllBusy}
+                              onClick={bulkTrash}
+                            >
+                              🗑 휴지통
                             </button>
                           </>
                         )}
@@ -1429,6 +1547,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 }
 
 const LABEL_ICONS: Record<string, string> = {
+  ALL: "📨",
   INBOX: "📥",
   STARRED: "⭐",
   SENT: "📤",
@@ -1446,10 +1565,7 @@ function LabelRow({
   active: boolean;
   onClick: () => void;
 }) {
-  const name =
-    { INBOX: "받은편지함", STARRED: "별표", SENT: "보낸편지함", DRAFT: "임시보관함", SPAM: "스팸", TRASH: "휴지통" }[
-      label.id
-    ] ?? label.name;
+  const name = SYSTEM_LABEL_NAMES[label.id] ?? label.name;
   return (
     <button className={`label-row ${active ? "active" : ""}`} onClick={onClick}>
       <span className="label-name">
@@ -1591,6 +1707,13 @@ const MessageRow = memo(function MessageRow({
       <span className="msg-main">
         <span className="msg-top">
           <span className="msg-from">{addr.name}</span>
+          <span
+            className={`msg-read-state ${m.unread ? "unread" : "read"}`}
+            title={m.unread ? "안읽은 메일" : "읽은 메일"}
+          >
+            <span className="msg-read-dot" />
+            {m.unread ? "안읽음" : "읽음"}
+          </span>
           <span className="msg-date">{label}</span>
         </span>
         <span className="msg-subject">
@@ -1606,7 +1729,7 @@ const MessageRow = memo(function MessageRow({
 function Reader({
   id,
   threadId,
-  me,
+  ownAddresses,
   inTrash,
   guard,
   onPatched,
@@ -1617,7 +1740,7 @@ function Reader({
 }: {
   id: string;
   threadId: string;
-  me: string;
+  ownAddresses: string[];
   inTrash: boolean;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onPatched: (id: string, patch: Partial<MessageSummary>) => void;
@@ -1661,6 +1784,10 @@ function Reader({
             onPatched(m.id, { unread: false });
             if (cancelled) return;
             setMsg((prev) => (prev ? { ...prev, unread: false } : prev));
+            setThread((prev) =>
+              prev?.map((tm) => (tm.id === m.id ? { ...tm, unread: false } : tm)) ??
+              prev,
+            );
           } catch (e) {
             if (!cancelled && e instanceof AuthError) {
               void guard(() => Promise.reject(e)); // route to logout
@@ -1692,10 +1819,10 @@ function Reader({
       <div className="reader-head">
         <h2>{msg.subject || "(제목 없음)"}</h2>
         <div className="reader-actions">
-          <button className="btn" onClick={() => onReply(buildReplyInit(msg, me, false))}>
+          <button className="btn" onClick={() => onReply(buildReplyInit(msg, ownAddresses, false))}>
             ↩ 답장
           </button>
-          <button className="btn" onClick={() => onReply(buildReplyInit(msg, me, true))}>
+          <button className="btn" onClick={() => onReply(buildReplyInit(msg, ownAddresses, true))}>
             ↩↩ 전체답장
           </button>
           <button
@@ -1710,7 +1837,7 @@ function Reader({
                 onReply({
                   subject: fwdSubject(msg.subject),
                   forward: true,
-                  quoteHtml: msg.bodyHtml || textToHtml(msg.bodyText || msg.snippet || ""),
+                  quoteHtml: directMessageHtml(msg),
                   quoteFrom: msg.from,
                   quoteDate: msg.date,
                   quoteTo: msg.to,
@@ -1735,27 +1862,34 @@ function Reader({
               title="이 대화의 모든 메시지를 시간순으로 묶어 전달"
               onClick={() =>
                 guard(async () => {
-                  // 첨부는 스레드 전체에서 수집. cid가 겹치면(드물지만 메시지가
-                  // 다르면 가능) 먼저 온 것을 유지 — 본문 cid: 참조를 메시지별로
-                  // 다시 쓰지 않는 한 구분할 방법이 없다.
-                  const all = await Promise.all(
-                    thread.flatMap((tm) =>
-                      tm.attachments.map((a) => downloadAttachment(tm.id, a)),
-                    ),
+                  // Content-IDs are scoped to one source message. Namespace and
+                  // rewrite each message before combining, or equal CIDs from two
+                  // replies can display the wrong inline image.
+                  const forwarded = await Promise.all(
+                    thread.map(async (tm, index) => {
+                      const downloaded = await Promise.all(
+                        tm.attachments.map((a) => downloadAttachment(tm.id, a)),
+                      );
+                      const cidMap = new Map<string, string>();
+                      const attachments = downloaded.map((a) => {
+                        if (!a.contentId) return a;
+                        const next = `fwd-${index}-${crypto.randomUUID()}@mail.local`;
+                        cidMap.set(a.contentId, next);
+                        return { ...a, contentId: next };
+                      });
+                      return {
+                        message: tm,
+                        bodyHtml: rewriteCidRefs(directMessageHtml(tm), cidMap),
+                        attachments,
+                      };
+                    }),
                   );
-                  const seenCid = new Set<string>();
-                  const attachments = all.filter((a) => {
-                    if (!a.contentId) return true;
-                    if (seenCid.has(a.contentId)) return false;
-                    seenCid.add(a.contentId);
-                    return true;
-                  });
                   onReply({
                     subject: fwdSubject(msg.subject),
-                    forward: true,
-                    quoteHtml: threadQuoteHtml(thread),
+                    forwardThread: true,
+                    quoteHtml: threadQuoteHtml(forwarded),
                     quoteSubject: msg.subject,
-                    attachments,
+                    attachments: forwarded.flatMap((f) => f.attachments),
                   });
                 })
               }
@@ -1804,6 +1938,11 @@ function Reader({
                   remove: wasUnread ? ["UNREAD"] : [],
                 });
                 setMsg((prev) => (prev ? { ...prev, unread: !wasUnread } : prev));
+                setThread((prev) =>
+                  prev?.map((tm) =>
+                    tm.id === id ? { ...tm, unread: !wasUnread } : tm,
+                  ) ?? prev,
+                );
                 onPatched(id, { unread: !wasUnread });
               })
             }
@@ -1890,36 +2029,121 @@ function fwdSubject(s: string): string {
   return /^\s*(fwd?|forward):/i.test(s) ? s : `Fwd: ${s}`;
 }
 
-// 전체 전달: 스레드의 모든 메시지를 시간순으로, 메시지별 보낸사람/날짜 헤더를
-// 붙여 하나의 인용 HTML로 조립한다. sanitize는 buildQuotedHtml(forward)이
-// 전체에 대해 한 번 수행하므로 여기서는 조립만 한다.
-function threadQuoteHtml(msgs: MessageFull[]): string {
+/**
+ * Keep only this message's own contribution, without reply history already
+ * represented by the other cards in the conversation. If stripping would
+ * remove everything (a mail whose real content is itself a forward), retain
+ * the original so no actual message content is lost.
+ */
+function directMessageHtml(m: MessageFull): string {
+  const original = m.bodyHtml || textToHtml(m.bodyText || m.snippet || "");
+  try {
+    const doc = new DOMParser().parseFromString(original, "text/html");
+    for (const root of [...doc.querySelectorAll(QUOTE_ROOT_SEL)]) {
+      const prev = root.previousElementSibling;
+      const prevText = (prev?.textContent ?? "").trim();
+      if (
+        prev &&
+        /(?:wrote:|작성:|보낸 사람:|from:)\s*$/i.test(prevText) &&
+        prevText.length < 500
+      ) {
+        prev.remove();
+      }
+      root.remove();
+    }
+
+    // Some clients use a literal separator instead of a quote container.
+    for (const block of [...doc.body.querySelectorAll("div,p,pre")]) {
+      const text = (block.textContent ?? "").trim();
+      if (
+        /^(?:-{2,}\s*)?(?:original message|forwarded message|원본 메시지|전달된 메시지)(?:\s*-{2,})?$/i.test(
+          text,
+        )
+      ) {
+        let node: ChildNode | null = block;
+        while (node) {
+          const next: ChildNode | null = node.nextSibling;
+          node.remove();
+          node = next;
+        }
+        break;
+      }
+    }
+
+    const direct = doc.body.innerHTML.trim();
+    const meaningful = (doc.body.textContent ?? "").replace(/\s+/g, "").length > 0;
+    return meaningful || /<img\b/i.test(direct) ? direct : original;
+  } catch {
+    return original;
+  }
+}
+
+function directMessageText(m: MessageFull): string {
+  const text = m.bodyText || m.snippet || "";
+  const marker =
+    /^\s*(?:On .{1,500}wrote:|.{1,500}님이 작성:|(?:-{2,}\s*)?(?:Original Message|Forwarded Message|원본 메시지|전달된 메시지)(?:\s*-{2,})?)\s*$/im;
+  const at = text.search(marker);
+  const direct = (at >= 0 ? text.slice(0, at) : text).trim();
+  return direct || text;
+}
+
+function rewriteCidRefs(html: string, cidMap: Map<string, string>): string {
+  if (cidMap.size === 0) return html;
+  return html.replace(/cid:([^"' >)]+)/gi, (whole, raw: string) => {
+    let cid = raw;
+    try {
+      cid = decodeURIComponent(raw);
+    } catch {
+      // malformed escape — use the raw CID
+    }
+    const next = cidMap.get(cid.replace(/^<|>$/g, ""));
+    return next ? `cid:${next}` : whole;
+  });
+}
+
+// 전체 전달: 각 메일의 직접 작성한 본문만 독립 카드로 조립한다.
+// 각 메일에 내장된 과거 인용까지 다시 합치면 같은 대화가 N번씩 중첩된다.
+function threadQuoteHtml(
+  msgs: { message: MessageFull; bodyHtml: string }[],
+): string {
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return msgs
-    .map((m) => {
-      const addr = parseAddr(m.from);
-      const when = new Date(m.date).toLocaleString("ko-KR");
-      const body = m.bodyHtml || textToHtml(m.bodyText || m.snippet || "");
-      return (
-        `<div style="margin:0 0 20px">` +
-        `<div style="font-size:12.5px;line-height:1.7;color:#5f6368;` +
-        `border-bottom:1px solid #e3e7ee;padding-bottom:6px;margin-bottom:10px">` +
-        `<b>${esc(addr.name)}</b> &lt;${esc(addr.email)}&gt; · ${esc(when)}<br>` +
-        `받는사람: ${esc(m.to)}${m.cc ? `<br>참조: ${esc(m.cc)}` : ""}</div>` +
-        `${body}</div>`
-      );
-    })
-    .join("");
+  return (
+    `<div class="mail-fwd-thread" style="margin-top:16px">` +
+    `<div style="font-size:12px;font-weight:700;letter-spacing:.3px;color:#5f6368;margin-bottom:10px">전달된 대화 · ${msgs.length}개 메일</div>` +
+    msgs
+      .map(({ message: m, bodyHtml }, index) => {
+        const addr = parseAddr(m.from);
+        const when = new Date(m.date).toLocaleString("ko-KR");
+        const body = bodyHtml;
+        return (
+          `<section style="border:1px solid #dfe3eb;border-radius:10px;overflow:hidden;margin:0 0 12px;background:#fff">` +
+          `<div style="background:#f6f8fb;border-bottom:1px solid #e3e7ee;padding:10px 12px;font-size:12.5px;line-height:1.65;color:#5f6368">` +
+          `<div style="font-weight:700;color:#202124">${index + 1}. ${esc(addr.name || addr.email)} &lt;${esc(addr.email)}&gt;</div>` +
+          `<div>${esc(when)}</div>` +
+          `<div>받는사람: ${esc(m.to)}${m.cc ? `<br>참조: ${esc(m.cc)}` : ""}</div>` +
+          `<div>제목: ${esc(m.subject || "(제목 없음)")}</div>` +
+          `</div>` +
+          `<div style="padding:12px 14px">${body}</div>` +
+          `</section>`
+        );
+      })
+      .join("") +
+    `</div>`
+  );
 }
 
 // Reply / reply-all targets:
 // - own sent mail → continue with the original recipients, not yourself
 // - otherwise honor Reply-To over From
 // - reply-all: everyone else (minus me and the To target), comma-safe split
-function buildReplyInit(msg: MessageFull, me: string, all: boolean): ComposeInit {
-  const meL = me.toLowerCase();
-  const fromMe = parseAddr(msg.from).email.toLowerCase() === meL;
+function buildReplyInit(
+  msg: MessageFull,
+  ownAddresses: string[],
+  all: boolean,
+): ComposeInit {
+  const own = new Set(ownAddresses.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  const fromMe = own.has(parseAddr(msg.from).email.toLowerCase());
   const to = (fromMe ? msg.to : msg.replyTo || msg.from).trim();
   let cc: string | undefined;
   if (all) {
@@ -1930,7 +2154,7 @@ function buildReplyInit(msg: MessageFull, me: string, all: boolean): ComposeInit
     const rest = [...splitAddrList(msg.to), ...splitAddrList(msg.cc || "")].filter(
       (tok) => {
         const e = parseAddr(tok).email.toLowerCase();
-        if (!e || e === meL || toEmails.has(e) || seen.has(e)) return false;
+        if (!e || own.has(e) || toEmails.has(e) || seen.has(e)) return false;
         seen.add(e);
         return true;
       },
@@ -1945,7 +2169,7 @@ function buildReplyInit(msg: MessageFull, me: string, all: boolean): ComposeInit
     inReplyTo: msg.rfc822MsgId || undefined,
     references: replyReferences(msg),
     // 원본 HTML 보존 — 없으면 평문을 HTML로 감싸 인용
-    quoteHtml: msg.bodyHtml || textToHtml(msg.bodyText || msg.snippet || ""),
+    quoteHtml: directMessageHtml(msg),
     quoteFrom: msg.from,
     quoteDate: msg.date,
   };
@@ -2022,6 +2246,11 @@ const ThreadMessage = memo(function ThreadMessage({
         <div className="muted">받는사람: {m.to}</div>
         {m.cc && <div className="muted">참조: {m.cc}</div>}
         <div className="muted">{new Date(m.date).toLocaleString("ko-KR")}</div>
+        <span
+          className={`thread-read-state ${m.unread ? "unread" : "read"}`}
+        >
+          {m.unread ? "● 안읽음" : "○ 읽음"}
+        </span>
       </div>
       {m.attachments.some((a) => !a.contentId) && (
         <div className="attachments">
@@ -2054,9 +2283,9 @@ const ThreadMessage = memo(function ThreadMessage({
       )}
       <div className="reader-body">
         {m.bodyHtml ? (
-          <HtmlBody html={m.bodyHtml} id={m.id} cidUrls={cidUrls} onComposeTo={onComposeTo} />
+          <HtmlBody html={directMessageHtml(m)} id={m.id} cidUrls={cidUrls} onComposeTo={onComposeTo} />
         ) : (
-          <TextBody text={m.bodyText || m.snippet} onComposeTo={onComposeTo} />
+          <TextBody text={directMessageText(m)} onComposeTo={onComposeTo} />
         )}
       </div>
     </div>
@@ -2283,6 +2512,7 @@ type ComposeInit = {
   quoteTo?: string;
   quoteSubject?: string;
   forward?: boolean; // 전달이면 인용을 "전달된 메일" 헤더 형식으로
+  forwardThread?: boolean; // 전체 대화 전달 — 독립 카드 HTML을 그대로 사용
   from?: string; // 드래프트 이어쓰기 시 원래 보내는 주소(별칭) 복원용
   attachments?: ComposeAttachment[];
   bodyHtml?: string; // 드래프트 이어쓰기 — 저장된 HTML 그대로
@@ -2311,6 +2541,9 @@ function buildQuotedHtml(init?: ComposeInit): string {
   // 위생 처리 필수 — 받은 메일의 원본 HTML이 에디터(메인 문서)에 innerHTML로
   // 들어가므로 <img onerror> 류가 마운트 즉시 실행되는 걸 막는다. 전달은 인라인
   // 이미지를 재첨부하므로 cid: 유지, 답장은 재첨부 안 하므로 cid: 이미지 제거.
+  if (init.forwardThread) {
+    return `<br>${sanitizeMailHtml(init.quoteHtml)}`;
+  }
   if (init.forward) {
     const safe = sanitizeMailHtml(init.quoteHtml);
     const rows = [
@@ -3523,6 +3756,13 @@ function MailCard({
       <span className="scard-main">
         <span className="scard-top">
           <span className="scard-from">{highlightText(addr.name, terms)}</span>
+          <span
+            className={`msg-read-state ${m.unread ? "unread" : "read"}`}
+            title={m.unread ? "안읽은 메일" : "읽은 메일"}
+          >
+            <span className="msg-read-dot" />
+            {m.unread ? "안읽음" : "읽음"}
+          </span>
           <span className="scard-date">{listDateLabel(m.date)}</span>
         </span>
         <span className="scard-title">
@@ -4931,7 +5171,7 @@ function htmlToText(html: string): string {
     doc.querySelectorAll("style,script").forEach((n) => n.remove());
     doc.querySelectorAll("br").forEach((n) => n.replaceWith("\n"));
     doc.body
-      ?.querySelectorAll("p,div,li,tr,h1,h2,h3,h4,h5,h6,blockquote,table")
+      ?.querySelectorAll("p,div,section,li,tr,h1,h2,h3,h4,h5,h6,blockquote,table")
       .forEach((n) => n.append("\n"));
     const text = doc.body?.textContent ?? "";
     return text

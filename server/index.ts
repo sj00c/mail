@@ -25,6 +25,8 @@ import {
   modifyMessage,
   batchModifyMessages,
   batchTrashMessages,
+  prepareBulkAllMessages,
+  confirmBulkAllMessages,
   sendMessage,
   trashMessage,
 } from "./gmail.ts";
@@ -295,6 +297,30 @@ api.post("/messages/batchTrash", async (c) => {
   const body = await c.req.json<{ ids?: string[] }>();
   await batchTrashMessages(body.ids ?? []);
   return c.json({ ok: true });
+});
+
+api.post("/messages/bulkAll/prepare", async (c) => {
+  const body = await c.req.json<{
+    q?: string;
+    label?: string;
+    action?: "read" | "unread" | "trash";
+  }>();
+  if (!body.action || !["read", "unread", "trash"].includes(body.action)) {
+    return c.json({ error: "action must be read, unread, or trash" }, 400);
+  }
+  return c.json(
+    await prepareBulkAllMessages({
+      q: body.q?.trim() || undefined,
+      labelIds: body.label ? [body.label] : undefined,
+      action: body.action,
+    }),
+  );
+});
+
+api.post("/messages/bulkAll/confirm", async (c) => {
+  const body = await c.req.json<{ operationId?: string }>();
+  if (!body.operationId) return c.json({ error: "operationId required" }, 400);
+  return c.json(await confirmBulkAllMessages(body.operationId));
 });
 
 api.post("/send", async (c) => {

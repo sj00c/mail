@@ -152,12 +152,18 @@ export async function listMessages(opts: {
   labelIds?: string[];
   pageToken?: string;
   maxResults?: number;
-}): Promise<{ messages: MessageSummary[]; nextPageToken?: string }> {
+}): Promise<{
+  messages: MessageSummary[];
+  nextPageToken?: string;
+  resultSizeEstimate: number;
+}> {
   const g = await api();
   const list = await g.users.messages.list({
     userId: "me",
     q: opts.q,
     labelIds: opts.labelIds,
+    includeSpamTrash:
+      opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH"),
     pageToken: opts.pageToken,
     maxResults: opts.maxResults ?? 25,
   });
@@ -188,6 +194,7 @@ export async function listMessages(opts: {
   return {
     messages: messages.filter((m): m is MessageSummary => m !== null),
     nextPageToken: list.data.nextPageToken ?? undefined,
+    resultSizeEstimate: list.data.resultSizeEstimate ?? messages.length,
   };
 }
 
@@ -748,6 +755,116 @@ export async function batchTrashMessages(ids: string[]): Promise<void> {
   await Promise.all(
     ids.map((id) => g.users.messages.trash({ userId: "me", id })),
   );
+}
+
+export type BulkAllAction = "read" | "unread" | "trash";
+
+type PreparedBulk = {
+  account: string;
+  ids: string[];
+  action: BulkAllAction;
+  expiresAt: number;
+};
+const preparedBulks = new Map<string, PreparedBulk>();
+const BULK_TTL_MS = 5 * 60_000;
+
+function expirePreparedBulks(): void {
+  const now = Date.now();
+  for (const [id, op] of preparedBulks) {
+    if (op.expiresAt <= now) preparedBulks.delete(id);
+  }
+}
+
+/**
+ * Capture an exact, deduplicated message set before confirmation. Mutation
+ * never follows a live Gmail page token, and mail arriving later is excluded.
+ */
+export async function prepareBulkAllMessages(opts: {
+  q?: string;
+  labelIds?: string[];
+  action: BulkAllAction;
+}): Promise<{ operationId: string; count: number; expiresAt: number }> {
+  const g = await api();
+  const ids = new Set<string>();
+  let pageToken: string | undefined;
+  do {
+    const res = await g.users.messages.list({
+      userId: "me",
+      q: opts.q,
+      labelIds: opts.labelIds,
+      includeSpamTrash:
+        opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH"),
+      pageToken,
+      maxResults: 500,
+      fields: "messages(id),nextPageToken",
+    });
+    for (const m of res.data.messages ?? []) {
+      if (m.id) ids.add(m.id);
+    }
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken);
+
+  const profile = await g.users.getProfile({ userId: "me", fields: "emailAddress" });
+  const operationId = crypto.randomUUID();
+  const expiresAt = Date.now() + BULK_TTL_MS;
+  expirePreparedBulks();
+  preparedBulks.set(operationId, {
+    account: profile.data.emailAddress ?? "",
+    ids: [...ids],
+    action: opts.action,
+    expiresAt,
+  });
+  return { operationId, count: ids.size, expiresAt };
+}
+
+export async function confirmBulkAllMessages(
+  operationId: string,
+): Promise<{ matched: number; succeeded: number; failed: number }> {
+  expirePreparedBulks();
+  const op = preparedBulks.get(operationId);
+  if (!op) throw new Error("BULK_OPERATION_EXPIRED");
+  // Consume before mutation: double-click/retry must not execute twice.
+  preparedBulks.delete(operationId);
+
+  const g = await api();
+  const profile = await g.users.getProfile({ userId: "me", fields: "emailAddress" });
+  if ((profile.data.emailAddress ?? "") !== op.account) {
+    throw new Error("BULK_OPERATION_ACCOUNT_CHANGED");
+  }
+
+  let succeeded = 0;
+  let failed = 0;
+  if (op.action === "read" || op.action === "unread") {
+    for (let i = 0; i < op.ids.length; i += 1000) {
+      const chunk = op.ids.slice(i, i + 1000);
+      try {
+        await g.users.messages.batchModify({
+          userId: "me",
+          requestBody: {
+            ids: chunk,
+            addLabelIds: op.action === "unread" ? ["UNREAD"] : undefined,
+            removeLabelIds: op.action === "read" ? ["UNREAD"] : undefined,
+          },
+        });
+        succeeded += chunk.length;
+      } catch {
+        failed += chunk.length;
+      }
+    }
+  } else {
+    // batchDelete permanently deletes; use recoverable trash with bounded load.
+    const concurrency = 10;
+    for (let i = 0; i < op.ids.length; i += concurrency) {
+      const results = await Promise.allSettled(
+        op.ids
+          .slice(i, i + concurrency)
+          .map((id) => g.users.messages.trash({ userId: "me", id })),
+      );
+      succeeded += results.filter((r) => r.status === "fulfilled").length;
+      failed += results.filter((r) => r.status === "rejected").length;
+    }
+  }
+  return { matched: op.ids.length, succeeded, failed };
 }
 
 export async function getProfile(): Promise<{ email: string }> {
