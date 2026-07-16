@@ -107,97 +107,189 @@
 
 ## 🚀 처음 설치하기 (1회, 약 10분)
 
-딱 세 가지만 하면 됩니다: **① Google 열쇠 발급 → ② 프로그램 설치 → ③ 로그인.**
+처음 한 번만 아래 순서대로 진행하면 됩니다. 필요한 것은 **Google 계정**, **인터넷 연결**, **명령을 붙여넣을 터미널 창**뿐입니다. Google Cloud 결제수단은 필요하지 않습니다.
 
-### ① Google에서 열쇠(Client ID/Secret) 발급 — 약 5분
+> [!NOTE]
+> 흔히 “API Key를 받는다”고 표현하지만, 이 앱은 **API Key를 사용하지 않습니다.** 내 Gmail에 안전하게 로그인할 수 있도록 Google에서 **Client ID**와 **Client Secret**이라는 연결 정보 두 개를 발급받습니다. Google 화면에서 **API 키 만들기**는 누르지 마세요.
 
-이 앱은 "내가 만든 나만의 Google 앱"으로 내 계정에 연결됩니다. 그래서 Google 콘솔에서 열쇠 두 개를 먼저 발급받아요. 결과물은 **문자열 두 줄**이 전부입니다.
+### ① Google 연결 정보 만들기
 
-<details>
-<summary><b>👉 발급 순서 펼쳐보기 (링크 클릭하며 5단계)</b></summary>
+Google Cloud 화면에서는 상단에 표시되는 프로젝트 이름이 계속 **Mail**인지 확인하세요. 다른 프로젝트가 선택되면 아래 설정이 서로 엇갈릴 수 있습니다.
 
-먼저 본인 Google 계정으로 로그인해 두세요 → [accounts.google.com](https://accounts.google.com)
+#### 1. Google Cloud 프로젝트 만들기
 
-**1. 프로젝트 만들기**
-🔗 https://console.cloud.google.com/projectcreate
-→ 이름은 아무거나(예: `mail`) → **만들기**
+1. 사용할 Google 계정으로 [Google 로그인](https://accounts.google.com)을 합니다.
+2. [프로젝트 만들기](https://console.cloud.google.com/projectcreate)를 엽니다.
+3. 프로젝트 이름에 `Mail`을 입력하고 **만들기**를 누릅니다.
+4. 생성이 끝나면 화면 위쪽 프로젝트 선택란에서 방금 만든 **Mail**을 선택합니다.
 
-**2. API 4개 켜기** — 각 링크에서 파란 **사용** 버튼 한 번씩
-- 🔗 [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
-- 🔗 [Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
-- 🔗 [Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-- 🔗 [People API](https://console.cloud.google.com/apis/library/people.googleapis.com) *(받는사람 자동완성용)*
+#### 2. 필요한 Google 서비스 네 개 켜기
 
-**3. 동의 화면 + 테스트 사용자**
-🔗 https://console.cloud.google.com/auth/overview
-→ **시작하기**: 앱 이름·이메일 입력, 대상은 **외부(External)** → 완료
-→ **대상(Audience)** 탭 → **테스트 사용자**에 **본인 Gmail 주소** 추가 *(게시 상태는 "테스트" 그대로)*
+아래 링크를 하나씩 열고 **사용** 버튼을 누릅니다. 이미 켜져 있으면 **관리**라고 표시됩니다.
 
-**4. OAuth 클라이언트 만들기**
-🔗 https://console.cloud.google.com/auth/clients
-→ **+ 클라이언트 만들기** → 유형: **웹 애플리케이션**
-→ **승인된 리디렉션 URI**에 아래를 정확히 붙여넣기:
-```
+| 켜야 하는 서비스 | 앱에서 사용하는 곳 |
+|---|---|
+| [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com) | 메일 읽기·쓰기·정리 |
+| [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com) | 일정 보기·등록·수정 |
+| [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) | 파일 보기·저장·첨부 |
+| [People API](https://console.cloud.google.com/apis/library/people.googleapis.com) | 받는사람 주소 자동완성 |
+
+> 각 링크를 열 때 상단 프로젝트가 **Mail**인지 다시 확인하세요. `CalDAV API`가 아니라 **Google Calendar API**를 켜야 합니다.
+
+#### 3. 로그인 허용 화면 만들기
+
+1. [Google Auth Platform](https://console.cloud.google.com/auth/overview)을 엽니다.
+2. **시작하기**를 누릅니다.
+3. 앱 이름에는 `Mail`, 사용자 지원 이메일에는 **본인 이메일**을 선택합니다.
+4. 대상 또는 사용자 유형은 **외부(External)**를 선택합니다.
+5. 연락처 이메일에도 본인 이메일을 입력하고 생성을 마칩니다.
+6. 왼쪽의 **대상(Audience)**을 열고 **테스트 사용자 추가**를 누릅니다.
+7. 이 앱에서 실제로 로그인할 **본인 Gmail 주소**를 정확히 추가합니다.
+8. 게시 상태는 **테스트 중(Testing)** 그대로 둡니다. 개인 사용이라 별도의 Google 심사를 받을 필요가 없습니다.
+
+> 본인 주소를 테스트 사용자에 넣지 않으면 로그인할 때 `403 access_denied`가 표시됩니다. 회사나 학교 계정으로 로그인할 예정이라면 그 주소도 테스트 사용자에 추가하세요.
+
+#### 4. Client ID와 Client Secret 발급받기
+
+1. [클라이언트 만들기](https://console.cloud.google.com/auth/clients)를 엽니다.
+2. **클라이언트 만들기**를 누릅니다.
+3. 애플리케이션 유형은 반드시 **웹 애플리케이션**을 선택합니다.
+4. 이름에는 `Mail Local`을 입력합니다.
+5. **승인된 자바스크립트 원본**은 비워둡니다.
+6. **승인된 리디렉션 URI**에서 **URI 추가**를 누르고 아래 주소를 그대로 붙여넣습니다.
+
+```text
 http://localhost:8787/auth/callback
 ```
-→ **만들기**
 
-**5. 두 값 복사해 두기**
-방금 만든 클라이언트의 **Client ID**와 **Client Secret**(`GOCSPX-`로 시작)을 복사 → ③단계에서 씁니다.
+7. **만들기**를 누릅니다.
+8. 표시되는 **Client ID**와 **Client Secret**을 각각 복사해 안전한 곳에 잠시 보관합니다.
 
-> 화면이 다르게 보이면 왼쪽 메뉴 **API 및 서비스 → 사용자 인증 정보**에서 같은 작업을 할 수 있어요.
-> 더 자세한 그림 설명: [docs/OAUTH_SETUP.md](docs/OAUTH_SETUP.md)
+주소는 `http`로 시작하고, 끝에 `/`가 없으며, 숫자가 `8787`이어야 합니다. Client Secret은 비밀번호와 같으므로 다른 사람에게 보내거나 화면을 공유하지 마세요.
 
-</details>
+#### Google 설정 완료 확인표
 
-### ② 프로그램 설치
+| 확인할 항목 | 정상 상태 |
+|---|---|
+| 프로젝트 | Mail 프로젝트가 선택됨 |
+| 사용 설정한 서비스 | Gmail·Calendar·Drive·People API, 총 4개 |
+| 로그인 대상 | 테스트 사용자에 실제 Gmail 주소가 있음 |
+| 클라이언트 유형 | 웹 애플리케이션 |
+| 리디렉션 주소 | `http://localhost:8787/auth/callback` |
+| 발급 결과 | Client ID와 Client Secret을 복사해 둠 |
 
-터미널을 열고 순서대로 붙여넣기:
+### ② 앱 내려받고 준비하기
+
+#### 1. 앱 파일 받기
+
+GitHub에 로그인한 뒤 [최신 버전 ZIP 내려받기](https://github.com/sj00c/mail/archive/refs/heads/main.zip)를 눌러 압축을 풉니다. `404` 화면이 나오면 저장소 접근 권한이 없는 계정이므로 관리자에게 초대를 요청해야 합니다. 압축을 푼 `mail-main` 폴더는 **문서**처럼 나중에도 그대로 둘 장소로 옮겨주세요. 자동 실행을 등록한 뒤 폴더를 옮기면 다시 등록해야 합니다.
+
+#### 2. 앱 폴더에서 명령 창 열기
+
+- **macOS:** Finder에서 `mail-main` 폴더를 선택하고 우클릭 → **서비스 → 폴더에서 새로운 터미널**. 메뉴가 없다면 터미널을 열고 `cd `를 입력한 뒤 해당 폴더를 창으로 끌어놓고 Enter를 누릅니다.
+- **Windows:** 파일 탐색기에서 `mail-main` 폴더를 연 뒤 위쪽 주소창에 `powershell`을 입력하고 Enter를 누릅니다.
+
+#### 3. Bun 설치하기
+
+Bun은 이 앱을 실행해 주는 작은 실행 프로그램입니다. 사용하는 컴퓨터에 맞는 명령 **하나만** 붙여넣으세요.
+
+**macOS**
 
 ```sh
-# 1) Bun 설치 (실행 엔진) — 이미 있으면 건너뛰기
-curl -fsSL https://bun.sh/install | bash     # macOS/Linux
-# Windows는 PowerShell에서: powershell -c "irm bun.sh/install.ps1 | iex"
+curl -fsSL https://bun.com/install | bash
+```
 
-# 2) 앱 받기 (터미널 새로 연 뒤)
-git clone https://github.com/SeokjuCh0/mail.git
-cd mail
+**Windows PowerShell**
+
+```powershell
+powershell -c "irm bun.sh/install.ps1|iex"
+```
+> Windows는 **Windows 10 버전 1809 이상**이 필요합니다.
+
+설치가 끝나면 명령 창을 닫고, 위의 방법으로 앱 폴더에서 다시 엽니다. 아래 명령을 입력했을 때 버전 숫자가 나오면 정상입니다.
+
+```sh
+bun --version
+```
+
+#### 4. 앱에 필요한 파일 준비하기
+
+앱 폴더에서 아래 명령을 한 번 실행합니다.
+
+```sh
 bun install
-
-# 3) 열쇠 넣기
-cp .env.example .env
 ```
 
-`.env` 파일을 열어 ①에서 복사한 두 값을 붙여넣으세요 (따옴표·공백 없이):
+### ③ Google 연결 정보 넣기
 
-```dotenv
-GOOGLE_CLIENT_ID=1234567890-abcdefg.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
-```
+앞에서 복사한 Client ID와 Client Secret을 앱에 넣습니다.
 
-나머지 줄은 그대로 두면 됩니다.
-
-### ③ 실행하고 로그인
+**macOS**
 
 ```sh
-bun run build && bun run start
+cp .env.example .env
+open -e .env
 ```
 
-브라우저에서 **http://localhost:8787** → **Gmail 연결하기** → 내 계정 선택 → 허용.
+**Windows PowerShell**
 
-- *"Google에서 확인하지 않은 앱"* 경고가 떠도 괜찮아요 → **고급 → 이동**. 방금 내가 만든 테스트 앱이라 뜨는 정상 안내입니다.
-- **받은편지함이 보이면 끝!** 로그인은 저장되어 재시작해도 유지됩니다.
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
 
-### ➕ 추천: 자동 시작 등록
+열린 파일에서 **첫 두 줄의 `=` 오른쪽만** 발급받은 값으로 바꿉니다. 아래 두 줄의 주소와 숫자는 그대로 둡니다.
 
-컴퓨터를 켜면 알아서 실행되고, 문제가 생겨도 스스로 재시작합니다. 한 번만 등록하세요:
+```text
+GOOGLE_CLIENT_ID=여기에_Client_ID_붙여넣기
+GOOGLE_CLIENT_SECRET=여기에_Client_Secret_붙여넣기
+OAUTH_REDIRECT=http://localhost:8787/auth/callback
+PORT=8787
+```
 
-| 내 컴퓨터 | 등록 | 해제 |
+- 따옴표나 앞뒤 공백을 넣지 않습니다.
+- Client ID는 보통 `.apps.googleusercontent.com`으로 끝납니다.
+- Client Secret은 절대 GitHub, 메신저, 이메일에 올리지 않습니다.
+- 편집을 마치면 파일을 **저장**하고 닫습니다.
+
+<a id="run-app"></a>
+
+### ④ 앱 실행하기
+
+앱 폴더에서 아래 두 명령을 순서대로 실행합니다. 첫 실행은 컴퓨터에 따라 잠시 걸릴 수 있습니다.
+
+```sh
+bun run build
+```
+
+```sh
+bun run start
+```
+
+`[server] http://127.0.0.1:8787`과 비슷한 문구가 나오면 실행된 것입니다. 이 명령 창은 앱을 사용하는 동안 닫지 마세요.
+
+브라우저에서 [http://localhost:8787](http://localhost:8787)을 엽니다.
+
+1. **Gmail 연결하기**를 누릅니다.
+2. 테스트 사용자로 등록한 Google 계정을 선택합니다.
+3. 요청되는 Gmail·캘린더·드라이브·주소록 권한을 모두 허용합니다.
+4. **Google에서 확인하지 않은 앱** 경고가 나오면 **고급 → Mail(으)로 이동**을 선택합니다. 본인이 방금 만든 개인용 앱이라 표시되는 정상 안내입니다.
+5. 받은편지함이 보이면 설치가 끝난 것입니다.
+
+직접 실행한 앱을 끄려면 명령 창에서 `Ctrl`과 `C`를 함께 누릅니다.
+
+<a id="auto-start"></a>
+
+### ⑤ 컴퓨터를 켤 때 자동으로 실행하기 (권장)
+
+자동 실행을 등록하면 매번 명령을 입력할 필요 없이 [http://localhost:8787](http://localhost:8787)만 열면 됩니다. 앱 폴더는 등록 후 옮기지 마세요.
+
+| 내 컴퓨터 | 등록 명령 | 자동 실행 해제 |
 |---|---|---|
 | **macOS** | `bash deploy/install.sh` | `bash deploy/uninstall.sh` |
-| **Windows** | `powershell -ExecutionPolicy Bypass -File deploy\install.ps1` | `powershell -File deploy\uninstall.ps1` |
+| **Windows PowerShell** | `powershell -ExecutionPolicy Bypass -File deploy\install.ps1` | `powershell -File deploy\uninstall.ps1` |
 
-등록 후에는 터미널 없이 **http://localhost:8787 북마크만 열면** 됩니다.
+등록 명령은 앱 폴더에서 한 번만 실행하면 됩니다. Windows는 로그인할 때, macOS는 사용자 세션이 시작될 때 앱을 켜고 문제가 생기면 자동으로 다시 실행합니다.
 
 ---
 
@@ -205,7 +297,6 @@ bun run build && bun run start
 
 - 접속 주소는 항상 → **http://localhost:8787** (북마크 추천)
 - 노트북을 닫았다 열어도, Wi-Fi를 바꿔도 그대로 이어집니다
-- 앱을 업데이트하려면: 폴더에서 `git pull` → 자동 시작을 등록했다면 다음 재시작 때 반영, 아니면 `bun run build && bun run start`
 
 ## 💡 기능 사용법
 
@@ -241,6 +332,18 @@ bun run build && bun run start
 </details>
 
 <details>
+<summary><b>명령을 입력했는데 “bun을 찾을 수 없습니다”라고 나와요</b></summary>
+
+Bun 설치 직후에는 새 경로가 반영되지 않을 수 있습니다. 열려 있는 터미널이나 PowerShell을 모두 닫고 앱 폴더에서 다시 연 뒤 `bun --version`을 입력하세요. 그래도 안 되면 [설치 ②-3단계](#-처음-설치하기-1회-약-10분)의 Bun 설치 명령을 다시 실행하고 컴퓨터를 재시작하세요.
+</details>
+
+<details>
+<summary><b>Gmail 연결하기를 눌렀는데 로그인 오류가 나요</b></summary>
+
+`.env` 파일을 저장했는지, Client ID와 Client Secret의 앞뒤에 따옴표·공백이 없는지 확인하세요. 수정했다면 실행 중인 창에서 `Ctrl+C`로 앱을 끄고 [설치 ④ 앱 실행하기](#run-app)의 두 명령을 다시 실행해야 합니다.
+</details>
+
+<details>
 <summary><b>로그인하려는데 "403 access_denied"가 떠요</b></summary>
 
 Google 콘솔의 **테스트 사용자**에 본인 Gmail 주소를 추가하지 않았을 때 나는 오류예요. [설치 ①-3단계](#-처음-설치하기-1회-약-10분)를 확인하세요.
@@ -261,13 +364,13 @@ API 4개(Gmail·Calendar·Drive·People) 중 켜지 않은 게 있어요. 설치
 <details>
 <summary><b>자꾸 로그인 화면으로 돌아가요</b></summary>
 
-보안상 토큰이 만료되거나 회수된 경우예요. **Gmail 연결하기**로 다시 로그인하면 됩니다. 예전에 로그인했는데 캘린더 수정이나 드라이브가 안 될 때도 로그아웃 → 재로그인 한 번이면 해결돼요 (새 권한으로 재발급).
+Google이 로그인 권한을 만료하거나 사용자가 권한을 회수한 경우예요. **Gmail 연결하기**로 다시 로그인하면 됩니다. 개인용 앱을 **테스트 중** 상태로 사용하면 약 7일마다 다시 로그인이 필요할 수 있으며 정상입니다. 캘린더나 드라이브 권한만 작동하지 않을 때도 로그아웃 후 다시 로그인해 새 권한을 허용하세요.
 </details>
 
 <details>
 <summary><b>페이지가 안 열려요 (localhost:8787)</b></summary>
 
-서버가 꺼져 있는 상태예요. 앱 폴더에서 `bun run build && bun run start`로 켜거나, [자동 시작](#-추천-자동-시작-등록)을 등록해 두세요.
+서버가 꺼져 있는 상태예요. [설치 ④ 앱 실행하기](#run-app)의 두 명령으로 켜거나, [자동 실행](#auto-start)을 등록해 두세요.
 </details>
 
 <details>
