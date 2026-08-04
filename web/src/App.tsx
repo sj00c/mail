@@ -5,6 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
 } from "react";
@@ -42,6 +44,9 @@ const SYSTEM_LABEL_NAMES: Record<string, string> = {
 
 // 안정된 빈 배열 — 선택이 없을 때 checkedIds가 매번 새 []를 반환하지 않도록.
 const EMPTY_IDS: string[] = [];
+
+// 사이드바 접힘 상태 (localStorage): "0"이면 접힌 채로 뜬다.
+const NAV_OPEN_KEY = "mail.nav.open";
 
 // 상단바 아이콘: 이모지 대신 인라인 SVG (외부 에셋 없이 선형 아이콘)
 function SvgIcon({ children }: { children: ReactNode }) {
@@ -95,6 +100,13 @@ const IconLogout = () => (
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
     <polyline points="16 17 21 12 16 7" />
     <line x1="21" y1="12" x2="9" y2="12" />
+  </SvgIcon>
+);
+
+const IconSidebar = () => (
+  <SvgIcon>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M9.5 4v16" />
   </SvgIcon>
 );
 
@@ -194,6 +206,36 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [bulkAllBusy, setBulkAllBusy] = useState(false);
   const [calLoading, setCalLoading] = useState(false);
   const [calErr, setCalErr] = useState<string | null>(null);
+  // 사이드바 접기/펼치기 — 목록·읽기 영역을 넓게 쓰고 싶을 때. 선택은 남는다.
+  const [navOpen, setNavOpen] = useState(() => {
+    try {
+      return localStorage.getItem(NAV_OPEN_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleNav = useCallback(() => {
+    setNavOpen((v) => {
+      try {
+        localStorage.setItem(NAV_OPEN_KEY, v ? "0" : "1");
+      } catch {
+        // private mode: 이번 세션에만 적용
+      }
+      return !v;
+    });
+  }, []);
+
+  // ⌘\ / Ctrl+\ 로도 접었다 편다. 작성 중인 본문에 문자가 들어가지 않도록
+  // 수식 키가 눌린 조합만 가로챈다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "\\" || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+      e.preventDefault();
+      toggleNav();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleNav]);
 
   const guard = useCallback(
     async (fn: () => Promise<void>) => {
@@ -831,13 +873,114 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         setEvEditor({
           initial: {
             summary: m.subject || "(제목 없음)",
-            description: `메일에서 만든 일정\n보낸사람: ${m.from}\n받은날짜: ${new Date(m.date).toLocaleString("ko-KR")}\n\n${m.snippet}`,
+            description: `메일에서 만든 일정\n보낸사람: ${m.from}\n받은날짜: ${DATETIME_FMT.format(new Date(m.date))}\n\n${m.snippet}`,
           },
         });
       });
     },
     [guard, calendars.length],
   );
+
+  // ---- 키보드 단축키 (Gmail식) ----
+  // j/k 이전·다음 메일, e 보관, # 휴지통, c 새 메일, / 검색, u·Esc 목록으로.
+  // 입력 중(입력칸·contentEditable)이거나 모달이 떠 있으면 아무것도 안 한다 —
+  // 본문에 "j"를 치는데 메일이 넘어가면 안 된다.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const isTyping = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      const tag = el.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+      if (viewRef.current !== "mail") return;
+      if (isTyping(e.target)) return;
+      // 모달(작성창/설정/일정)이 열려 있으면 목록 단축키는 쉰다.
+      if (document.querySelector(".modal-backdrop")) return;
+      const list = messagesRef.current;
+      const cur = selectedRef.current;
+      const curMsg = cur ? list.find((m) => m.id === cur.id) : undefined;
+      switch (e.key) {
+        case "j":
+        case "k": {
+          e.preventDefault();
+          const dir = e.key === "j" ? 1 : -1;
+          const idx = cur ? list.findIndex((m) => m.id === cur.id) : -1;
+          for (let i = idx + dir; i >= 0 && i < list.length; i += dir) {
+            // 드래프트 행은 건너뛴다 — 선택이 곧 편집기 오픈이라 순회를 끊는다.
+            if (list[i].labelIds.includes("DRAFT")) continue;
+            setSelected({ id: list[i].id, threadId: list[i].threadId });
+            return;
+          }
+          // 마지막 행에서 j: 다음 페이지를 이어서 불러온다 (무한 스크롤과 동일).
+          if (dir === 1 && nextTokenRef.current && !loadingRef.current) load(false);
+          return;
+        }
+        case "e": {
+          // 보관 — Reader의 보관 버튼과 동일한 스코프(받은편지함에서만 행 제거).
+          if (!curMsg || curMsg.labelIds.includes("DRAFT") || curMsg.labelIds.includes("TRASH"))
+            return;
+          e.preventDefault();
+          void guard(async () => {
+            await api.modify(curMsg.id, { remove: ["INBOX"] });
+            if (!queryRef.current && labelRef.current === "INBOX") removeMessage(curMsg.id);
+            setSelected(null);
+            void refreshLabels();
+          });
+          return;
+        }
+        case "#": {
+          // 휴지통 (복구 가능). 휴지통 안에서는 영구삭제가 되므로 아무것도 안 한다.
+          if (!curMsg || curMsg.labelIds.includes("DRAFT") || curMsg.labelIds.includes("TRASH"))
+            return;
+          e.preventDefault();
+          void guard(async () => {
+            await api.trash(curMsg.id);
+            removeMessage(curMsg.id);
+            setSelected(null);
+            void refreshLabels();
+          });
+          return;
+        }
+        case "c":
+          e.preventDefault();
+          openCompose(undefined);
+          return;
+        case "/":
+          e.preventDefault();
+          searchRef.current?.focus();
+          searchRef.current?.select();
+          return;
+        case "u":
+        case "Escape":
+          if (cur) {
+            e.preventDefault();
+            setSelected(null);
+          }
+          return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [guard, load, openCompose, refreshLabels, removeMessage]);
+
+  // j/k로 옮긴 선택이 화면 밖이면 목록을 따라 스크롤한다 (클릭 선택엔 no-op).
+  useEffect(() => {
+    if (!selected) return;
+    document
+      .querySelector(".msg-row.active, .mail-card.active")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
 
   // Shared between the normal reader pane and the search slide-over.
   const readerEl = selected ? (
@@ -887,6 +1030,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="app">
       <header className="topbar">
+        <button
+          className="icon-btn nav-toggle"
+          title={`사이드바 ${navOpen ? "접기" : "펼치기"} (⌘\\)`}
+          aria-label={`사이드바 ${navOpen ? "접기" : "펼치기"}`}
+          aria-expanded={navOpen}
+          aria-controls="app-sidebar"
+          onClick={toggleNav}
+        >
+          <IconSidebar />
+        </button>
         <div className="brand">
           <span className="brand-mark">
             <IconSend />
@@ -904,7 +1057,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           }}
         >
           <input
+            ref={searchRef}
             placeholder="Search"
+            title="바로가기: /"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -976,99 +1131,101 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </div>
       )}
 
-      <div className="body">
-        <nav className="sidebar">
-          <button
-            className={`nav-section ${view === "calendar" ? "active" : ""}`}
-            onClick={() => setView("calendar")}
-          >
-            <span className="chev">{view === "calendar" ? "▾" : "▸"}</span>
-            <span>📅 캘린더</span>
-          </button>
-          {view === "calendar" && (
-            <div className="nav-sub">
-              {calLoading && <div className="nav-note">불러오는 중…</div>}
-              {calErr && <div className="nav-note">{calErr}</div>}
-              <CalendarChecklist
-                title="내 캘린더"
-                items={calendars.filter(
-                  (c) => c.primary || c.accessRole === "owner",
-                )}
-                hidden={hiddenCals}
-                onToggle={toggleCal}
-              />
-              <CalendarChecklist
-                title="다른 캘린더"
-                items={calendars.filter(
-                  (c) => !(c.primary || c.accessRole === "owner"),
-                )}
-                hidden={hiddenCals}
-                onToggle={toggleCal}
-              />
-            </div>
-          )}
-
-          <button
-            className={`nav-section ${view === "mail" ? "active" : ""}`}
-            onClick={() => {
-              setView("mail");
-              setQuery("");
-              setSearchInput("");
-            }}
-          >
-            <span className="chev">{view === "mail" ? "▾" : "▸"}</span>
-            <span>📬 메일</span>
-          </button>
-          {view === "mail" && (
-            <div className="nav-sub">
-              <LabelRow
-                label={{ id: "ALL", name: "전체메일", type: "system", unread: 0 }}
-                active={!query && activeLabel === "ALL"}
-                onClick={() => {
-                  setQuery("");
-                  setSearchInput("");
-                  setActiveLabel("ALL");
-                }}
-              />
-              {systemLabels.map((l) => (
+      <div className={`body ${navOpen ? "" : "nav-collapsed"}`}>
+        <nav className="sidebar" id="app-sidebar" aria-hidden={!navOpen}>
+          <div className="sidebar-inner">
+            <button
+              className={`nav-section ${view === "calendar" ? "active" : ""}`}
+              onClick={() => setView("calendar")}
+            >
+              <span className="chev">{view === "calendar" ? "▾" : "▸"}</span>
+              <span>📅 캘린더</span>
+            </button>
+            {view === "calendar" && (
+              <div className="nav-sub">
+                {calLoading && <div className="nav-note">불러오는 중…</div>}
+                {calErr && <div className="nav-note">{calErr}</div>}
+                <CalendarChecklist
+                  title="내 캘린더"
+                  items={calendars.filter(
+                    (c) => c.primary || c.accessRole === "owner",
+                  )}
+                  hidden={hiddenCals}
+                  onToggle={toggleCal}
+                />
+                <CalendarChecklist
+                  title="다른 캘린더"
+                  items={calendars.filter(
+                    (c) => !(c.primary || c.accessRole === "owner"),
+                  )}
+                  hidden={hiddenCals}
+                  onToggle={toggleCal}
+                />
+              </div>
+            )}
+  
+            <button
+              className={`nav-section ${view === "mail" ? "active" : ""}`}
+              onClick={() => {
+                setView("mail");
+                setQuery("");
+                setSearchInput("");
+              }}
+            >
+              <span className="chev">{view === "mail" ? "▾" : "▸"}</span>
+              <span>📬 메일</span>
+            </button>
+            {view === "mail" && (
+              <div className="nav-sub">
                 <LabelRow
-                  key={l.id}
-                  label={l}
-                  active={!query && activeLabel === l.id}
+                  label={{ id: "ALL", name: "전체메일", type: "system", unread: 0 }}
+                  active={!query && activeLabel === "ALL"}
                   onClick={() => {
                     setQuery("");
                     setSearchInput("");
-                    setActiveLabel(l.id);
+                    setActiveLabel("ALL");
                   }}
                 />
-              ))}
-              {userLabels.length > 0 && <div className="sidebar-sep">라벨</div>}
-              {userLabels.map((l) => (
-                <LabelRow
-                  key={l.id}
-                  label={l}
-                  active={!query && activeLabel === l.id}
-                  onClick={() => {
-                    setQuery("");
-                    setSearchInput("");
-                    setActiveLabel(l.id);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-
-          <button
-            className={`nav-section ${view === "drive" ? "active" : ""}`}
-            onClick={() => {
-              setView("drive");
-              setQuery("");
-              setSearchInput("");
-            }}
-          >
-            <span className="chev">{view === "drive" ? "▾" : "▸"}</span>
-            <span>🗂 드라이브</span>
-          </button>
+                {systemLabels.map((l) => (
+                  <LabelRow
+                    key={l.id}
+                    label={l}
+                    active={!query && activeLabel === l.id}
+                    onClick={() => {
+                      setQuery("");
+                      setSearchInput("");
+                      setActiveLabel(l.id);
+                    }}
+                  />
+                ))}
+                {userLabels.length > 0 && <div className="sidebar-sep">라벨</div>}
+                {userLabels.map((l) => (
+                  <LabelRow
+                    key={l.id}
+                    label={l}
+                    active={!query && activeLabel === l.id}
+                    onClick={() => {
+                      setQuery("");
+                      setSearchInput("");
+                      setActiveLabel(l.id);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+  
+            <button
+              className={`nav-section ${view === "drive" ? "active" : ""}`}
+              onClick={() => {
+                setView("drive");
+                setQuery("");
+                setSearchInput("");
+              }}
+            >
+              <span className="chev">{view === "drive" ? "▾" : "▸"}</span>
+              <span>🗂 드라이브</span>
+            </button>
+          </div>
         </nav>
 
         {view === "drive" ? (
@@ -1210,7 +1367,31 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             </section>
 
             <section className="reader">
-              {readerEl ?? <div className="empty">메일을 선택하세요.</div>}
+              {readerEl ?? (
+                <div className="empty">
+                  <div>메일을 선택하세요.</div>
+                  <div className="kbd-hints">
+                    <span>
+                      <kbd>j</kbd>/<kbd>k</kbd> 이전·다음
+                    </span>
+                    <span>
+                      <kbd>e</kbd> 보관
+                    </span>
+                    <span>
+                      <kbd>#</kbd> 삭제
+                    </span>
+                    <span>
+                      <kbd>c</kbd> 새 메일
+                    </span>
+                    <span>
+                      <kbd>/</kbd> 검색
+                    </span>
+                    <span>
+                      <kbd>u</kbd> 목록으로
+                    </span>
+                  </div>
+                </div>
+              )}
             </section>
           </>
         )}
@@ -1399,8 +1580,154 @@ function getUndoSec(): number {
   }
 }
 
+// ── 팝업 크기 ─────────────────────────────────────────────────────────────
+// 기본값은 화면 크기에 따라 크게 열리고(CSS clamp), 사용자가 오른쪽 아래
+// 모서리를 끌면 그 크기를 팝업 종류별로 기억한다. 헤더의 ⤢ 는 화면 꽉 채우기.
+type DialogSize = { w: number; h: number };
+const DIALOG_SIZE_KEY = "mail.dialog.size";
+
+function readDialogSizes(): Record<string, DialogSize> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DIALOG_SIZE_KEY) ?? "{}") as unknown;
+    return raw && typeof raw === "object" ? (raw as Record<string, DialogSize>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function useResizableDialog(key: string, minW: number, minH: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState<DialogSize | null>(() => readDialogSizes()[key] ?? null);
+  const [maximized, setMaximized] = useState(false);
+
+  const persist = useCallback(
+    (next: DialogSize | null) => {
+      try {
+        const all = readDialogSizes();
+        if (next) all[key] = next;
+        else delete all[key];
+        localStorage.setItem(DIALOG_SIZE_KEY, JSON.stringify(all));
+      } catch {
+        // private mode: 이번 세션에만 적용
+      }
+    },
+    [key],
+  );
+
+  // 모니터가 바뀌어 저장값이 화면보다 커도 밖으로 튀어나가지 않게 조인다.
+  const clampSize = useCallback(
+    (s: DialogSize): DialogSize => ({
+      w: Math.max(minW, Math.min(s.w, window.innerWidth - 24)),
+      h: Math.max(minH, Math.min(s.h, window.innerHeight - 24)),
+    }),
+    [minH, minW],
+  );
+
+  const onGripDown = useCallback(
+    (e: ReactPointerEvent<HTMLElement>) => {
+      const el = ref.current;
+      if (!el || e.button !== 0) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      const w0 = rect.width;
+      const h0 = rect.height;
+      let last = { w: w0, h: h0 };
+      const move = (ev: globalThis.PointerEvent) => {
+        // 팝업은 화면 정중앙 고정이라, 커서를 그대로 따라오게 하려면
+        // 커서 이동량의 두 배만큼 커져야 한다(양쪽으로 반씩 자란다).
+        last = clampSize({ w: w0 + (ev.clientX - x0) * 2, h: h0 + (ev.clientY - y0) * 2 });
+        setSize(last);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        persist(last);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      setMaximized(false);
+    },
+    [clampSize, persist],
+  );
+
+  // 창을 줄이거나 모니터를 바꿔도 저장된 크기가 화면 밖으로 나가지 않게.
+  useEffect(() => {
+    const fit = () =>
+      setSize((s) => {
+        if (!s) return s;
+        const c = clampSize(s);
+        return c.w === s.w && c.h === s.h ? s : c;
+      });
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [clampSize]);
+
+  const reset = useCallback(() => {
+    setSize(null);
+    setMaximized(false);
+    persist(null);
+  }, [persist]);
+
+  const style: CSSProperties = maximized
+    ? { width: "calc(100vw - 24px)", height: "calc(100vh - 24px)", maxWidth: "none", maxHeight: "none" }
+    : size
+      ? { width: size.w, height: size.h, maxWidth: "none", maxHeight: "none" }
+      : {};
+
+  return {
+    ref,
+    style,
+    maximized,
+    toggleMax: useCallback(() => setMaximized((v) => !v), []),
+    reset,
+    onGripDown,
+  };
+}
+
+/** 헤더의 최대화 토글 + 오른쪽 아래 크기조절 손잡이 (모든 팝업 공통). */
+function DialogTools({
+  maximized,
+  onToggleMax,
+}: {
+  maximized: boolean;
+  onToggleMax: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="clear dlg-max"
+      title={maximized ? "이전 크기로" : "화면 꽉 채우기"}
+      aria-label={maximized ? "이전 크기로" : "화면 꽉 채우기"}
+      onClick={onToggleMax}
+    >
+      {maximized ? "⤡" : "⤢"}
+    </button>
+  );
+}
+
+function DialogGrip({
+  onPointerDown,
+  onReset,
+}: {
+  onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void;
+  onReset: () => void;
+}) {
+  return (
+    <span
+      className="dlg-grip"
+      title="끌어서 크기 조절 · 더블클릭하면 기본 크기"
+      onPointerDown={onPointerDown}
+      onDoubleClick={onReset}
+    />
+  );
+}
+
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const sigEditorRef = useRef<HTMLDivElement>(null);
+  const dlg = useResizableDialog("settings", 520, 380);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   // 저장된 HTML 서명(없으면 평문을 HTML로). 에디터는 uncontrolled라 1회만 읽는다.
   const initialSig = useMemo(() => {
@@ -1470,9 +1797,15 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        ref={dlg.ref}
+        style={dlg.style}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <strong>설정</strong>
+          <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
           <button className="clear" onClick={onClose}>
             ✕
           </button>
@@ -1541,6 +1874,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             저장
           </button>
         </div>
+        <DialogGrip onPointerDown={dlg.onGripDown} onReset={dlg.reset} />
       </div>
     </div>
   );
@@ -1751,6 +2085,9 @@ function Reader({
 }) {
   const [msg, setMsg] = useState<MessageFull | null>(null);
   const [thread, setThread] = useState<MessageFull[] | null>(null);
+  // 펼쳐 둘 메일 id — 기본은 "지금 연 메일 + 대화의 마지막 메일"이고
+  // 나머지는 한 줄 요약으로 접힌다.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1776,6 +2113,7 @@ function Reader({
         }
         setMsg(m);
         setThread(msgs);
+        setExpanded(new Set([m.id, msgs[msgs.length - 1].id]));
         if (m.unread) {
           try {
             await api.modify(m.id, { remove: ["UNREAD"] });
@@ -1810,6 +2148,20 @@ function Reader({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, threadId]);
+
+  // 대화 목록과 답장 깊이는 렌더마다 다시 계산할 이유가 없다. 콜백도 고정해야
+  // memo(ThreadMessage)가 실제로 먹는다 — 메시지마다 iframe이 하나씩 붙는다.
+  const msgs = useMemo(() => thread ?? (msg ? [msg] : []), [thread, msg]);
+  const depths = useMemo(() => replyDepths(msgs), [msgs]);
+  const toggleExpanded = useCallback((mid: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(mid)) next.delete(mid);
+      else next.add(mid);
+      return next;
+    });
+  }, []);
+  const composeTo = useCallback((email: string) => onReply({ to: email }), [onReply]);
 
   if (loadErr) return <div className="empty">⚠️ {loadErr}</div>;
   if (!msg) return <div className="empty">불러오는 중…</div>;
@@ -2009,12 +2361,42 @@ function Reader({
           )}
         </div>
       </div>
-      {(thread ?? [msg]).map((tm) => (
+      {msgs.length > 1 && (
+        <div className="thread-bar">
+          <span className="thread-bar-title">
+            💬 대화 <b>{msgs.length}개</b>
+            {expanded.size < msgs.length && ` · ${expanded.size}개 펼침`}
+          </span>
+          <span className="modal-spacer" />
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => setExpanded(new Set(msgs.map((t) => t.id)))}
+          >
+            모두 펼치기
+          </button>
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => setExpanded(new Set([msg.id]))}
+          >
+            이 메일만
+          </button>
+        </div>
+      )}
+      {msgs.map((tm, i) => (
         <ThreadMessage
           key={tm.id}
           m={tm}
+          depth={depths.get(tm.id) ?? 0}
+          index={i}
+          total={msgs.length}
+          // 열어 본 메일 + 마지막 메일만 펼친 채 시작한다 (대화 하나가
+          // 통째로 쏟아지지 않게). 나머지는 한 줄 요약 → 눌러서 확인.
+          collapsed={msgs.length > 1 && !expanded.has(tm.id)}
+          onToggle={toggleExpanded}
           guard={guard}
-          onComposeTo={(email) => onReply({ to: email })}
+          onComposeTo={composeTo}
         />
       ))}
     </div>
@@ -2114,7 +2496,7 @@ function threadQuoteHtml(
     msgs
       .map(({ message: m, bodyHtml }, index) => {
         const addr = parseAddr(m.from);
-        const when = new Date(m.date).toLocaleString("ko-KR");
+        const when = DATETIME_FMT.format(new Date(m.date));
         const body = bodyHtml;
         return (
           `<section style="border:1px solid #dfe3eb;border-radius:10px;overflow:hidden;margin:0 0 12px;background:#fff">` +
@@ -2196,12 +2578,53 @@ async function saveAttachment(
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+// 대화 안에서 각 메일이 "무엇에 대한 답장인지"를 In-Reply-To/References로 이어
+// 깊이를 매긴다. 목록이 시간순 평면으로만 깔리면 열 번 오간 대화의 갈래가 안 보인다.
+function replyDepths(msgs: MessageFull[]): Map<string, number> {
+  const strip = (s: string) => s.trim().replace(/^<|>$/g, "");
+  const byMsgId = new Map<string, MessageFull>();
+  for (const m of msgs) {
+    const key = strip(m.rfc822MsgId ?? "");
+    if (key) byMsgId.set(key, m);
+  }
+  const parentOf = (m: MessageFull): MessageFull | undefined => {
+    const direct = strip(m.inReplyTo ?? "");
+    const refs = (m.references ?? "").trim().split(/\s+/).filter(Boolean);
+    const last = refs.length ? strip(refs[refs.length - 1]) : "";
+    const parent = byMsgId.get(direct) ?? (last ? byMsgId.get(last) : undefined);
+    return parent && parent.id !== m.id ? parent : undefined;
+  };
+  const out = new Map<string, number>();
+  for (const m of msgs) {
+    let depth = 0;
+    // 순환 참조(잘못된 헤더)에도 멈추도록 방문 집합으로 잠근다.
+    const seen = new Set<string>([m.id]);
+    for (let p = parentOf(m); p && !seen.has(p.id); p = parentOf(p)) {
+      seen.add(p.id);
+      depth++;
+      if (depth >= 8) break; // 들여쓰기는 8단계면 충분 — 그 이상은 화면만 좁아진다
+    }
+    out.set(m.id, depth);
+  }
+  return out;
+}
+
 const ThreadMessage = memo(function ThreadMessage({
   m,
+  depth,
+  index,
+  total,
+  collapsed,
+  onToggle,
   guard,
   onComposeTo,
 }: {
   m: MessageFull;
+  depth: number;
+  index: number;
+  total: number;
+  collapsed: boolean;
+  onToggle: (id: string) => void;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onComposeTo: (email: string) => void;
 }) {
@@ -2231,24 +2654,68 @@ const ThreadMessage = memo(function ThreadMessage({
       }
     });
   };
+  const who = parseAddr(m.from);
+  if (collapsed) {
+    // 접힌 메일: 한 줄 요약만. 대화 열 통이 통째로 펼쳐지던 걸 막고,
+    // 필요한 단계만 눌러서 연다.
+    return (
+      <div
+        className="thread-msg collapsed"
+        style={{ marginLeft: Math.min(depth, 8) * 16 }}
+        data-depth={Math.min(depth, 8)}
+      >
+        <button type="button" className="thread-peek" onClick={() => onToggle(m.id)}>
+          <span className="thread-peek-n">{index + 1}</span>
+          <span className="thread-peek-who">{who.name || who.email}</span>
+          <span className="thread-peek-snip">{m.snippet || "(내용 없음)"}</span>
+          {m.attachments.some((a) => !a.contentId) && (
+            <span className="thread-peek-att" title="첨부 있음">
+              📎
+            </span>
+          )}
+          <span className="thread-peek-when">{DATETIME_FMT.format(new Date(m.date))}</span>
+          {m.unread && <span className="thread-peek-unread">●</span>}
+        </button>
+      </div>
+    );
+  }
   return (
-    <div className="thread-msg">
+    <div
+      className="thread-msg"
+      style={{ marginLeft: Math.min(depth, 8) * 16 }}
+      data-depth={Math.min(depth, 8)}
+    >
       <div className="reader-meta">
-        <strong>{parseAddr(m.from).name}</strong>{" "}
         <button
           type="button"
-          className="addr-link muted"
-          title="이 주소로 새 메일"
-          onClick={() => onComposeTo(parseAddr(m.from).email)}
+          className="thread-fold"
+          onClick={() => onToggle(m.id)}
+          title="이 메일 접기"
         >
-          &lt;{parseAddr(m.from).email}&gt;
+          <span className="thread-peek-n">{index + 1}</span>
+          ▾ 접기
         </button>
+        {depth > 0 && (
+          <span className="thread-depth" title={`답장 ${depth}단계`}>
+            ↳ {depth}단계 답장
+          </span>
+        )}
+        {index === total - 1 && total > 1 && <span className="thread-last">최신</span>}
+        <div className="thread-from">
+          <strong>{who.name}</strong>{" "}
+          <button
+            type="button"
+            className="addr-link muted"
+            title="이 주소로 새 메일"
+            onClick={() => onComposeTo(who.email)}
+          >
+            &lt;{who.email}&gt;
+          </button>
+        </div>
         <div className="muted">받는사람: {m.to}</div>
         {m.cc && <div className="muted">참조: {m.cc}</div>}
-        <div className="muted">{new Date(m.date).toLocaleString("ko-KR")}</div>
-        <span
-          className={`thread-read-state ${m.unread ? "unread" : "read"}`}
-        >
+        <div className="muted">{DATETIME_FMT.format(new Date(m.date))}</div>
+        <span className={`thread-read-state ${m.unread ? "unread" : "read"}`}>
           {m.unread ? "● 안읽음" : "○ 읽음"}
         </span>
       </div>
@@ -2278,7 +2745,7 @@ const ThreadMessage = memo(function ThreadMessage({
                 </button>
               </span>
             ))}
-          {driveMsg && <div className="muted att-drive-msg">{driveMsg}</div>}
+          {driveMsg && <div className="muted">{driveMsg}</div>}
         </div>
       )}
       <div className="reader-body">
@@ -2406,7 +2873,9 @@ function HtmlBody({
   composeRef.current = onComposeTo;
   // DOMParser full-parse is not free on big newsletters — don't redo it when
   // unrelated parent state (star toggle etc.) re-renders this component.
-  const srcDoc = useMemo(() => prepareEmailHtml(html, undefined, cidUrls), [html, cidUrls]);
+  const prepared = useMemo(() => prepareEmailHtml(html, undefined, cidUrls), [html, cidUrls]);
+  // 어느 단계가 펼쳐져 있는지 — 네비게이터 칩 표시에 쓴다.
+  const [openStages, setOpenStages] = useState<Set<number>>(new Set());
 
   const resize = useCallback(() => {
     const f = ref.current;
@@ -2424,6 +2893,45 @@ function HtmlBody({
     f.style.height = h ? `${h + 8}px` : prev;
   }, []);
 
+  // 인용 단계 열기/닫기. iframe은 same-origin이라 부모가 직접 open을 만진다
+  // (프레임 안에는 스크립트가 없다).
+  const syncOpen = useCallback(() => {
+    const doc = ref.current?.contentDocument;
+    if (!doc) return;
+    const next = new Set<number>();
+    doc.querySelectorAll("details.qf[open]").forEach((d) => {
+      const n = Number(d.id.replace("qstage-", ""));
+      if (n) next.add(n);
+    });
+    setOpenStages(next);
+  }, []);
+  const applyStage = useCallback(
+    (target: number | "all" | "none") => {
+      const doc = ref.current?.contentDocument;
+      if (!doc) return;
+      if (target === "all" || target === "none") {
+        doc.querySelectorAll("details.qf").forEach((d) => {
+          (d as HTMLDetailsElement).open = target === "all";
+        });
+        return;
+      }
+      const el = doc.getElementById(`qstage-${target}`);
+      if (!el) return;
+      // 조상 단계까지 펴야 실제로 화면에 나온다.
+      for (let p: HTMLElement | null = el; p; p = p.parentElement) {
+        if (p.tagName === "DETAILS") (p as HTMLDetailsElement).open = true;
+      }
+      // 높이가 늘어난 뒤에 맞춰야 엉뚱한 위치로 튀지 않는다. same-origin
+      // iframe의 scrollIntoView는 부모 스크롤러까지 함께 움직인다.
+      resize();
+      requestAnimationFrame(() => {
+        resize();
+        el.scrollIntoView({ block: "start" });
+      });
+    },
+    [resize],
+  );
+
   const onLoad = useCallback(() => {
     resize();
     const doc = ref.current?.contentDocument;
@@ -2433,9 +2941,17 @@ function HtmlBody({
     });
     setTimeout(resize, 400);
     setTimeout(resize, 1200);
+    syncOpen();
     // 인용 접기(<details>) 토글 시 본문 높이가 바뀐다 — toggle은 버블링하지
     // 않으므로 캡처 단계에서 받아 재계산.
-    doc.addEventListener("toggle", resize, true);
+    doc.addEventListener(
+      "toggle",
+      () => {
+        resize();
+        syncOpen();
+      },
+      true,
+    );
     // Handle only mailto/# clicks here. http(s) links are left to the
     // browser's NATIVE anchor navigation (prepareEmailHtml guarantees
     // target=_blank + rel on every anchor): real link clicks are exempt from
@@ -2475,17 +2991,54 @@ function HtmlBody({
         el?.scrollIntoView({ block: "start" });
       }
     });
-  }, [resize]);
+  }, [resize, syncOpen]);
 
   return (
-    <iframe
-      ref={ref}
-      title={`message-${id}`}
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      srcDoc={srcDoc}
-      className="html-frame"
-      onLoad={onLoad}
-    />
+    <>
+      {prepared.stages.length > 0 && (
+        // 전달·답장으로 겹겹이 쌓인 히스토리를 단계 목록으로 노출한다.
+        // 본문은 기본으로 접혀 있고, 여기서 원하는 단계만 열어 들어간다.
+        <div className="qchain">
+          <div className="qchain-head">
+            <span className="qchain-title">
+              🧾 인용·전달 히스토리 <b>{prepared.stages.length}단계</b>
+            </span>
+            <span className="qchain-sp" />
+            <button type="button" className="btn sm" onClick={() => applyStage("all")}>
+              모두 펼치기
+            </button>
+            <button type="button" className="btn sm" onClick={() => applyStage("none")}>
+              모두 접기
+            </button>
+          </div>
+          <div className="qchain-steps">
+            {prepared.stages.map((s) => (
+              <button
+                key={s.n}
+                type="button"
+                className={`qchain-step${openStages.has(s.n) ? " on" : ""}`}
+                style={{ marginLeft: Math.min(s.depth, 5) * 14 }}
+                onClick={() => applyStage(s.n)}
+                title={[s.who, s.when, s.subject].filter(Boolean).join(" · ") || "이전 대화"}
+              >
+                <span className="qchain-n">{s.n}</span>
+                <span className="qchain-who">{s.who || "이전 대화"}</span>
+                {s.when && <span className="qchain-when">{s.when}</span>}
+                {s.subject && <span className="qchain-sub">{s.subject}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <iframe
+        ref={ref}
+        title={`message-${id}`}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        srcDoc={prepared.html}
+        className="html-frame"
+        onLoad={onLoad}
+      />
+    </>
   );
 }
 
@@ -2528,16 +3081,7 @@ function buildQuotedHtml(init?: ComposeInit): string {
   if (!init?.quoteHtml) return "";
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const when = init.quoteDate
-    ? new Date(init.quoteDate).toLocaleString("ko-KR", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        weekday: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "";
+  const when = init.quoteDate ? QUOTE_FMT.format(new Date(init.quoteDate)) : "";
   // 위생 처리 필수 — 받은 메일의 원본 HTML이 에디터(메인 문서)에 innerHTML로
   // 들어가므로 <img onerror> 류가 마운트 즉시 실행되는 걸 막는다. 전달은 인라인
   // 이미지를 재첨부하므로 cid: 유지, 답장은 재첨부 안 하므로 cid: 이미지 제거.
@@ -3155,6 +3699,7 @@ function Compose({
   const [bcc, setBcc] = useState(init?.bcc ?? "");
   const [subject, setSubject] = useState(init?.subject ?? "");
   const [sending, setSending] = useState(false);
+  const dlg = useResizableDialog("compose", 560, 420);
   // Errors render inside the modal — the global banner sits behind the
   // backdrop and is unreachable while the editor is open. An AuthError keeps
   // the editor (and the typed text) alive instead of unmounting to Login.
@@ -3389,6 +3934,8 @@ function Compose({
     <div className="modal-backdrop" onClick={sending ? undefined : onClose}>
       <div
         className="modal"
+        ref={dlg.ref}
+        style={dlg.style}
         onClick={(e) => e.stopPropagation()}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -3406,6 +3953,7 @@ function Compose({
                   ? "전달"
                   : "새 메일"}
           </strong>
+          <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
           <button className="clear" onClick={onClose} disabled={sending}>
             ✕
           </button>
@@ -3518,6 +4066,7 @@ function Compose({
             {sending ? "보내는 중…" : reading > 0 ? "첨부 읽는 중…" : "보내기"}
           </button>
         </div>
+        <DialogGrip onPointerDown={dlg.onGripDown} onReset={dlg.reset} />
       </div>
     </div>
   );
@@ -3698,13 +4247,35 @@ function avatarColor(key: string): string {
 
 // Intl 포매터는 생성 비용이 크다 — toLocale*는 호출마다 새로 만든다. 목록의
 // 모든 행이 listDateLabel을 부르므로 포매터를 한 번 만들어 재사용한다.
-const TIME_FMT = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" });
+// 시각은 앱 전체가 24시간제 — ko-KR 기본값이 "오후 3:00"이라 h23을 명시한다.
+const HM_FMT = new Intl.DateTimeFormat("ko-KR", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const DATETIME_FMT = new Intl.DateTimeFormat("ko-KR", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const QUOTE_FMT = new Intl.DateTimeFormat("ko-KR", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
 const MONTHDAY_FMT = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" });
 function listDateLabel(iso: string): string {
   const date = new Date(iso);
   const now = new Date();
   return date.toDateString() === now.toDateString()
-    ? TIME_FMT.format(date)
+    ? HM_FMT.format(date)
     : MONTHDAY_FMT.format(date);
 }
 
@@ -4681,8 +5252,11 @@ function MonthGrid({
         <div className="empty">불러오는 중…</div>
       ) : (
         <div className="month-grid" onWheel={onWheel}>
-          {["일", "월", "화", "수", "목", "금", "토"].map((w) => (
-            <div key={w} className="month-dow">
+          {["일", "월", "화", "수", "목", "금", "토"].map((w, i) => (
+            <div
+              key={w}
+              className={`month-dow${i === 0 ? " sun" : i === 6 ? " sat" : ""}`}
+            >
               {w}
             </div>
           ))}
@@ -4690,16 +5264,25 @@ function MonthGrid({
             const key = dateKey(d);
             const evs = byDay.get(key) ?? [];
             const other = d.getMonth() !== cursor.getMonth();
+            const dow = d.getDay();
             return (
               <div
                 key={key}
-                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${onCreate ? " creatable" : ""}`}
+                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${onCreate ? " creatable" : ""}${dow === 0 ? " sun" : dow === 6 ? " sat" : ""}`}
                 // 빈 영역(또는 날짜 숫자) 클릭 → 그 날짜로 새 일정. 이벤트 칩/
                 // 더보기 버튼은 stopPropagation으로 이 핸들러를 막는다.
                 onClick={onCreate ? () => onCreate(key) : undefined}
                 title={onCreate ? "클릭하여 이 날짜에 일정 추가" : undefined}
               >
-                <div className="month-daynum">{d.getDate()}</div>
+                <div className="month-cellhead">
+                  <div className="month-daynum">{d.getDate()}</div>
+                  {evs.length > 0 && (
+                    // 칸이 좁아 칩을 다 못 보여줘도 "몇 건인지"는 항상 보이게.
+                    <span className="month-count" title={`${evs.length}개 일정`}>
+                      {evs.length}
+                    </span>
+                  )}
+                </div>
                 {evs.slice(0, 3).map((e) => (
                   <button
                     // Same event can sit on two visible calendars — id alone duplicates keys.
@@ -4720,10 +5303,10 @@ function MonthGrid({
                       className="month-ev-dot"
                       style={{ background: e.color ?? "#1a73e8" }}
                     />
-                    <span className="month-ev-t">
-                      {e.allDay ? "" : `${evTimeLabel(e, key)} `}
-                      {e.summary}
-                    </span>
+                    {!e.allDay && (
+                      <span className="month-ev-time">{compactTime(evTimeLabel(e, key))}</span>
+                    )}
+                    <span className="month-ev-t">{e.summary}</span>
                   </button>
                 ))}
                 {evs.length > 3 && (
@@ -4864,6 +5447,10 @@ function evTimeLabel(e: CalEvent, dayKey: string): string {
   if (e.allDay) return "종일";
   return localDayKey(e.start) === dayKey ? formatTime(e.start) : "계속";
 }
+// 월 칸은 폭이 좁다 — "09:00"의 앞자리 0을 떼서 제목에 한 글자라도 더 준다.
+function compactTime(label: string): string {
+  return /^0\d:/.test(label) ? label.slice(1) : label;
+}
 
 // Every local day key an event spans. All-day ends are exclusive (Google);
 // timed events ending exactly at midnight don't occupy that day.
@@ -4919,10 +5506,7 @@ function addMonths(d: Date, n: number): Date {
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return HM_FMT.format(new Date(iso));
 }
 
 function formatDayHeader(key: string): string {
@@ -4954,11 +5538,18 @@ function DayEventsModal({
   onEvent: (e: CalEvent) => void;
   onClose: () => void;
 }) {
+  const dlg = useResizableDialog("day-events", 380, 300);
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="dialog"
+        ref={dlg.ref}
+        style={dlg.style}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <strong>{formatDayHeader(dayKey)}</strong>
+          <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
           <button className="clear" onClick={onClose}>
             ✕
           </button>
@@ -4982,6 +5573,7 @@ function DayEventsModal({
             </button>
           ))}
         </div>
+        <DialogGrip onPointerDown={dlg.onGripDown} onReset={dlg.reset} />
       </div>
     </div>
   );
@@ -5026,11 +5618,18 @@ function EventDetailModal({
   }, [ev.calendarId, ev.id, onLogout]);
 
   const d = detail;
+  const dlg = useResizableDialog("event-detail", 400, 320);
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="dialog"
+        ref={dlg.ref}
+        style={dlg.style}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <strong>일정</strong>
+          <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
           <button className="clear" onClick={onClose}>
             ✕
           </button>
@@ -5078,10 +5677,12 @@ function EventDetailModal({
               title="event-description"
               sandbox="allow-popups allow-popups-to-escape-sandbox"
               className="ev-desc"
-              srcDoc={prepareEmailHtml(
-                d.description,
-                "font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word",
-              )}
+              srcDoc={
+                prepareEmailHtml(
+                  d.description,
+                  "font-family:-apple-system,sans-serif;font-size:13px;color:#202124;margin:0;white-space:pre-wrap;word-break:break-word",
+                ).html
+              }
             />
           )}
         </div>
@@ -5121,6 +5722,7 @@ function EventDetailModal({
             Google 캘린더에서 열기
           </a>
         </div>
+        <DialogGrip onPointerDown={dlg.onGripDown} onReset={dlg.reset} />
       </div>
     </div>
   );
@@ -5154,10 +5756,10 @@ function formatEventWhen(e: CalEvent): string {
     day: "numeric",
     weekday: "short",
   });
-  const st = s.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  const st = HM_FMT.format(s);
   if (!e.end) return `${date} ${st}`;
   const en = new Date(e.end);
-  const et = en.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+  const et = HM_FMT.format(en);
   if (s.toDateString() === en.toDateString()) return `${date} ${st} – ${et}`;
   const ed = en.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
   return `${date} ${st} – ${ed} ${et}`;
@@ -5184,54 +5786,182 @@ function htmlToText(html: string): string {
   }
 }
 
-// ---- 인용/전달 체인 접기 (뷰어 전용) ----
-// "전달→전달→전달"로 쌓인 본문은 한 덩어리 벽이 된다. 클라이언트별 인용 컨테이너를
-// <details>로 감싸 단계마다 접고 펼 수 있게 한다 — 전달 본문(그 메일의 알맹이)은
-// 펼친 채 라벨만 붙이고, 답장 히스토리(스레드 뷰에 이미 위로 보이는 중복)는 접는다.
+// ---- 인용/전달 체인 단계 분해 (뷰어 전용) ----
+// "전달→전달→전달"로 열 번 옮겨다닌 메일은 지금까지 한 덩어리 벽으로 열렸다.
+// 클라이언트별 인용 컨테이너를 <details>로 감싸 단계마다 접고, 각 단계의
+// 보낸사람·날짜·제목을 뽑아 라벨로 붙인다 — 어느 시점의 메일인지 보고 하나씩
+// 들어갈 수 있다. 기본은 전부 접힘(지금 이 메일이 쓴 내용만 먼저 보인다).
 // iframe은 무스크립트라 네이티브 <details> 토글을 그대로 쓴다 (높이는 부모가
-// toggle 이벤트로 재계산).
+// toggle 이벤트로 재계산, 단계 이동은 부모가 same-origin으로 open을 켠다).
 const QUOTE_ROOT_SEL =
   'div.gmail_quote, blockquote[type="cite"], div.yahoo_quoted, div[id^="divRplyFwdMsg"], div.mail-fwd, div.mail-quote';
 const FWD_MARK = /forwarded message|전달된 메일|begin forwarded|original message|원본 메일/i;
+const HDR_FROM = /(?:^|\n)[ \t>]*(?:from|보낸\s?사람|발신자)\s*:\s*(.+)/i;
+const HDR_DATE = /(?:^|\n)[ \t>]*(?:date|sent|보낸\s?날짜|날짜)\s*:\s*(.+)/i;
+const HDR_SUBJ = /(?:^|\n)[ \t>]*(?:subject|제목)\s*:\s*(.+)/i;
+// "2026년 7월 20일 … 홍길동 <a@b> 님이 작성:" / "On …, X <a@b> wrote:"
+const ATTR_LINE = /([^\n]{0,200}?(?:님이\s*작성|wrote))\s*[:：]\s*$/i;
 
-function foldQuoteChains(doc: Document): void {
+type QuoteStage = {
+  n: number; // 1부터 — 1이 가장 최근(바깥) 인용
+  depth: number; // 중첩 깊이 (들여쓰기 단계)
+  who: string;
+  when: string;
+  subject: string;
+};
+
+// textContent는 <br>·블록 경계를 죄다 붙여버려서 "…---From: 홍길동Date: …"이 된다
+// — 인용 머리말 파싱이 통째로 실패하던 원인. 줄바꿈을 살려 앞부분만 뽑는다.
+// 문자 예산을 채우면 즉시 멈추므로 큰 본문을 훑지 않는다.
+const BLOCK_TAGS = new Set([
+  "DIV",
+  "P",
+  "TR",
+  "LI",
+  "TABLE",
+  "BLOCKQUOTE",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "PRE",
+  "SECTION",
+]);
+function headLines(root: Node, budget = 600): string {
+  let out = "";
+  const walk = (node: Node): boolean => {
+    if (out.length >= budget) return true;
+    if (node.nodeType === Node.TEXT_NODE) {
+      out += node.nodeValue ?? "";
+      return out.length >= budget;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return false;
+    const el = node as Element;
+    if (el.tagName === "BR") {
+      out += "\n";
+      return false;
+    }
+    const block = BLOCK_TAGS.has(el.tagName);
+    if (block && out && !out.endsWith("\n")) out += "\n";
+    for (const child of [...el.childNodes]) {
+      if (walk(child)) return true;
+    }
+    if (block && out && !out.endsWith("\n")) out += "\n";
+    return out.length >= budget;
+  };
+  walk(root);
+  return out.slice(0, budget);
+}
+
+function tidyLine(s: string, max = 80): string {
+  const t = s.split("\n")[0].replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+// 인용 머리말에서 보낸사람/날짜/제목을 건진다. 헤더 형식(전달)이 없으면
+// 답장 인용의 "…님이 작성:" 한 줄을 그대로 라벨로 쓴다.
+function stageMeta(head: string, prev: string): { who: string; when: string; subject: string } {
+  const grab = (re: RegExp) => {
+    const m = re.exec(head);
+    return m ? tidyLine(m[1]) : "";
+  };
+  const who = grab(HDR_FROM);
+  const when = grab(HDR_DATE);
+  const subject = grab(HDR_SUBJ);
+  if (who || when || subject) return { who, when, subject };
+  const attr = ATTR_LINE.exec(prev.trim()) ?? ATTR_LINE.exec(head.slice(0, 300).trim());
+  return { who: attr ? tidyLine(attr[1]) : "", when: "", subject: "" };
+}
+
+const QUOTE_FOLD_CSS =
+  `details.qf{margin:12px 0;padding-left:12px;border-left:3px solid #d7dfea;` +
+  `border-radius:0 10px 10px 0;background:linear-gradient(90deg,rgba(238,242,248,.7),rgba(238,242,248,0) 160px)}` +
+  `details.qf[data-depth="1"]{border-left-color:#c3cee0}` +
+  `details.qf[data-depth="2"]{border-left-color:#aebdd6}` +
+  `details.qf[data-depth="3"]{border-left-color:#9aaccc}` +
+  `details.qf[data-depth="4"]{border-left-color:#889cc2}` +
+  `details.qf[data-depth="5"]{border-left-color:#7a8fb8}` +
+  `details.qf>summary{list-style:none;cursor:pointer;user-select:none;display:flex;` +
+  `align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px 8px 4px;` +
+  `font:600 12.5px/1.4 -apple-system,"Apple SD Gothic Neo",system-ui,sans-serif;color:#3c4453}` +
+  `details.qf>summary:hover{color:#1b1f27}` +
+  `details.qf>summary::-webkit-details-marker{display:none}` +
+  `details.qf>summary::before{content:"▶";font-size:9px;color:#98a2b3}` +
+  `details.qf[open]>summary::before{content:"▼"}` +
+  `details.qf[open]>summary{border-bottom:1px dashed #e3e7ee;margin-bottom:10px}` +
+  `.qf-n{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;` +
+  `padding:0 7px;border-radius:999px;background:#e7edf9;color:#2160d8;font-size:11px;font-weight:700}` +
+  `.qf-who{color:#1b1f27}` +
+  `.qf-when{color:#8a93a3;font-weight:500}` +
+  `.qf-sub{color:#5f6368;font-weight:500;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
+
+function foldQuoteChains(doc: Document): QuoteStage[] {
   const roots = [...doc.querySelectorAll(QUOTE_ROOT_SEL)];
-  let folded = 0;
+  if (roots.length === 0) return [];
+  // 이 메일이 직접 쓴 분량 — 인용을 다 접었을 때 볼 게 남는지 판단한다.
+  const ownBody = doc.body.cloneNode(true) as HTMLElement;
+  ownBody.querySelectorAll(QUOTE_ROOT_SEL).forEach((n) => n.remove());
+  const ownLen = (ownBody.textContent ?? "").replace(/\s+/g, "").length;
+
+  // 감싸기 전에 깊이를 재 둔다 — 래핑이 끝난 뒤엔 조상 구조가 바뀐다.
+  const depths = new Map<Element, number>();
   for (const el of roots) {
-    // Apple Mail 전달은 "Begin forwarded message:" 마커가 blockquote 밖 앞줄에
-    // 있다 — 컨테이너 머리말과 직전 형제 텍스트를 함께 본다.
-    const head = (el.textContent ?? "").slice(0, 400);
-    const prev = (el.previousElementSibling?.textContent ?? "").slice(-200);
-    const isFwd =
-      el.matches(".mail-fwd") || FWD_MARK.test(head) || FWD_MARK.test(prev);
-    const text = (el.textContent ?? "").trim();
+    let d = 0;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (p.matches(QUOTE_ROOT_SEL)) d++;
+    }
+    depths.set(el, d);
+  }
+
+  const stages: QuoteStage[] = [];
+  for (const el of roots) {
+    const head = headLines(el, 600);
+    const prevEl = el.previousElementSibling;
+    const prev = prevEl ? headLines(prevEl, 300).slice(-300) : "";
+    // Apple Mail 전달은 "Begin forwarded message:" 마커가 blockquote 밖 앞줄에 있다.
+    const isFwd = el.matches(".mail-fwd") || FWD_MARK.test(head) || FWD_MARK.test(prev);
     // 한두 줄짜리 인용까지 접으면 클릭만 늘어난다.
-    if (!isFwd && text.length < 150) continue;
+    if (!isFwd && (el.textContent ?? "").trim().length < 80) continue;
+
+    const n = stages.length + 1;
+    const depth = depths.get(el) ?? 0;
+    const meta = stageMeta(head, prev);
+    stages.push({ n, depth, ...meta });
+
     const details = doc.createElement("details");
-    details.className = "quote-fold";
-    if (isFwd) details.setAttribute("open", "");
+    details.className = "qf";
+    details.id = `qstage-${n}`;
+    details.dataset.depth = String(Math.min(depth, 5));
+    // 알맹이가 전달 한 통뿐인 메일(스스로 쓴 말이 없음)은 첫 단계를 펴 둔다.
+    // 한마디라도 직접 썼으면 접어 둔 채 시작한다 — 그게 이 화면의 요점.
+    if (n === 1 && ownLen < 12) details.setAttribute("open", "");
+
     const summary = doc.createElement("summary");
-    summary.textContent = isFwd ? "전달된 메일" : "⋯ 이전 대화 내용";
+    const badge = doc.createElement("span");
+    badge.className = "qf-n";
+    badge.textContent = String(n);
+    const who = doc.createElement("span");
+    who.className = "qf-who";
+    who.textContent = meta.who || (isFwd ? "전달된 메일" : "이전 대화");
+    summary.append(badge, who);
+    for (const [cls, text] of [
+      ["qf-when", meta.when],
+      ["qf-sub", meta.subject],
+    ] as const) {
+      if (!text) continue;
+      const span = doc.createElement("span");
+      span.className = cls;
+      span.textContent = text;
+      summary.append(span);
+    }
     el.replaceWith(details);
     details.append(summary, el);
-    folded++;
   }
-  if (!folded) return;
+  if (stages.length === 0) return stages;
   const st = doc.createElement("style");
-  st.textContent =
-    `details.quote-fold{margin:10px 0}` +
-    `details.quote-fold>summary{list-style:none;cursor:pointer;user-select:none;` +
-    `display:inline-block;font:600 12px/1 -apple-system,system-ui,sans-serif;` +
-    `letter-spacing:.2px;color:#5f6368;background:#f1f3f6;border:1px solid #e3e7ee;` +
-    `border-radius:999px;padding:5px 12px}` +
-    `details.quote-fold>summary::-webkit-details-marker{display:none}` +
-    `details.quote-fold>summary::before{content:"▸ ";color:#8a93a3}` +
-    `details.quote-fold[open]>summary::before{content:"▾ "}` +
-    `details.quote-fold[open]>summary{margin-bottom:8px}` +
-    // 펼쳤을 때 단계 경계가 보이도록 접힌 블록에 왼쪽 가이드라인을 깐다
-    // (인라인 스타일이 이미 있는 gmail_quote 등은 자기 스타일이 우선).
-    `details.quote-fold>:not(summary){border-left:3px solid #e3e7ee;padding-left:12px}`;
+  st.textContent = QUOTE_FOLD_CSS;
   doc.head.append(st);
+  return stages;
 }
 
 // Rendered email/description HTML lives in a sandboxed iframe (no scripts).
@@ -5241,7 +5971,7 @@ function prepareEmailHtml(
   html: string,
   bodyStyle?: string,
   cidUrls?: Map<string, string>,
-): string {
+): { html: string; stages: QuoteStage[] } {
   try {
     const doc = new DOMParser().parseFromString(html, "text/html");
     // Hostile <meta http-equiv="refresh"> would replace the rendered body
@@ -5298,27 +6028,166 @@ function prepareEmailHtml(
       a.setAttribute("target", "_blank");
       a.setAttribute("rel", "noopener noreferrer");
     });
-    foldQuoteChains(doc);
+    const stages = foldQuoteChains(doc);
     if (bodyStyle) {
       const prev = doc.body.getAttribute("style") ?? "";
       doc.body.setAttribute("style", `${bodyStyle};${prev}`);
     }
-    return `<!doctype html>${doc.documentElement.outerHTML}`;
+    return { html: `<!doctype html>${doc.documentElement.outerHTML}`, stages };
   } catch {
-    return `<base target="_blank">${html}`;
+    return { html: `<base target="_blank">${html}`, stages: [] };
   }
 }
 
-function ymd(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-function ymdhm(d: Date): string {
-  return `${ymd(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
 function addDays(ymdStr: string, n: number): string {
   const d = new Date(`${ymdStr}T00:00:00`);
   d.setDate(d.getDate() + n);
-  return ymd(d);
+  return dateKey(d);
+}
+// 로컬 시각을 24시간제 "HH:MM"으로.
+function hm(d: Date): string {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+// 날짜/시각 문자열 → 로컬 Date. 빈 값(입력 중)이면 Invalid Date — 호출부가 검사한다.
+function atLocal(day: string, time: string): Date {
+  return new Date(`${day}T${time || "00:00"}:00`);
+}
+// YYYY-MM-DD 사이의 일수. 로컬 자정 기준이라 DST가 껴도 ±1시간은 반올림이 흡수한다.
+function dayDiff(from: string, to: string): number {
+  return Math.round(
+    (new Date(`${to}T00:00:00`).getTime() - new Date(`${from}T00:00:00`).getTime()) /
+      86_400_000,
+  );
+}
+function durationLabel(mins: number): string {
+  if (mins <= 0) return "";
+  const parts: string[] = [];
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  if (d) parts.push(`${d}일`);
+  if (h) parts.push(`${h}시간`);
+  if (m) parts.push(`${m}분`);
+  return parts.join(" ");
+}
+const WEEKDAY_FMT = new Intl.DateTimeFormat("ko-KR", { weekday: "short" });
+function weekdayLabel(day: string): string {
+  const d = new Date(`${day}T00:00:00`);
+  return isNaN(+d) ? "" : WEEKDAY_FMT.format(d);
+}
+
+const DUR_PRESETS = [30, 60, 90, 120];
+const SPAN_PRESETS = [1, 2, 3, 7];
+const REMINDER_OPTS: [string, string][] = [
+  ["default", "캘린더 기본"],
+  ["none", "없음"],
+  ["0", "시작 시"],
+  ["10", "10분 전"],
+  ["30", "30분 전"],
+  ["60", "1시간 전"],
+  ["1440", "1일 전"],
+];
+const DEFAULT_DUR_MS = 3_600_000;
+
+// 30분 격자 — 시각 입력의 드롭다운 후보.
+const TIME_OPTIONS = Array.from(
+  { length: 48 },
+  (_, i) => `${pad2(Math.floor(i / 2))}:${i % 2 ? "30" : "00"}`,
+);
+const TIME_LIST_ID = "ev-time-options";
+
+// "9"→09:00, "930"·"9:3"→09:30, "1530"·"15시30분"→15:30. 못 읽으면 null.
+function parseTime(raw: string): string | null {
+  const s = raw.trim().replace(/\s+/g, "");
+  if (!s) return null;
+  let h: number;
+  let m: number;
+  const sep = /^(\d{1,2})[:시.](\d{1,2})?분?$/.exec(s);
+  const digits = /^(\d{1,4})$/.exec(s);
+  if (sep) {
+    h = Number(sep[1]);
+    // "9:3"은 9시 3분보다 9시 30분을 노린 입력이다 (한 자리 = 십의 자리).
+    m = sep[2] ? Number(sep[2].length === 1 ? `${sep[2]}0` : sep[2]) : 0;
+  } else if (digits) {
+    const d = digits[1];
+    h = d.length <= 2 ? Number(d) : Number(d.slice(0, -2));
+    m = d.length <= 2 ? 0 : Number(d.slice(-2));
+  } else {
+    return null;
+  }
+  if (h > 23 || m > 59) return null;
+  return `${pad2(h)}:${pad2(m)}`;
+}
+
+// 네이티브 <input type="time">은 Chrome이 브라우저 로캘로만 그린다 — lang 속성으로도
+// 못 바꿔서 ko에서는 "오후 03:00"이 강제된다. 24시간제를 쓰려고 직접 만든 입력.
+function TimeField({
+  value,
+  label,
+  onChange,
+}: {
+  value: string;
+  label: string;
+  onChange: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
+  // 프리셋·시작 이동으로 바깥 값이 바뀌면 따라간다 (타이핑 중에는 방해하지 않는다).
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
+
+  const commit = (raw: string) => {
+    const next = parseTime(raw);
+    // 못 읽는 입력은 마지막 정상값으로 되돌린다 — 빈 칸으로 저장이 막히지 않게.
+    setDraft(next ?? value);
+    if (next && next !== value) onChange(next);
+  };
+  const step = (delta: number) => {
+    const base = parseTime(draft) ?? value;
+    const [h, m] = base.split(":").map(Number);
+    const t = (((h * 60 + m + delta) % 1440) + 1440) % 1440;
+    const next = `${pad2(Math.floor(t / 60))}:${pad2(t % 60)}`;
+    setDraft(next);
+    onChange(next);
+  };
+
+  return (
+    <input
+      className="ev-input ev-time"
+      type="text"
+      inputMode="numeric"
+      list={TIME_LIST_ID}
+      aria-label={label}
+      placeholder="HH:MM"
+      title="24시간제 · ↑↓ 5분 · Shift+↑↓ 1시간"
+      value={draft}
+      onFocus={(e) => {
+        setEditing(true);
+        e.target.select();
+      }}
+      onChange={(e) => {
+        const v = e.target.value;
+        setDraft(v);
+        // 드롭다운 선택·완전한 타이핑은 blur를 기다리지 않고 바로 반영한다.
+        if (/^\d{2}:\d{2}$/.test(v)) commit(v);
+      }}
+      onBlur={(e) => {
+        setEditing(false);
+        commit(e.target.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          step((e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 60 : 5));
+        } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+          // ⌘↵(저장)은 그대로 위로 흘리고, 맨 Enter는 값 확정만.
+          e.preventDefault();
+          commit(e.currentTarget.value);
+        }
+      }}
+    />
+  );
 }
 
 function EventEditModal({
@@ -5336,28 +6205,46 @@ function EventEditModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const init = (() => {
+  // 날짜와 시각을 따로 잡는다 — datetime-local 한 덩어리는 클릭/타이핑이 길고,
+  // 종일로 토글할 때마다 시각을 잃어버린다.
+  const init = useMemo(() => {
     if (initial.start) {
       if (initial.allDay) {
-        const s = initial.start.slice(0, 10);
-        const e = initial.end ? addDays(initial.end.slice(0, 10), -1) : s;
-        return { allDay: true, start: s, end: e < s ? s : e };
+        const sd = initial.start.slice(0, 10);
+        // Google 종일 종료는 exclusive — 화면에는 마지막 날(inclusive)을 쓴다.
+        const ed = initial.end ? addDays(initial.end.slice(0, 10), -1) : sd;
+        return {
+          allDay: true,
+          sDate: sd,
+          sTime: "09:00",
+          eDate: ed < sd ? sd : ed,
+          eTime: "10:00",
+        };
       }
+      const s = new Date(initial.start);
+      const e = new Date(initial.end || initial.start);
       return {
         allDay: false,
-        start: ymdhm(new Date(initial.start)),
-        end: ymdhm(new Date(initial.end || initial.start)),
+        sDate: dateKey(s),
+        sTime: hm(s),
+        eDate: dateKey(e),
+        eTime: hm(e),
       };
     }
-    const n = new Date();
-    n.setMinutes(0, 0, 0);
-    n.setHours(n.getHours() + 1);
-    return {
-      allDay: false,
-      start: ymdhm(n),
-      end: ymdhm(new Date(n.getTime() + 3_600_000)),
-    };
-  })();
+    const s = new Date();
+    s.setMinutes(0, 0, 0);
+    s.setHours(s.getHours() + 1);
+    const e = new Date(s.getTime() + DEFAULT_DUR_MS);
+    return { allDay: false, sDate: dateKey(s), sTime: hm(s), eDate: dateKey(e), eTime: hm(e) };
+    // 모달이 열린 순간으로 고정 — 리렌더마다 "지금"이 흘러가면 안 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const initReminder =
+    initial.reminder === undefined || initial.reminder === "default"
+      ? "default"
+      : initial.reminder === "none"
+        ? "none"
+        : String(initial.reminder);
 
   // Read-only(reader/freeBusyReader) calendars 403 on insert — never offer them.
   const writable = calendars.filter(
@@ -5371,21 +6258,28 @@ function EventEditModal({
   );
   const [summary, setSummary] = useState(initial.summary ?? "");
   const [allDay, setAllDay] = useState(init.allDay);
-  const [start, setStart] = useState(init.start);
-  const [end, setEnd] = useState(init.end);
+  const [sDate, setSDate] = useState(init.sDate);
+  const [sTime, setSTime] = useState(init.sTime);
+  const [eDate, setEDate] = useState(init.eDate);
+  const [eTime, setETime] = useState(init.eTime);
   const [location, setLocation] = useState(initial.location ?? "");
   const [description, setDescription] = useState(initial.description ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [attendees, setAttendees] = useState((initial.attendees ?? []).join(", "));
-  const [reminder, setReminder] = useState<string>(
-    initial.reminder === undefined || initial.reminder === "default"
-      ? "default"
-      : initial.reminder === "none"
-        ? "none"
-        : String(initial.reminder),
-  );
+  const [reminder, setReminder] = useState<string>(initReminder);
   const [meet, setMeet] = useState(false);
+  // 제목·시간만 있으면 끝나는 게 대부분 — 나머지는 접어 두고 필요할 때 편다.
+  // 이미 값이 들어온 경우(메일에서 만들기·수정)는 감추면 안 된다.
+  const [details, setDetails] = useState(
+    !!(
+      eventId ||
+      initial.location ||
+      initial.description ||
+      initial.attendees?.length ||
+      initReminder !== "default"
+    ),
+  );
   // 참석자 자동완성 — 작성창과 같은 연락처 캐시를 공유한다.
   const [contacts, setContacts] = useState<Contact[]>([]);
   useEffect(() => {
@@ -5398,27 +6292,87 @@ function EventEditModal({
     };
   }, []);
 
-  const toggleAllDay = (v: boolean) => {
+  const startAt = atLocal(sDate, sTime);
+  const endAt = atLocal(eDate, eTime);
+  const durMin =
+    isNaN(+startAt) || isNaN(+endAt)
+      ? 0
+      : Math.round((endAt.getTime() - startAt.getTime()) / 60_000);
+  const spanDays = sDate && eDate ? dayDiff(sDate, eDate) + 1 : 0;
+
+  // 시작을 옮기면 길이를 유지한 채 종료도 따라간다 — 매번 종료를 다시 찍던
+  // 왕복이 사라지고, "종료가 시작보다 빠름" 에러도 안 난다.
+  const moveStart = (nextDate: string, nextTime: string) => {
+    setSDate(nextDate);
+    setSTime(nextTime);
+    if (!nextDate) return;
+    if (allDay) {
+      setEDate(addDays(nextDate, Math.max(0, spanDays - 1)));
+      return;
+    }
+    const ns = atLocal(nextDate, nextTime);
+    if (!nextTime || isNaN(+ns)) return;
+    const ne = new Date(ns.getTime() + (durMin > 0 ? durMin * 60_000 : DEFAULT_DUR_MS));
+    setEDate(dateKey(ne));
+    setETime(hm(ne));
+  };
+  const setDuration = (mins: number) => {
+    if (isNaN(+startAt)) return;
+    const ne = new Date(startAt.getTime() + mins * 60_000);
+    setEDate(dateKey(ne));
+    setETime(hm(ne));
+  };
+  // 종료를 시작보다 이른 시각으로 잡으면 "자정 넘김"이 의도다 — 에러를 띄우는
+  // 대신 종료일을 하루 민다. 이미 여러 날짜에 걸친 일정은 건드리지 않는다.
+  const setEndTime = (v: string) => {
+    setETime(v);
+    if (eDate === sDate && !(atLocal(sDate, v) > startAt)) setEDate(addDays(sDate, 1));
+  };
+  const setSpan = (days: number) => setEDate(addDays(sDate, days - 1));
+  const setAllDayMode = (v: boolean) => {
     if (v === allDay) return;
     if (v) {
-      setStart(start.slice(0, 10));
-      setEnd(end.slice(0, 10));
-    } else {
-      setStart(`${start.slice(0, 10)}T09:00`);
-      setEnd(`${end.slice(0, 10)}T10:00`);
+      // 자정에 끝나는 일정은 그 다음 날을 점유하지 않는다 — 하루 덜 잡는다.
+      if (eTime === "00:00" && eDate > sDate) setEDate(addDays(eDate, -1));
+    } else if (!(atLocal(eDate, eTime) > startAt)) {
+      // 종일 동안 시각이 뒤집혔으면 시작+1시간으로 복구한다.
+      const ne = new Date(startAt.getTime() + DEFAULT_DUR_MS);
+      setEDate(dateKey(ne));
+      setETime(hm(ne));
     }
     setAllDay(v);
   };
 
+  // 저장 버튼을 누른 뒤가 아니라 입력하는 동안 바로 알려준다.
+  const rangeErr = (() => {
+    if (!sDate || !eDate || (!allDay && (!sTime || !eTime))) return "시작/종료를 입력하세요.";
+    if (allDay) return eDate < sDate ? "종료일이 시작일보다 빠릅니다." : null;
+    if (isNaN(+startAt) || isNaN(+endAt)) return "일시 형식이 올바르지 않습니다.";
+    return endAt <= startAt ? "종료가 시작보다 빠릅니다." : null;
+  })();
+  // Existing events may legitimately be untitled (raw summary "")
+  // — requiring a title here would make them uneditable.
+  const canSave = !busy && !rangeErr && (!!eventId || !!summary.trim());
+
+  const dirty =
+    summary !== (initial.summary ?? "") ||
+    location !== (initial.location ?? "") ||
+    description !== (initial.description ?? "") ||
+    attendees !== (initial.attendees ?? []).join(", ") ||
+    reminder !== initReminder ||
+    meet ||
+    allDay !== init.allDay ||
+    sDate !== init.sDate ||
+    eDate !== init.eDate ||
+    (!allDay && (sTime !== init.sTime || eTime !== init.eTime));
+  // 바깥 클릭 한 번에 작성 중이던 일정이 날아가지 않게.
+  const tryClose = () => {
+    if (!dirty || confirm("작성 중인 내용을 버릴까요?")) onClose();
+  };
+
   const save = async () => {
     if (!calendarId) return setErr("쓸 수 있는 캘린더가 없습니다.");
-    if (!start || !end) return setErr("시작/종료 일시를 입력하세요.");
-    if (allDay ? end < start : new Date(end) <= new Date(start)) {
-      return setErr("종료가 시작보다 빠릅니다.");
-    }
-    if (!allDay && (isNaN(+new Date(start)) || isNaN(+new Date(end)))) {
-      return setErr("일시 형식이 올바르지 않습니다.");
-    }
+    if (rangeErr) return setErr(rangeErr);
     setBusy(true);
     setErr(null);
     try {
@@ -5426,6 +6380,7 @@ function EventEditModal({
       const badTok = attToks.find((t) => !/[^\s@]+@[^\s@]+\.[^\s@]+/.test(parseAddr(t).email));
       if (badTok) {
         setBusy(false);
+        setDetails(true);
         return setErr(`참석자 주소가 올바르지 않습니다: ${badTok}`);
       }
       const body: EventInput = {
@@ -5434,8 +6389,9 @@ function EventEditModal({
         allDay,
         location,
         description,
-        start: allDay ? start : new Date(start).toISOString(),
-        end: allDay ? addDays(end, 1) : new Date(end).toISOString(),
+        start: allDay ? sDate : startAt.toISOString(),
+        // 종일 종료는 exclusive — 화면의 마지막 날 +1일을 보낸다.
+        end: allDay ? addDays(eDate, 1) : endAt.toISOString(),
         attendees: attToks.map((t) => parseAddr(t).email),
         reminder:
           reminder === "default" ? "default" : reminder === "none" ? "none" : Number(reminder),
@@ -5455,125 +6411,231 @@ function EventEditModal({
     }
   };
 
+  const today = dateKey(new Date());
+  const dayShortcuts: [string, string][] = [
+    ["오늘", today],
+    ["내일", addDays(today, 1)],
+    ["다음 주", addDays(today, 7)],
+  ];
+  const calColor = writable.find((c) => c.id === calendarId)?.backgroundColor;
+  const dlg = useResizableDialog("event-edit", 460, 380);
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" onClick={tryClose}>
+      <div
+        className="dialog ev-dialog"
+        ref={dlg.ref}
+        style={dlg.style}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // 참석자 자동완성이 Escape를 이미 먹었으면(preventDefault) 모달은 열어 둔다.
+          if (e.key === "Escape" && !e.defaultPrevented) {
+            e.stopPropagation();
+            tryClose();
+          } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSave) {
+            e.preventDefault();
+            void save();
+          }
+        }}
+      >
         <div className="modal-head">
           <strong>{eventId ? "일정 수정" : "새 일정"}</strong>
-          <button className="clear" onClick={onClose}>
+          <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
+          <button className="clear" onClick={tryClose}>
             ✕
           </button>
         </div>
         <div className="ev-form">
           <input
-            className="ev-input"
-            placeholder="제목"
+            className="ev-title-input"
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+            placeholder="제목 추가"
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
           />
-          <label className="ev-allday">
-            <input
-              type="checkbox"
-              checked={allDay}
-              onChange={(e) => toggleAllDay(e.target.checked)}
-            />
-            종일
-          </label>
-          <div className="ev-times">
-            <input
-              className="ev-input"
-              type={allDay ? "date" : "datetime-local"}
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-            />
-            <span>→</span>
-            <input
-              className="ev-input"
-              type={allDay ? "date" : "datetime-local"}
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-            />
+          <div className="ev-section">
+            <div className="ev-when-head">
+              <div className="ev-seg">
+                <button
+                  type="button"
+                  className={allDay ? "" : "on"}
+                  onClick={() => setAllDayMode(false)}
+                >
+                  시간 지정
+                </button>
+                <button
+                  type="button"
+                  className={allDay ? "on" : ""}
+                  onClick={() => setAllDayMode(true)}
+                >
+                  종일
+                </button>
+              </div>
+              <div className="ev-chips">
+                {dayShortcuts.map(([label, day]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={`ev-chip${sDate === day ? " on" : ""}`}
+                    onClick={() => moveStart(day, sTime)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="ev-when-row">
+              <span className="ev-when-lbl">시작</span>
+              <input
+                className="ev-input ev-date"
+                type="date"
+                value={sDate}
+                onChange={(e) => moveStart(e.target.value, sTime)}
+              />
+              {!allDay && (
+                <TimeField
+                  label="시작 시각"
+                  value={sTime}
+                  onChange={(v) => moveStart(sDate, v)}
+                />
+              )}
+              <span className="ev-when-note">{weekdayLabel(sDate)}</span>
+            </div>
+            <div className="ev-when-row">
+              <span className="ev-when-lbl">종료</span>
+              <input
+                className="ev-input ev-date"
+                type="date"
+                min={sDate}
+                value={eDate}
+                onChange={(e) => setEDate(e.target.value)}
+              />
+              {!allDay && (
+                <TimeField label="종료 시각" value={eTime} onChange={setEndTime} />
+              )}
+              <span className="ev-when-note">
+                {rangeErr ? "" : allDay ? `${spanDays}일` : durationLabel(durMin)}
+              </span>
+            </div>
+            <div className="ev-chips">
+              {allDay
+                ? SPAN_PRESETS.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={`ev-chip${spanDays === n ? " on" : ""}`}
+                      onClick={() => setSpan(n)}
+                    >
+                      {n === 7 ? "1주" : `${n}일`}
+                    </button>
+                  ))
+                : DUR_PRESETS.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`ev-chip${durMin === m ? " on" : ""}`}
+                      onClick={() => setDuration(m)}
+                    >
+                      {durationLabel(m)}
+                    </button>
+                  ))}
+            </div>
+            {/* 시작/종료 시각 입력이 함께 쓰는 30분 격자 드롭다운 */}
+            <datalist id={TIME_LIST_ID}>
+              {TIME_OPTIONS.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+            {rangeErr && <div className="ev-err">⚠️ {rangeErr}</div>}
           </div>
           {writable.length > 1 && (
-            <select
-              className="ev-input"
-              value={calendarId}
-              onChange={(e) => setCalendarId(e.target.value)}
-              // Moving an event between calendars needs events.move — patch
-              // against a different calendarId just 404s. Lock it when editing.
-              disabled={!!eventId}
-              title={eventId ? "일정의 캘린더는 변경할 수 없습니다" : undefined}
-            >
-              {writable.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.summary}
-                </option>
-              ))}
-            </select>
-          )}
-          <input
-            className="ev-input"
-            placeholder="장소 (선택)"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
-          <RecipientField
-            label="참석자"
-            value={attendees}
-            onChange={setAttendees}
-            suggestions={contacts}
-          />
-          <div className="ev-times">
-            <select
-              className="ev-input"
-              title="알림 (팝업)"
-              value={reminder}
-              onChange={(e) => setReminder(e.target.value)}
-            >
-              <option value="default">알림: 캘린더 기본</option>
-              <option value="none">알림 없음</option>
-              <option value="0">일정 시작 시</option>
-              <option value="10">10분 전</option>
-              <option value="30">30분 전</option>
-              <option value="60">1시간 전</option>
-              <option value="1440">1일 전</option>
-            </select>
-            <label
-              className="ev-allday"
-              title="저장 시 Google Meet 화상회의 링크가 생성됩니다"
-            >
-              <input
-                type="checkbox"
-                checked={meet}
-                onChange={(e) => setMeet(e.target.checked)}
+            <div className="ev-cal-row">
+              <span
+                className="ev-dot"
+                style={{ background: calColor ?? "var(--muted)" }}
+                aria-hidden
               />
-              Meet 추가
-            </label>
-          </div>
-          <textarea
-            className="ev-input"
-            placeholder="설명 (선택)"
-            rows={4}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          {err && <div className="ev-row muted">⚠️ {err}</div>}
+              <select
+                className="ev-input"
+                value={calendarId}
+                onChange={(e) => setCalendarId(e.target.value)}
+                // Moving an event between calendars needs events.move — patch
+                // against a different calendarId just 404s. Lock it when editing.
+                disabled={!!eventId}
+                title={eventId ? "일정의 캘린더는 변경할 수 없습니다" : undefined}
+              >
+                {writable.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.summary}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {details ? (
+            <>
+              <input
+                className="ev-input"
+                placeholder="📍 장소 (선택)"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+              />
+              <RecipientField
+                label="참석자"
+                value={attendees}
+                onChange={setAttendees}
+                suggestions={contacts}
+              />
+              <div className="ev-opt-row">
+                <select
+                  className="ev-input"
+                  title="알림 (팝업)"
+                  value={reminder}
+                  onChange={(e) => setReminder(e.target.value)}
+                >
+                  {REMINDER_OPTS.map(([v, label]) => (
+                    <option key={v} value={v}>
+                      🔔 {label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={`ev-chip${meet ? " on" : ""}`}
+                  aria-pressed={meet}
+                  title="저장 시 Google Meet 화상회의 링크가 생성됩니다"
+                  onClick={() => setMeet(!meet)}
+                >
+                  📹 Meet {meet ? "추가됨" : "추가"}
+                </button>
+              </div>
+              <textarea
+                className="ev-input"
+                placeholder="설명 (선택)"
+                rows={4}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </>
+          ) : (
+            <button type="button" className="ev-more" onClick={() => setDetails(true)}>
+              ＋ 장소 · 참석자 · 알림 · 설명
+            </button>
+          )}
+          {err && <div className="ev-err">⚠️ {err}</div>}
         </div>
         <div className="modal-foot">
+          <span className="ev-kbd-hint">⌘↵ 저장 · Esc 닫기</span>
           <span className="modal-spacer" />
-          <button className="btn" onClick={onClose}>
+          <button className="btn" onClick={tryClose}>
             취소
           </button>
-          <button
-            className="btn primary"
-            // Existing events may legitimately be untitled (raw summary "")
-            // — requiring a title here would make them uneditable.
-            disabled={busy || (!eventId && !summary.trim())}
-            onClick={save}
-          >
+          <button className="btn primary" disabled={!canSave} onClick={save}>
             {busy ? "저장 중…" : "저장"}
           </button>
         </div>
+        <DialogGrip onPointerDown={dlg.onGripDown} onReset={dlg.reset} />
       </div>
     </div>
   );

@@ -149,7 +149,25 @@ Google Cloud 화면에서는 상단에 표시되는 프로젝트 이름이 계�
 
 > 본인 주소를 테스트 사용자에 넣지 않으면 로그인할 때 `403 access_denied`가 표시됩니다. 회사나 학교 계정으로 로그인할 예정이라면 그 주소도 테스트 사용자에 추가하세요.
 
-#### 4. Client ID와 Client Secret 발급받기
+#### 4. 앱이 사용할 권한 다섯 개 선택하기
+
+1. [데이터 액세스](https://console.cloud.google.com/auth/scopes)를 엽니다.
+2. **범위 추가 또는 삭제(Add or remove scopes)**를 누릅니다.
+3. 아래 주소를 하나씩 검색해 체크합니다.
+
+| 선택할 권한 | 필요한 이유 |
+|---|---|
+| `https://www.googleapis.com/auth/gmail.modify` | 메일 읽기·발송·정리 |
+| `https://www.googleapis.com/auth/calendar` | 일정 보기·등록·수정 |
+| `https://www.googleapis.com/auth/drive` | 기존 Drive 파일 보기·저장 |
+| `https://www.googleapis.com/auth/contacts.readonly` | Google 주소록 자동완성 |
+| `https://www.googleapis.com/auth/contacts.other.readonly` | 자주 사용한 주소 자동완성 |
+
+4. 다섯 개가 선택됐는지 확인하고 **업데이트 → 저장**을 누릅니다.
+
+> 이 권한들은 메일·일정·파일을 실제로 다루기 위해 필요합니다. 앱을 **테스트 중**으로 두고 등록한 테스트 사용자만 쓰면 Google에 게시하거나 심사를 신청하지 않아도 됩니다.
+
+#### 5. Client ID와 Client Secret 발급받기
 
 1. [클라이언트 만들기](https://console.cloud.google.com/auth/clients)를 엽니다.
 2. **클라이언트 만들기**를 누릅니다.
@@ -174,55 +192,25 @@ http://localhost:8787/auth/callback
 | 프로젝트 | Mail 프로젝트가 선택됨 |
 | 사용 설정한 서비스 | Gmail·Calendar·Drive·People API, 총 4개 |
 | 로그인 대상 | 테스트 사용자에 실제 Gmail 주소가 있음 |
+| 데이터 액세스 | 위 권한 5개가 선택됨 |
 | 클라이언트 유형 | 웹 애플리케이션 |
 | 리디렉션 주소 | `http://localhost:8787/auth/callback` |
 | 발급 결과 | Client ID와 Client Secret을 복사해 둠 |
 
-### ② 앱 내려받고 준비하기
+### ② 앱을 받고 `.env` 입력하기
 
 #### 1. 앱 파일 받기
 
-GitHub에 로그인한 뒤 [최신 버전 ZIP 내려받기](https://github.com/sj00c/mail/archive/refs/heads/main.zip)를 눌러 압축을 풉니다. `404` 화면이 나오면 저장소 접근 권한이 없는 계정이므로 관리자에게 초대를 요청해야 합니다. 압축을 푼 `mail-main` 폴더는 **문서**처럼 나중에도 그대로 둘 장소로 옮겨주세요. 자동 실행을 등록한 뒤 폴더를 옮기면 다시 등록해야 합니다.
+GitHub에 로그인한 뒤 [최신 버전 ZIP 내려받기](https://github.com/sj00c/mail/archive/refs/heads/main.zip)를 눌러 압축을 풉니다. `404` 화면이 나오면 저장소 접근 권한이 없는 계정이므로 관리자에게 초대를 요청해야 합니다.
+
+압축을 푼 `mail-main` 폴더는 **문서**처럼 나중에도 그대로 둘 장소로 옮겨주세요. 설치 후 폴더를 옮기면 자동 실행을 다시 등록해야 합니다.
 
 #### 2. 앱 폴더에서 명령 창 열기
 
 - **macOS:** Finder에서 `mail-main` 폴더를 선택하고 우클릭 → **서비스 → 폴더에서 새로운 터미널**. 메뉴가 없다면 터미널을 열고 `cd `를 입력한 뒤 해당 폴더를 창으로 끌어놓고 Enter를 누릅니다.
 - **Windows:** 파일 탐색기에서 `mail-main` 폴더를 연 뒤 위쪽 주소창에 `powershell`을 입력하고 Enter를 누릅니다.
 
-#### 3. Bun 설치하기
-
-Bun은 이 앱을 실행해 주는 작은 실행 프로그램입니다. 사용하는 컴퓨터에 맞는 명령 **하나만** 붙여넣으세요.
-
-**macOS**
-
-```sh
-curl -fsSL https://bun.com/install | bash
-```
-
-**Windows PowerShell**
-
-```powershell
-powershell -c "irm bun.sh/install.ps1|iex"
-```
-> Windows는 **Windows 10 버전 1809 이상**이 필요합니다.
-
-설치가 끝나면 명령 창을 닫고, 위의 방법으로 앱 폴더에서 다시 엽니다. 아래 명령을 입력했을 때 버전 숫자가 나오면 정상입니다.
-
-```sh
-bun --version
-```
-
-#### 4. 앱에 필요한 파일 준비하기
-
-앱 폴더에서 아래 명령을 한 번 실행합니다.
-
-```sh
-bun install
-```
-
-### ③ Google 연결 정보 넣기
-
-앞에서 복사한 Client ID와 Client Secret을 앱에 넣습니다.
+#### 3. `.env` 파일 만들고 연결 정보 붙여넣기
 
 **macOS**
 
@@ -238,7 +226,7 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-열린 파일에서 **첫 두 줄의 `=` 오른쪽만** 발급받은 값으로 바꿉니다. 아래 두 줄의 주소와 숫자는 그대로 둡니다.
+열린 파일에서 **첫 두 줄의 `=` 오른쪽만** 앞에서 발급받은 값으로 바꿉니다. 아래 두 줄의 주소와 숫자는 그대로 둡니다.
 
 ```text
 GOOGLE_CLIENT_ID=여기에_Client_ID_붙여넣기
@@ -253,43 +241,54 @@ PORT=8787
 - 편집을 마치면 파일을 **저장**하고 닫습니다.
 
 <a id="run-app"></a>
+<a id="auto-start"></a>
 
-### ④ 앱 실행하기
+### ③ 설치 스크립트 한 번 실행하기
 
-앱 폴더에서 아래 두 명령을 순서대로 실행합니다. 첫 실행은 컴퓨터에 따라 잠시 걸릴 수 있습니다.
+> **여기서부터는 한 번이면 끝입니다.** 아래에서 내 컴퓨터에 맞는 명령 하나만 실행하면 필요한 프로그램 설치, 앱 준비, 빌드, 자동 실행 등록까지 모두 처리하고 브라우저를 엽니다.
+
+**macOS**
 
 ```sh
-bun run build
+bash deploy/install.sh
 ```
 
-```sh
-bun run start
+**Windows PowerShell**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\install.ps1
 ```
 
-`[server] http://127.0.0.1:8787`과 비슷한 문구가 나오면 실행된 것입니다. 이 명령 창은 앱을 사용하는 동안 닫지 마세요.
+> Windows는 **Windows 10 버전 1809 이상**이 필요합니다.
 
-브라우저에서 [http://localhost:8787](http://localhost:8787)을 엽니다.
+설치 스크립트가 자동으로 처리하는 내용:
+
+1. `.env`에 실제 Client ID와 Client Secret이 들어갔는지 확인
+2. Bun이 없으면 공식 설치 프로그램으로 자동 설치
+3. 앱에 필요한 파일 설치 및 프로덕션 빌드
+4. 로그인할 때마다 앱이 자동으로 켜지도록 등록
+5. `localhost:8787`이 실제로 열리는지 확인한 뒤 브라우저 실행
+
+중간에 잘못된 Client ID, 빈 Client Secret, 다른 포트가 발견되면 무엇을 고쳐야 하는지 표시하고 설치를 멈춥니다. 연결 정보의 실제 값은 화면이나 로그에 출력하지 않습니다.
+
+`설치가 끝났습니다.`가 표시되면 명령 창을 닫아도 됩니다. 브라우저가 자동으로 열리지 않았다면 [http://localhost:8787](http://localhost:8787)을 직접 여세요.
+
+#### 처음 한 번 Google 로그인
 
 1. **Gmail 연결하기**를 누릅니다.
 2. 테스트 사용자로 등록한 Google 계정을 선택합니다.
 3. 요청되는 Gmail·캘린더·드라이브·주소록 권한을 모두 허용합니다.
-4. **Google에서 확인하지 않은 앱** 경고가 나오면 **고급 → Mail(으)로 이동**을 선택합니다. 본인이 방금 만든 개인용 앱이라 표시되는 정상 안내입니다.
-5. 받은편지함이 보이면 설치가 끝난 것입니다.
+4. **Google에서 확인하지 않은 앱** 경고가 나오면 **고급 → Mail(으)로 이동**을 선택합니다. 본인이 만든 개인용 앱이라 표시되는 정상 안내입니다.
+5. 받은편지함이 보이면 모든 설치가 끝난 것입니다.
 
-직접 실행한 앱을 끄려면 명령 창에서 `Ctrl`과 `C`를 함께 누릅니다.
+> **최종 사용 흐름:** Google 연결 정보 발급 → `.env`에 두 값 입력 → 설치 스크립트 한 번 실행 → 앞으로는 [http://localhost:8787](http://localhost:8787)만 열기
 
-<a id="auto-start"></a>
+자동 실행을 해제할 때만 아래 명령을 사용합니다.
 
-### ⑤ 컴퓨터를 켤 때 자동으로 실행하기 (권장)
-
-자동 실행을 등록하면 매번 명령을 입력할 필요 없이 [http://localhost:8787](http://localhost:8787)만 열면 됩니다. 앱 폴더는 등록 후 옮기지 마세요.
-
-| 내 컴퓨터 | 등록 명령 | 자동 실행 해제 |
-|---|---|---|
-| **macOS** | `bash deploy/install.sh` | `bash deploy/uninstall.sh` |
-| **Windows PowerShell** | `powershell -ExecutionPolicy Bypass -File deploy\install.ps1` | `powershell -File deploy\uninstall.ps1` |
-
-등록 명령은 앱 폴더에서 한 번만 실행하면 됩니다. Windows는 로그인할 때, macOS는 사용자 세션이 시작될 때 앱을 켜고 문제가 생기면 자동으로 다시 실행합니다.
+| 내 컴퓨터 | 자동 실행 해제 |
+|---|---|
+| **macOS** | `bash deploy/uninstall.sh` |
+| **Windows PowerShell** | `powershell -File deploy\uninstall.ps1` |
 
 ---
 
@@ -315,6 +314,8 @@ bun run start
 | 지난 메일 더 보기 | 목록을 그냥 아래로 스크롤 — 자동으로 이어서 불러와요 |
 | 여러 메일 한꺼번에 정리 | 목록에서 체크박스 선택 (Shift-클릭으로 범위 선택) → 읽음/별표/보관/휴지통 |
 | 현재 페이지를 넘어 전체 정리 | **전체메일** 또는 원하는 편지함 → 상단 전체 선택 → **이 보기의 모든 메일 선택** → 읽음/안읽음/휴지통. 실행 전에 서버가 정확한 개수를 다시 확인해 보여줘요 |
+| 화면을 넓게 쓰기 | 왼쪽 위 **▥ 버튼**(또는 `⌘\` / `Ctrl+\`)으로 사이드바를 접었다 펴요. 접힌 상태는 다음에 열 때도 그대로 |
+| 팝업을 더 크게 | 팝업 오른쪽 위 **⤢**로 화면 꽉 채우기, 오른쪽 아래 **모서리를 끌면** 원하는 크기로. 크기는 팝업별로 기억되고 모서리 **더블클릭**하면 기본값 |
 | 정교하게 검색 | `from:` `subject:` `has:attachment` `is:unread` `newer_than:7d` `label:업무` 등 Gmail 문법 그대로 |
 
 ## ❓ 자주 묻는 질문 · 문제 해결
@@ -332,15 +333,15 @@ bun run start
 </details>
 
 <details>
-<summary><b>명령을 입력했는데 “bun을 찾을 수 없습니다”라고 나와요</b></summary>
+<summary><b>설치 중 Bun을 찾지 못했다는 오류가 나요</b></summary>
 
-Bun 설치 직후에는 새 경로가 반영되지 않을 수 있습니다. 열려 있는 터미널이나 PowerShell을 모두 닫고 앱 폴더에서 다시 연 뒤 `bun --version`을 입력하세요. 그래도 안 되면 [설치 ②-3단계](#-처음-설치하기-1회-약-10분)의 Bun 설치 명령을 다시 실행하고 컴퓨터를 재시작하세요.
+설치 스크립트가 Bun을 자동으로 내려받습니다. 인터넷 연결을 확인하고 [설치 ③](#run-app)의 명령을 다시 실행하세요. 회사 보안 프로그램이 `bun.com` 또는 `bun.sh` 다운로드를 막는 경우에는 해당 주소를 허용한 뒤 다시 실행해야 합니다.
 </details>
 
 <details>
 <summary><b>Gmail 연결하기를 눌렀는데 로그인 오류가 나요</b></summary>
 
-`.env` 파일을 저장했는지, Client ID와 Client Secret의 앞뒤에 따옴표·공백이 없는지 확인하세요. 수정했다면 실행 중인 창에서 `Ctrl+C`로 앱을 끄고 [설치 ④ 앱 실행하기](#run-app)의 두 명령을 다시 실행해야 합니다.
+`.env` 파일을 저장했는지, Client ID와 Client Secret의 앞뒤에 따옴표·공백이 없는지 확인하세요. 수정했다면 [설치 ③](#run-app)의 설치 명령을 다시 실행하세요. 스크립트가 기존 설치를 안전하게 갱신하고 서버를 다시 시작합니다.
 </details>
 
 <details>
@@ -370,7 +371,7 @@ Google이 로그인 권한을 만료하거나 사용자가 권한을 회수한 �
 <details>
 <summary><b>페이지가 안 열려요 (localhost:8787)</b></summary>
 
-서버가 꺼져 있는 상태예요. [설치 ④ 앱 실행하기](#run-app)의 두 명령으로 켜거나, [자동 실행](#auto-start)을 등록해 두세요.
+서버가 꺼져 있는 상태예요. [설치 ③](#run-app)의 설치 명령을 다시 실행하면 필요한 파일을 확인하고 자동 실행까지 다시 등록합니다.
 </details>
 
 <details>
