@@ -100,7 +100,7 @@
 1. **[P1] 메일 목록 N+1**: `messages.list` 후 페이지당 25회 `messages.get`(병렬이지만 26 API 왕복/쿼터). Gmail batch HTTP 엔드포인트(`/batch/gmail/v1`)로 1왕복 묶음 처리 → 목록 로딩 지연·쿼터 소모 감소. 무한 스크롤 도입으로 호출 빈도가 늘어 체감 효과 큼.
 2. **[P1] 라벨 unread 카운트 N+1**: `labels.list` 후 표시 라벨마다 `labels.get`. 동일하게 batch 묶음 대상.
 3. **[P2] 메일 목록 windowing**: 무한 스크롤로 DOM이 무한 증식 가능(500행+). 행 높이 고정이라 가상 스크롤 도입 용이.
-4. **[P2] `App.tsx` 분할**: 단일 파일 4,800줄/161KB. 뷰 단위(mail/calendar/drive/search) 모듈 분리 + `React.lazy` 코드 스플리팅. 현재 번들 222KB(gzip 71KB)로 성능보다 유지보수성 이슈.
+4. ~~**[P2] `App.tsx` 분할**~~ — 적용됨: 6,674줄 단일 파일을 `lib/`(format·mailHtml·attachments·settings) + `ui/dialog` + `views/`(reader·compose·calendar·drive·search) 10개 모듈로 분리, App.tsx는 셸(App/Login/Mailbox/Settings) 1,696줄만 유지. 순수 이동(번들 동일 254KB) — 남은 후보: `React.lazy` 지연 로드, `Mailbox`(1,313줄·훅 78개) 훅 추출(useMailList/useOutbox/useInboxPoll).
 5. **[P3] 캘린더 fan-out**: 캘린더 5개 × 최대 4페이지 `events.list` 병렬 호출. 현 규모에선 문제없음 — 캘린더 수가 늘면 batch 검토.
 
 ## 4. 기능 백로그 (제안)
