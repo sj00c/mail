@@ -4,9 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   api,
@@ -39,43 +37,100 @@ import {
 } from "../lib/format.tsx";
 import { prepareEmailHtml } from "../lib/mailHtml.ts";
 import {
+  getCalendarDisplayColor,
+  readPrimaryColorOverride,
+} from "../lib/calendarPresentation.ts";
+import {
   DialogGrip,
   DialogTools,
   MoreSentinel,
   useResizableDialog,
 } from "../ui/dialog.tsx";
 import { loadContactsOnce, RecipientField } from "./compose.tsx";
+function uniquePrimaryId(calendars: readonly Calendar[]) {
+  const primaries = calendars.filter((calendar) => calendar.primary);
+  return primaries.length === 1 ? primaries[0].id : null;
+}
+function handleDialogKeyDown(
+  event: React.KeyboardEvent<HTMLDivElement>,
+  onClose: () => void,
+) {
+  if (event.key === "Escape" && !event.defaultPrevented) {
+    event.stopPropagation();
+    onClose();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const controls = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ].filter((element) => element.offsetParent !== null);
+  if (controls.length === 0) {
+    event.preventDefault();
+    event.currentTarget.focus();
+    return;
+  }
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  const active = document.activeElement;
+  const activeIsControl = active instanceof HTMLElement && controls.includes(active);
+  if (event.shiftKey && (active === first || !activeIsControl)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (active === last || !activeIsControl)) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+export function getEventDisplayColor(
+  event: CalEvent,
+  calendars: readonly Calendar[],
+  primaryColorOverride?: string | null,
+) {
+  const calendar = calendars.find((candidate) => candidate.id === event.calendarId);
+  if (!calendar) return event.color ?? "#1a73e8";
+  const isPrimary = calendar.id === uniquePrimaryId(calendars);
+  const override = isPrimary
+    ? primaryColorOverride === undefined
+      ? readPrimaryColorOverride(calendar.id)
+      : primaryColorOverride
+    : undefined;
+  return getCalendarDisplayColor({ ...calendar, primary: isPrimary }, override);
+}
+
 
 export function CalendarView({
   onLogout,
   hiddenCals,
   calendars,
+  primaryColorOverride,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
   calendars: Calendar[];
+  primaryColorOverride?: string | null;
 }) {
   const [mode, setMode] = useState<"month" | "agenda">("month");
   const [detailEv, setDetailEv] = useState<CalEvent | null>(null);
-  const [dayModal, setDayModal] = useState<{
-    key: string;
-    events: CalEvent[];
-  } | null>(null);
+  const [dayModal, setDayModal] = useState<{ key: string; events: CalEvent[] } | null>(null);
   const [editor, setEditor] = useState<{
     initial: Partial<EventInput>;
     eventId?: string;
   } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [dateAnchor, setDateAnchor] = useState(() => dateKey(new Date()));
 
   const writable = calendars.filter(
     (c) => c.accessRole === "owner" || c.accessRole === "writer",
   );
 
   const openEvent = useCallback((e: CalEvent) => setDetailEv(e), []);
-  const openDay = useCallback(
-    (key: string, events: CalEvent[]) => setDayModal({ key, events }),
-    [],
-  );
+  const openDay = useCallback((key: string, events: CalEvent[]) => {
+    setDateAnchor(key);
+    setDayModal({ key, events });
+  }, []);
   // 날짜 칸 클릭 → 그 날짜의 시간 일정(09:00–10:00)으로 새 일정 모달.
   // 종일이 기본이면 시간 입력이 아예 안 보여 "시간 설정이 안 된다"로 읽힌다 —
   // 시간 일정을 기본으로 열고, 종일은 체크박스로 전환.
@@ -97,31 +152,40 @@ export function CalendarView({
 
   return (
     <div className="calendar">
-      <div className="cal-head">
-        <h2>📅 캘린더</h2>
-        <div className="cal-modes">
+      <header className="cal-head">
+        <div className="cal-titleblock">
+          <span className="cal-kicker">일정 관리</span>
+          <h2>캘린더</h2>
+          <p>한 달의 흐름과 예정된 일정을 한눈에 확인하세요.</p>
+        </div>
+        <div className="cal-actions">
+          <div className="cal-modes" aria-label="캘린더 보기">
+            <button
+              className={mode === "month" ? "active" : ""}
+              aria-pressed={mode === "month"}
+              onClick={() => setMode("month")}
+            >
+              월
+            </button>
+            <button
+              className={mode === "agenda" ? "active" : ""}
+              aria-pressed={mode === "agenda"}
+              onClick={() => setMode("agenda")}
+            >
+              목록
+            </button>
+          </div>
           {writable.length > 0 && (
             <button
-              className="btn primary"
+              className="btn primary cal-create"
               onClick={() => setEditor({ initial: {} })}
             >
-              ✏️ 새 일정
+              <span aria-hidden="true">＋</span>
+              새 일정
             </button>
           )}
-          <button
-            className={`btn ${mode === "month" ? "primary" : ""}`}
-            onClick={() => setMode("month")}
-          >
-            월
-          </button>
-          <button
-            className={`btn ${mode === "agenda" ? "primary" : ""}`}
-            onClick={() => setMode("agenda")}
-          >
-            목록
-          </button>
         </div>
-      </div>
+      </header>
       {mode === "month" ? (
         <MonthGrid
           onLogout={onLogout}
@@ -129,7 +193,11 @@ export function CalendarView({
           onEvent={openEvent}
           onDay={openDay}
           onCreate={writable.length > 0 ? createOnDay : undefined}
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
           refreshKey={refreshKey}
+          dateAnchor={dateAnchor}
+          onDateAnchorChange={setDateAnchor}
         />
       ) : (
         <AgendaList
@@ -137,15 +205,21 @@ export function CalendarView({
           hiddenCals={hiddenCals}
           onEvent={openEvent}
           refreshKey={refreshKey}
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
+          dateAnchor={dateAnchor}
+          onDateAnchorChange={setDateAnchor}
         />
       )}
       {dayModal && (
         <DayEventsModal
           dayKey={dayModal.key}
           events={dayModal.events}
-          onEvent={(e) => {
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
+          onEvent={(event) => {
             setDayModal(null);
-            setDetailEv(e);
+            setDetailEv(event);
           }}
           onClose={() => setDayModal(null)}
         />
@@ -153,6 +227,8 @@ export function CalendarView({
       {detailEv && (
         <EventDetailModal
           ev={detailEv}
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
           onLogout={onLogout}
           canEdit={writable.some((c) => c.id === detailEv.calendarId)}
           onEdit={(d) => {
@@ -181,7 +257,8 @@ export function CalendarView({
       )}
       {editor && (
         <EventEditModal
-          calendars={writable}
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
           initial={editor.initial}
           eventId={editor.eventId}
           onLogout={onLogout}
@@ -232,7 +309,7 @@ export function useCalendarEvents(
         .catch((e) => {
           if (cancelled) return;
           if (e instanceof AuthError) onLogout();
-          else if (!calCache.has(key)) setErr((e as Error).message);
+          else setErr((e as Error).message);
         });
     };
 
@@ -273,28 +350,44 @@ export function CalReauth({ err }: { err: string }) {
 export function MonthGrid({
   onLogout,
   hiddenCals,
+  calendars,
+  primaryColorOverride,
   onEvent,
   onDay,
   onCreate,
   refreshKey,
+  dateAnchor,
+  onDateAnchorChange,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
+  calendars: Calendar[];
+  primaryColorOverride?: string | null;
   onEvent: (e: CalEvent) => void;
-  onDay: (key: string, events: CalEvent[]) => void;
-  onCreate?: (dayKey: string) => void; // 날짜 칸 클릭 → 그 날짜로 새 일정 (쓰기 가능 시)
+  onDay: (dayKey: string, events: CalEvent[]) => void;
+  onCreate?: (dayKey: string) => void;
   refreshKey: number;
+  dateAnchor: string;
+  onDateAnchorChange: (dayKey: string) => void;
 }) {
   const [cursor, setCursor] = useState(() => {
-    const d = new Date();
+    const d = new Date(`${dateAnchor}T00:00:00`);
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
+  const moveToMonth = useCallback(
+    (next: Date, nextAnchor?: string) => {
+      const first = new Date(next.getFullYear(), next.getMonth(), 1);
+      setCursor(first);
+      onDateAnchorChange(nextAnchor ?? dateKey(first));
+    },
+    [onDateAnchorChange],
+  );
   const start = startOfWeek(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
   const end = endOfWeek(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0));
   const { events, err } = useCalendarEvents(
     {
       from: start.toISOString(),
-      to: new Date(end.getTime() + 86_400_000).toISOString(),
+      to: new Date(`${addDays(dateKey(end), 1)}T00:00:00`).toISOString(),
     },
     [cursor.getTime(), refreshKey, onLogout],
     onLogout,
@@ -324,52 +417,50 @@ export function MonthGrid({
     return out;
   }, [startMs, endMs]);
   const todayKey = dateKey(new Date());
-  // 휠/트랙패드 스크롤로 이전·다음 달 이동. 트랙패드 관성 델타가 한 번에
-  // 여러 달을 넘기지 않게 누적 임계값 + 쿨다운으로 한 틱당 한 달만 이동.
-  const wheelAcc = useRef(0);
-  const wheelLockUntil = useRef(0);
-  const onWheel = (e: ReactWheelEvent) => {
-    const now = Date.now();
-    if (now < wheelLockUntil.current) {
-      wheelAcc.current = 0;
-      return;
-    }
-    wheelAcc.current += e.deltaY;
-    if (Math.abs(wheelAcc.current) < 100) return;
-    const dir = wheelAcc.current > 0 ? 1 : -1;
-    wheelAcc.current = 0;
-    wheelLockUntil.current = now + 450;
-    setCursor((c) => addMonths(c, dir));
-  };
 
   return (
     <>
-      <div className="cal-monthnav">
-        <button className="btn" onClick={() => setCursor(addMonths(cursor, -1))}>
-          ‹
-        </button>
-        <strong>
+      <div className="cal-monthnav" aria-label="월 탐색">
+        <div className="cal-monthnav-group">
+          <button
+            className="btn cal-navbtn"
+            aria-label="이전 달"
+            onClick={() => moveToMonth(addMonths(cursor, -1))}
+          >
+            ‹
+          </button>
+          <button
+            className="btn cal-navbtn"
+            aria-label="다음 달"
+            onClick={() => moveToMonth(addMonths(cursor, 1))}
+          >
+            ›
+          </button>
+        </div>
+        <strong aria-live="polite">
           {cursor.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
         </strong>
-        <button className="btn" onClick={() => setCursor(addMonths(cursor, 1))}>
-          ›
-        </button>
         <button
-          className="btn"
+          className="btn cal-today"
           onClick={() => {
             const d = new Date();
-            setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
+            moveToMonth(d, dateKey(d));
           }}
         >
           오늘
         </button>
       </div>
-      {err ? (
+      {err && events && (
+        <div className="cal-refresh-warning" role="status">
+          최신 일정을 가져오지 못해 저장된 일정을 표시합니다. {err}
+        </div>
+      )}
+      {err && !events ? (
         <CalReauth err={err} />
       ) : !events ? (
         <div className="empty">불러오는 중…</div>
       ) : (
-        <div className="month-grid" onWheel={onWheel}>
+        <div className={`month-grid weeks-${cells.length / 7}`}>
           {["일", "월", "화", "수", "목", "금", "토"].map((w, i) => (
             <div
               key={w}
@@ -386,55 +477,70 @@ export function MonthGrid({
             return (
               <div
                 key={key}
-                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${onCreate ? " creatable" : ""}${dow === 0 ? " sun" : dow === 6 ? " sat" : ""}`}
-                // 빈 영역(또는 날짜 숫자) 클릭 → 그 날짜로 새 일정. 이벤트 칩/
-                // 더보기 버튼은 stopPropagation으로 이 핸들러를 막는다.
-                onClick={onCreate ? () => onCreate(key) : undefined}
-                title={onCreate ? "클릭하여 이 날짜에 일정 추가" : undefined}
+                data-date={key}
+                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${key === dateAnchor ? " selected" : ""}${dow === 0 ? " sun" : dow === 6 ? " sat" : ""}`}
               >
                 <div className="month-cellhead">
-                  <div className="month-daynum">{d.getDate()}</div>
+                  {onCreate ? (
+                    <button
+                      type="button"
+                      className="month-daynum"
+                      aria-label={`${d.toLocaleDateString("ko-KR")}에 일정 추가`}
+                      aria-current={key === todayKey ? "date" : undefined}
+                      onClick={() => {
+                        onDateAnchorChange(key);
+                        onCreate(key);
+                      }}
+                    >
+                      {d.getDate()}
+                    </button>
+                  ) : (
+                    <span
+                      className="month-daynum"
+                      aria-current={key === todayKey ? "date" : undefined}
+                    >
+                      {d.getDate()}
+                    </span>
+                  )}
                   {evs.length > 0 && (
-                    // 칸이 좁아 칩을 다 못 보여줘도 "몇 건인지"는 항상 보이게.
                     <span className="month-count" title={`${evs.length}개 일정`}>
                       {evs.length}
                     </span>
                   )}
                 </div>
-                {evs.slice(0, 3).map((e) => (
-                  <button
-                    // Same event can sit on two visible calendars — id alone duplicates keys.
-                    key={`${e.calendarId}|${e.id}|${e.start}`}
-                    type="button"
-                    className="month-ev"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      onEvent(e);
-                    }}
-                    title={`${evTimeLabel(e, key)} ${e.summary}`}
-                    // 캘린더 색의 파스텔 칩 — 점 하나보다 캘린더 정체성이 잘 읽힌다
-                    style={{
-                      background: `color-mix(in srgb, ${e.color ?? "#1a73e8"} 14%, white)`,
-                    }}
-                  >
-                    <span
-                      className="month-ev-dot"
-                      style={{ background: e.color ?? "#1a73e8" }}
-                    />
-                    {!e.allDay && (
-                      <span className="month-ev-time">{compactTime(evTimeLabel(e, key))}</span>
-                    )}
-                    <span className="month-ev-t">{e.summary}</span>
-                  </button>
-                ))}
+                {evs.slice(0, 3).map((e) => {
+                  const displayColor = getEventDisplayColor(
+                    e,
+                    calendars,
+                    primaryColorOverride,
+                  );
+                  const timeLabel = evTimeLabel(e, key);
+                  return (
+                    <button
+                      key={`${e.calendarId}|${e.id}|${e.start}`}
+                      type="button"
+                      className="month-ev"
+                      onClick={() => onEvent(e)}
+                      title={`${timeLabel} ${e.summary} · ${e.calendarSummary}`}
+                      aria-label={`${timeLabel}, ${e.summary}, ${e.calendarSummary}`}
+                      style={{
+                        background: `color-mix(in srgb, ${displayColor} 22%, white)`,
+                        borderLeft: `4px solid ${displayColor}`,
+                      }}
+                    >
+                      {!e.allDay && (
+                        <span className="month-ev-time">{compactTime(timeLabel)}</span>
+                      )}
+                      <span className="month-ev-t">{e.summary}</span>
+                    </button>
+                  );
+                })}
                 {evs.length > 3 && (
                   <button
                     type="button"
                     className="month-more"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      onDay(key, evs);
-                    }}
+                    aria-label={`${formatDayHeader(key)} 일정 ${evs.length - 3}개 더보기`}
+                    onClick={() => onDay(key, evs)}
                   >
                     +{evs.length - 3}개 더보기
                   </button>
@@ -451,33 +557,42 @@ export function MonthGrid({
 export function AgendaList({
   onLogout,
   hiddenCals,
+  calendars,
+  primaryColorOverride,
   onEvent,
   refreshKey,
+  dateAnchor,
+  onDateAnchorChange,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
+  calendars: Calendar[];
+  primaryColorOverride?: string | null;
   onEvent: (e: CalEvent) => void;
   refreshKey: number;
+  dateAnchor: string;
+  onDateAnchorChange: (dayKey: string) => void;
 }) {
   const [days, setDays] = useState(30);
+  const anchorStart = useMemo(() => new Date(`${dateAnchor}T00:00:00`), [dateAnchor]);
+  const anchorEnd = useMemo(
+    () => new Date(`${addDays(dateAnchor, days)}T00:00:00`),
+    [dateAnchor, days],
+  );
   const { events, err } = useCalendarEvents(
-    { days },
-    [days, refreshKey, onLogout],
+    { from: anchorStart.toISOString(), to: anchorEnd.toISOString() },
+    [dateAnchor, days, refreshKey, onLogout],
     onLogout,
   );
 
   const groups = useMemo(() => {
-    // Visible window: today .. today+days. Ongoing multi-day events span
-    // days before now (and the server may return events past the boundary) —
-    // those day groups don't belong in an N일 agenda.
-    const todayKey = dateKey(new Date());
-    const endKey = addDays(todayKey, days);
+    const startKey = dateAnchor;
+    const endKey = addDays(startKey, days);
     const index = new Map<string, CalEvent[]>();
     for (const e of events ?? []) {
       if (hiddenCals.has(e.calendarId)) continue;
-      // Multi-day events occupy every day they span, not just the start day.
       for (const key of occupiedDayKeys(e)) {
-        if (key < todayKey || key >= endKey) continue;
+        if (key < startKey || key >= endKey) continue;
         let bucket = index.get(key);
         if (!bucket) {
           bucket = [];
@@ -486,24 +601,44 @@ export function AgendaList({
         bucket.push(e);
       }
     }
+    for (const bucket of index.values()) {
+      bucket.sort(
+        (left, right) =>
+          Number(right.allDay) - Number(left.allDay) ||
+          Date.parse(left.start) - Date.parse(right.start) ||
+          left.summary.localeCompare(right.summary, "ko"),
+      );
+    }
     return [...index.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [events, hiddenCals, days]);
+  }, [events, hiddenCals, days, dateAnchor]);
 
   return (
     <>
       <div className="cal-range">
-        {[7, 30, 90].map((d) => (
-          <button
-            key={d}
-            className={`btn ${days === d ? "primary" : ""}`}
-            onClick={() => setDays(d)}
-          >
-            {d}일
-          </button>
-        ))}
+        <div>
+          <span className="cal-range-label">목록 범위</span>
+          <strong>{formatDayHeader(dateAnchor)}부터</strong>
+        </div>
+        <div className="cal-range-options" aria-label="목록 기간">
+          {[7, 30, 90].map((d) => (
+            <button
+              key={d}
+              className={days === d ? "active" : ""}
+              aria-pressed={days === d}
+              onClick={() => setDays(d)}
+            >
+              {d}일
+            </button>
+          ))}
+        </div>
       </div>
       <div className="agenda-scroll">
-      {err ? (
+      {err && events && (
+        <div className="cal-refresh-warning" role="status">
+          최신 일정을 가져오지 못해 저장된 일정을 표시합니다. {err}
+        </div>
+      )}
+      {err && !events ? (
         <CalReauth err={err} />
       ) : !events ? (
         <div className="empty">불러오는 중…</div>
@@ -513,18 +648,28 @@ export function AgendaList({
         <div className="empty">예정된 일정이 없습니다.</div>
       ) : (
         groups.map(([key, evs]) => (
-          <div key={key} className="cal-day">
-            <div className="cal-date">{formatDayHeader(key)}</div>
+          <section key={key} className="cal-day">
+            <button
+              type="button"
+              className="cal-date"
+              onClick={() => onDateAnchorChange(key)}
+              aria-label={`${formatDayHeader(key)}을 월 보기 기준일로 선택`}
+            >
+              {formatDayHeader(key)}
+            </button>
             {evs.map((e) => (
               <button
                 key={`${e.calendarId}|${e.id}|${e.start}`}
                 type="button"
                 className="cal-event"
-                onClick={() => onEvent(e)}
+                onClick={() => {
+                  onDateAnchorChange(key);
+                  onEvent(e);
+                }}
               >
                 <span
                   className="cal-dot"
-                  style={{ background: e.color ?? "#1a73e8" }}
+                  style={{ background: getEventDisplayColor(e, calendars, primaryColorOverride) }}
                 />
                 <span className="cal-time">{evTimeLabel(e, key)}</span>
                 <span className="cal-title">{e.summary}</span>
@@ -532,7 +677,7 @@ export function AgendaList({
                 <span className="cal-cal">{e.calendarSummary}</span>
               </button>
             ))}
-          </div>
+          </section>
         ))
       )}
       {events && !err && days < 365 && (
@@ -549,46 +694,64 @@ export function AgendaList({
 export function DayEventsModal({
   dayKey,
   events,
+  calendars,
+  primaryColorOverride,
   onEvent,
   onClose,
 }: {
   dayKey: string;
   events: CalEvent[];
-  onEvent: (e: CalEvent) => void;
+  calendars: Calendar[];
+  primaryColorOverride?: string | null;
+  onEvent: (event: CalEvent) => void;
   onClose: () => void;
 }) {
-  const dlg = useResizableDialog("day-events", 380, 300);
+  const dlg = useResizableDialog("day-events", 460, 360);
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${formatDayHeader(dayKey)} 일정`}
+        tabIndex={-1}
         ref={dlg.ref}
         style={dlg.style}
-        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => handleDialogKeyDown(event, onClose)}
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-head">
-          <strong>{formatDayHeader(dayKey)}</strong>
+          <div>
+            <strong>{formatDayHeader(dayKey)}</strong>
+            <span className="muted"> · {events.length}개 일정</span>
+          </div>
           <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
-          <button className="clear" onClick={onClose}>
+          <button className="clear" aria-label="닫기" onClick={onClose}>
             ✕
           </button>
         </div>
         <div className="day-list">
-          {events.map((e) => (
+          {events.map((event) => (
             <button
-              key={`${e.calendarId}|${e.id}|${e.start}`}
+              key={`${event.calendarId}|${event.id}|${event.start}`}
               type="button"
               className="cal-event"
-              onClick={() => onEvent(e)}
+              onClick={() => onEvent(event)}
             >
               <span
                 className="cal-dot"
-                style={{ background: e.color ?? "#1a73e8" }}
+                style={{
+                  background: getEventDisplayColor(
+                    event,
+                    calendars,
+                    primaryColorOverride,
+                  ),
+                }}
               />
-              <span className="cal-time">{evTimeLabel(e, dayKey)}</span>
-              <span className="cal-title">{e.summary}</span>
-              {e.location && <span className="cal-loc">📍 {e.location}</span>}
-              <span className="cal-cal">{e.calendarSummary}</span>
+              <span className="cal-time">{evTimeLabel(event, dayKey)}</span>
+              <span className="cal-title">{event.summary}</span>
+              {event.location && <span className="cal-loc">📍 {event.location}</span>}
+              <span className="cal-cal">{event.calendarSummary}</span>
             </button>
           ))}
         </div>
@@ -598,8 +761,11 @@ export function DayEventsModal({
   );
 }
 
+
 export function EventDetailModal({
   ev,
+  calendars,
+  primaryColorOverride,
   onLogout,
   canEdit,
   onEdit,
@@ -607,6 +773,8 @@ export function EventDetailModal({
   onClose,
 }: {
   ev: CalEvent;
+  calendars: Calendar[];
+  primaryColorOverride?: string | null;
   onLogout: () => void;
   canEdit: boolean;
   onEdit: (d: CalEventDetail) => void;
@@ -638,18 +806,31 @@ export function EventDetailModal({
 
   const d = detail;
   const dlg = useResizableDialog("event-detail", 400, 320);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => dlg.ref.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      previous?.focus();
+    };
+  }, [dlg.ref]);
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="dialog"
         ref={dlg.ref}
         style={dlg.style}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="event-detail-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => handleDialogKeyDown(event, onClose)}
       >
         <div className="modal-head">
-          <strong>일정</strong>
+          <strong id="event-detail-title">일정</strong>
           <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
-          <button className="clear" onClick={onClose}>
+          <button className="clear" aria-label="일정 상세 닫기" onClick={onClose}>
             ✕
           </button>
         </div>
@@ -657,7 +838,7 @@ export function EventDetailModal({
           <h3 className="ev-title">
             <span
               className="ev-dot"
-              style={{ background: ev.color ?? "#1a73e8" }}
+              style={{ background: getEventDisplayColor(ev, calendars, primaryColorOverride) }}
             />
             {ev.summary}
           </h3>
@@ -867,6 +1048,7 @@ export function TimeField({
 
 export function EventEditModal({
   calendars,
+  primaryColorOverride,
   initial,
   eventId,
   onLogout,
@@ -874,6 +1056,7 @@ export function EventEditModal({
   onSaved,
 }: {
   calendars: Calendar[];
+  primaryColorOverride?: string | null;
   initial: Partial<EventInput>;
   eventId?: string;
   onLogout: () => void;
@@ -922,12 +1105,13 @@ export function EventEditModal({
         : String(initial.reminder);
 
   // Read-only(reader/freeBusyReader) calendars 403 on insert — never offer them.
-  const writable = calendars.filter(
-    (c) => c.accessRole === "owner" || c.accessRole === "writer",
+  const primaryId = uniquePrimaryId(calendars);
+  const writable = [...calendars.filter((c) => c.accessRole === "owner" || c.accessRole === "writer")].sort(
+    (a, b) => Number(b.id === primaryId) - Number(a.id === primaryId),
   );
   const [calendarId, setCalendarId] = useState(
     initial.calendarId ||
-      writable.find((c) => c.primary)?.id ||
+      writable.find((c) => c.id === primaryId)?.id ||
       writable[0]?.id ||
       "",
   );
@@ -1092,8 +1276,26 @@ export function EventEditModal({
     ["내일", addDays(today, 1)],
     ["다음 주", addDays(today, 7)],
   ];
-  const calColor = writable.find((c) => c.id === calendarId)?.backgroundColor;
+  const selectedCalendar = writable.find((c) => c.id === calendarId);
+  const calColor = selectedCalendar
+    ? getCalendarDisplayColor(
+        { ...selectedCalendar, primary: selectedCalendar.id === primaryId },
+        selectedCalendar.id === primaryId
+          ? primaryColorOverride === undefined
+            ? readPrimaryColorOverride(selectedCalendar.id)
+            : primaryColorOverride
+          : undefined,
+      )
+    : "var(--muted)";
   const dlg = useResizableDialog("event-edit", 460, 380);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => dlg.ref.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      previous?.focus();
+    };
+  }, [dlg.ref]);
 
   return (
     <div className="modal-backdrop" onClick={tryClose}>
@@ -1101,28 +1303,34 @@ export function EventEditModal({
         className="dialog ev-dialog"
         ref={dlg.ref}
         style={dlg.style}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="event-editor-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
-          // 참석자 자동완성이 Escape를 이미 먹었으면(preventDefault) 모달은 열어 둔다.
+          if (e.key === "Tab") handleDialogKeyDown(e, tryClose);
           if (e.key === "Escape" && !e.defaultPrevented) {
             e.stopPropagation();
             tryClose();
-          } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSave) {
+          }
+          else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSave) {
             e.preventDefault();
             void save();
           }
         }}
       >
         <div className="modal-head">
-          <strong>{eventId ? "일정 수정" : "새 일정"}</strong>
+          <strong id="event-editor-title">{eventId ? "일정 수정" : "새 일정"}</strong>
           <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
-          <button className="clear" onClick={tryClose}>
+          <button className="clear" aria-label="일정 편집 닫기" onClick={tryClose}>
             ✕
           </button>
         </div>
         <div className="ev-form">
           <input
             className="ev-title-input"
+            aria-label="일정 제목"
             // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             placeholder="제목 추가"
@@ -1164,6 +1372,7 @@ export function EventEditModal({
               <span className="ev-when-lbl">시작</span>
               <input
                 className="ev-input ev-date"
+                aria-label="시작 날짜"
                 type="date"
                 value={sDate}
                 onChange={(e) => moveStart(e.target.value, sTime)}
@@ -1181,6 +1390,7 @@ export function EventEditModal({
               <span className="ev-when-lbl">종료</span>
               <input
                 className="ev-input ev-date"
+                aria-label="종료 날짜"
                 type="date"
                 min={sDate}
                 value={eDate}
@@ -1228,11 +1438,12 @@ export function EventEditModal({
             <div className="ev-cal-row">
               <span
                 className="ev-dot"
-                style={{ background: calColor ?? "var(--muted)" }}
+                style={{ background: calColor }}
                 aria-hidden
               />
               <select
                 className="ev-input"
+                aria-label="캘린더"
                 value={calendarId}
                 onChange={(e) => setCalendarId(e.target.value)}
                 // Moving an event between calendars needs events.move — patch
@@ -1252,6 +1463,7 @@ export function EventEditModal({
             <>
               <input
                 className="ev-input"
+                aria-label="장소"
                 placeholder="📍 장소 (선택)"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
@@ -1265,6 +1477,7 @@ export function EventEditModal({
               <div className="ev-opt-row">
                 <select
                   className="ev-input"
+                  aria-label="알림"
                   title="알림 (팝업)"
                   value={reminder}
                   onChange={(e) => setReminder(e.target.value)}
@@ -1287,6 +1500,7 @@ export function EventEditModal({
               </div>
               <textarea
                 className="ev-input"
+                aria-label="설명"
                 placeholder="설명 (선택)"
                 rows={4}
                 value={description}

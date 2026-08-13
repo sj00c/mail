@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { compress } from "hono/compress";
-import { serveStatic } from "hono/bun";
 import { existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   consumeOAuthState,
   getAuthUrl,
@@ -10,6 +10,7 @@ import {
   isAuthed,
   logout,
 } from "./auth.ts";
+import { apiErrorStatus, httpStatusOf } from "./apiErrors.ts";
 import {
   createDraft,
   deleteDraft,
@@ -58,7 +59,7 @@ const PORT = Number(process.env.PORT ?? 8787);
 // Production (NODE_ENV=production, via `bun run start`) serves the built SPA
 // itself and OAuth bounces to "/". Dev serves the SPA on Vite :5173.
 const IS_PROD = process.env.NODE_ENV === "production";
-const DIST = join(import.meta.dir, "..", "dist");
+const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const SERVE_STATIC = IS_PROD && existsSync(DIST);
 const APP_URL =
   process.env.APP_URL ?? (SERVE_STATIC ? "/" : "http://localhost:5173/");
@@ -67,34 +68,6 @@ const app = new Hono();
 app.use(compress());
 
 // ---- helpers ----
-function needAuthError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  if (err.message === "NOT_AUTHENTICATED") return true;
-  // Revoked/expired refresh token: Google answers invalid_grant forever.
-  // Treat as logged-out (401) so the UI returns to the login screen instead
-  // of looping on opaque 500s.
-  const data = (err as { response?: { data?: { error?: string } } }).response?.data;
-  if (err.message.includes("invalid_grant") || data?.error === "invalid_grant")
-    return true;
-  // Any Google-side 401 ("Login Required", insufficient/added scope) means the
-  // stored token can't make this call — bounce to login so re-consent picks up
-  // the new scope (e.g. Drive added after the token was first minted).
-  if (httpStatusOf(err) === 401) return true;
-  // A token minted before a scope was added 403s with a scope/identity message
-  // (not a per-file permission denial) — that too needs re-consent. Match the
-  // specific Google strings so genuine 403s (e.g. deleting another's file) still
-  // surface as errors instead of silently logging the user out.
-  if (httpStatusOf(err) === 403) {
-    const m = err.message;
-    return (
-      /insufficient/i.test(m) ||
-      /unregistered callers/i.test(m) ||
-      /ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(m)
-    );
-  }
-  return false;
-}
-
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -102,15 +75,6 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function httpStatusOf(err: unknown): number | undefined {
-  const e = err as { status?: unknown; code?: unknown; response?: { status?: unknown } };
-  for (const v of [e?.status, e?.code, e?.response?.status]) {
-    const n = Number(v);
-    if (Number.isInteger(n) && n >= 100 && n <= 599) return n;
-  }
-  return undefined;
 }
 
 // ---- auth routes ----
@@ -172,6 +136,33 @@ function finiteOr(
   if (!Number.isFinite(n)) return { ok: false, error: `${name} must be a number` };
   return { ok: true, value: n };
 }
+export function createMessageListApi(
+  listMessagesImpl: typeof listMessages = listMessages,
+): Hono {
+  const messages = new Hono();
+
+  messages.get("/", async (c) => {
+    const q = c.req.query("q") || undefined;
+    const label = c.req.query("label") || undefined;
+    const pageToken = c.req.query("pageToken") || undefined;
+    const max = finiteOr(c.req.query("maxResults"), "maxResults");
+    if (!max.ok) return c.json({ error: max.error }, 400);
+    return c.json(await listMessagesImpl({
+      q,
+      labelIds: label ? [label] : undefined,
+      pageToken,
+      maxResults: max.value,
+    }));
+  });
+  messages.onError((e, c) => {
+    const status = apiErrorStatus(e);
+    if (status === 401) return c.json({ error: "NOT_AUTHENTICATED" }, status);
+    return c.json({ error: (e as Error).message }, status);
+  });
+
+  return messages;
+}
+
 
 api.get("/calendar/events", async (c) => {
   const days = finiteOr(c.req.query("days"), "days");
@@ -221,21 +212,7 @@ api.post("/calendar/events/:id/delete", async (c) => {
   return c.json({ ok: true });
 });
 
-api.get("/messages", async (c) => {
-  const q = c.req.query("q") || undefined;
-  const label = c.req.query("label") || undefined;
-  const pageToken = c.req.query("pageToken") || undefined;
-  const max = finiteOr(c.req.query("maxResults"), "maxResults");
-  if (!max.ok) return c.json({ error: max.error }, 400);
-  const maxResults = max.value;
-  const res = await listMessages({
-    q,
-    labelIds: label ? [label] : undefined,
-    pageToken,
-    maxResults,
-  });
-  return c.json(res);
-});
+api.route("/messages", createMessageListApi());
 
 api.get("/threads/:id", async (c) => c.json(await getThread(c.req.param("id"))));
 
@@ -432,9 +409,10 @@ api.post("/drive/files/:id/trash", async (c) => {
 
 // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).
 api.onError((e, c) => {
-  if (needAuthError(e)) return c.json({ error: "NOT_AUTHENTICATED" }, 401);
+  const status = apiErrorStatus(e);
+  if (status === 401) return c.json({ error: "NOT_AUTHENTICATED" }, status);
   console.error("[api]", e);
-  return c.json({ error: (e as Error).message }, 500);
+  return c.json({ error: (e as Error).message }, status);
 });
 app.route("/api", api);
 // Unknown API paths must 404 as JSON — falling through to the SPA fallback
@@ -448,6 +426,7 @@ if (SERVE_STATIC) {
   // asset was served: a missing hashed file falls through to the index.html
   // SPA fallback (text/html, 200), and caching THAT as immutable would pin a
   // wrong response under a .js/.css URL across deploys (version skew).
+  const { serveStatic } = await import("hono/bun");
   app.use("/assets/*", async (c, next) => {
     await next();
     const ct = c.res.headers.get("Content-Type") ?? "";

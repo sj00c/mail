@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import {
   api,
   AuthError,
   HttpError,
-  parseAddr,
   type AccountSettings,
   type Calendar,
   type EventInput,
   type Label,
   type MessageFull,
-  type MessageSummary,
 } from "./api.ts";
 import { downloadAttachment, fileToBase64 } from "./lib/attachments.ts";
 import { avatarColor, DATETIME_FMT } from "./lib/format.tsx";
@@ -37,13 +46,93 @@ import {
   TriCheck,
   useResizableDialog,
 } from "./ui/dialog.tsx";
-import { CalendarView, EventEditModal } from "./views/calendar.tsx";
-import { Compose, RichEditor, type ComposeInit, type SendPayload } from "./views/compose.tsx";
-import { DriveView } from "./views/drive.tsx";
+import { Compose, RichEditor, type ComposeInit } from "./views/compose.tsx";
 import { MessageRow, Reader } from "./views/reader.tsx";
-import { SearchResults } from "./views/search.tsx";
+import { useInboxPoll } from "./hooks/useInboxPoll.ts";
+import { useCalendarCatalog } from "./hooks/useCalendarCatalog.ts";
+import { shouldRemoveArchivedMessage, useMailList } from "./hooks/useMailList.ts";
+import { useOutbox } from "./hooks/useOutbox.ts";
+import { PRIMARY_CALENDAR_DEFAULT_COLOR, getCalendarDisplayColor } from "./lib/calendarPresentation.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
+let calendarModule: Promise<typeof import("./views/calendar.tsx")> | undefined;
+const loadCalendarModule = () => (calendarModule ??= import("./views/calendar.tsx"));
+const CalendarView = lazy(async () => ({ default: (await loadCalendarModule()).CalendarView }));
+const EventEditModal = lazy(async () => ({ default: (await loadCalendarModule()).EventEditModal }));
+const DriveView = lazy(async () => ({ default: (await import("./views/drive.tsx")).DriveView }));
+const SearchResults = lazy(async () => ({ default: (await import("./views/search.tsx")).SearchResults }));
+
+type DeferredViewBoundaryProps = {
+  children: ReactNode;
+  resetKey: string;
+  fallback?: ReactNode;
+};
+
+export class DeferredViewBoundary extends Component<
+  DeferredViewBoundaryProps,
+  { failed: boolean; errorKind: string | null }
+> {
+  state = { failed: false, errorKind: null as string | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { failed: true, errorKind: error.name || "Error" };
+  }
+
+  componentDidUpdate(previous: DeferredViewBoundaryProps) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false, errorKind: null });
+    }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Deferred view failed to load", error, info);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        this.props.fallback ?? (
+          <div className="center" role="alert">
+            <p>화면을 불러오지 못했습니다.</p>
+            {this.state.errorKind && <p className="muted">오류 유형: {this.state.errorKind}</p>}
+            <button className="btn" onClick={() => window.location.reload()}>
+              다시 시도
+            </button>
+          </div>
+        )
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function DeferredView({
+  children,
+  resetKey,
+  fallback,
+}: {
+  children: ReactNode;
+  resetKey: string;
+  fallback?: ReactNode;
+}) {
+  return (
+    <DeferredViewBoundary resetKey={resetKey} fallback={fallback}>
+      <Suspense fallback={<div className="center">불러오는 중…</div>}>{children}</Suspense>
+    </DeferredViewBoundary>
+  );
+}
+export function CalendarMetadataDiagnostic({
+  anomaly,
+}: {
+  anomaly: "missing" | "multiple" | null;
+}) {
+  if (!anomaly) return null;
+  return (
+    <div className="nav-note" role="status">
+      기본 캘린더 정보를 확인할 수 없어 일반 캘린더로 표시합니다.
+    </div>
+  );
+}
 
 const SYSTEM_LABEL_NAMES: Record<string, string> = {
   ALL: "전체메일",
@@ -190,14 +279,6 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   });
   const [query, setQuery] = useState(initialQuery);
   const [searchInput, setSearchInput] = useState(initialQuery);
-  const [messages, setMessages] = useState<MessageSummary[]>([]);
-  const messagesRef = useRef<MessageSummary[]>([]);
-  messagesRef.current = messages; // stable lookup for row-click routing
-  const [nextToken, setNextToken] = useState<string | undefined>();
-  // Gmail resultSizeEstimate covers the active label/search across every page.
-  // Used for Gmail-style "select every result", not just rendered rows.
-  const [totalEstimate, setTotalEstimate] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const composeOpenRef = useRef(composeOpen);
@@ -208,17 +289,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   // (overlapping draft opens would save A's content under B's draftId).
   const [composeKey, setComposeKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [calendars, setCalendars] = useState<Calendar[]>([]);
   // Gmail 계정 설정(별칭/답장주소/휴가응답) — 로그인 시 자동으로 딸려온다.
   const [acctSettings, setAcctSettings] = useState<AccountSettings | null>(null);
-  const [hiddenCals, setHiddenCals] = useState<Set<string>>(new Set());
   // 목록 체크박스로 고른 메일 id (일괄 처리용). shift-범위선택용 마지막 인덱스.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const lastCheckedIdx = useRef<number | null>(null);
   const [allResultsSelected, setAllResultsSelected] = useState(false);
   const [bulkAllBusy, setBulkAllBusy] = useState(false);
-  const [calLoading, setCalLoading] = useState(false);
-  const [calErr, setCalErr] = useState<string | null>(null);
   // 사이드바 접기/펼치기 — 목록·읽기 영역을 넓게 쓰고 싶을 때. 선택은 남는다.
   const [navOpen, setNavOpen] = useState(() => {
     try {
@@ -261,6 +338,24 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     },
     [onLogout],
   );
+  const {
+    messages,
+    nextToken,
+    totalEstimate,
+    loading,
+    getMessages,
+    getNextToken,
+    getActiveLabel,
+    getQuery,
+    load,
+    reset: resetMailList,
+    patchMessage,
+    removeMessage,
+    patchMany,
+    removeMany,
+    toggleLabelMany,
+    prependInboxMessages,
+  } = useMailList(activeLabel, query, guard);
 
   // 백그라운드 갱신(캘린더 60s/포커스, 검색 일정)이 세션 만료를 만나도 작성창이
   // 열려 있으면 로그아웃을 보류한다 — 언마운트가 작성 중인 메일을 날리기 때문.
@@ -321,58 +416,32 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     };
   }, []);
 
-  // ?hide=calId1,calId2 deep link — 특정 캘린더를 숨긴 화면을 URL로 공유/오픈.
-  const urlHiddenCals = useRef<string[]>(
-    (() => {
-      try {
-        const v = new URLSearchParams(window.location.search).get("hide");
-        return v ? v.split(",").filter(Boolean) : [];
-      } catch {
-        return [];
-      }
-    })(),
-  );
-
-  // Load the calendar list the first time the calendar view opens — or the
-  // first search (검색 결과의 일정 카드가 수정 권한 판단에 필요).
-  useEffect(() => {
-    if ((view !== "calendar" && !query) || calendars.length > 0) return;
-    let cancelled = false;
-    setCalLoading(true);
-    setCalErr(null);
-    api
-      .calendars()
-      .then((cs) => {
-        if (cancelled) return;
-        setCalendars(cs);
-        setHiddenCals(
-          new Set([
-            ...cs.filter((c) => !c.selected).map((c) => c.id),
-            ...urlHiddenCals.current,
-          ]),
-        );
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        if (e instanceof AuthError) bgLogout();
-        else setCalErr((e as Error).message);
-      })
-      .finally(() => {
-        if (!cancelled) setCalLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [view, query, calendars.length, bgLogout]);
-
-  const toggleCal = useCallback((id: string) => {
-    setHiddenCals((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const initialHiddenCalendarIds = useMemo(() => {
+    try {
+      const value = new URLSearchParams(window.location.search).get("hide");
+      return value ? value.split(",").filter(Boolean) : [];
+    } catch {
+      return [];
+    }
   }, []);
+  const {
+    calendars,
+    hiddenCals,
+    loading: calLoading,
+    error: calErr,
+    primaryColorOverride,
+    primaryAnomaly,
+    ensure: ensureCalendars,
+    toggleCal,
+    setPrimaryColor,
+  } = useCalendarCatalog({
+    initialHiddenIds: initialHiddenCalendarIds,
+    onAuthError: bgLogout,
+  });
+  const primaryCalendar = useMemo(() => calendars.find((calendar) => calendar.primary), [calendars]);
+  useEffect(() => {
+    if (view === "calendar" || query) void ensureCalendars().catch(() => {});
+  }, [view, query, ensureCalendars]);
   // In-flight openDraft invalidation — see openDraft below.
   const openDraftSeq = useRef(0);
 
@@ -437,88 +506,19 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
   const onSelectMsg = useCallback(
     (id: string, threadId: string) => {
-      const row = messagesRef.current.find((m) => m.id === id);
+      const row = getMessages().find((m) => m.id === id);
       if (row?.labelIds.includes("DRAFT")) void openDraft(id, threadId);
       else setSelected({ id, threadId });
     },
     [openDraft],
   );
 
-  // ---- new-mail polling: desktop notification + inbox refresh ----
-  const lastSeenIds = useRef<string[] | null>(null);
-  const newestSeenDate = useRef("");
-  useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      void Notification.requestPermission();
-    }
-  }, []);
-
-  // Mirror list params into refs so load() can stay referentially stable:
-  // a stale load closure captured by an effect or in-flight callback would
-  // otherwise fetch the previous label/query and overwrite the list.
-  const labelRef = useRef(activeLabel);
-  labelRef.current = activeLabel;
-  const queryRef = useRef(query);
-  queryRef.current = query;
-  const nextTokenRef = useRef(nextToken);
-  nextTokenRef.current = nextToken;
-
-  // Monotonic sequence guard: label switches / polling / 더 보기 responses can
-  // land out of order — only the latest request may write list state.
-  const loadSeq = useRef(0);
-  const load = useCallback(
-    (reset: boolean) => {
-      const seq = ++loadSeq.current;
-      void guard(async () => {
-        setLoading(true);
-        try {
-          try {
-            const res = await api.messages({
-              label:
-                queryRef.current || labelRef.current === "ALL"
-                  ? undefined
-                  : labelRef.current,
-              q: queryRef.current || undefined,
-              pageToken: reset ? undefined : nextTokenRef.current,
-            });
-            if (seq !== loadSeq.current) return; // superseded — discard
-            setMessages((prev) => {
-              if (reset) return res.messages;
-              // 페이지네이션 도중 새 메일이 상단에 끼면 경계 항목이 다음 페이지에
-              // 다시 와 id가 중복될 수 있다 — append 시 중복 제거(React key 충돌 방지).
-              const seen = new Set(prev.map((m) => m.id));
-              return [...prev, ...res.messages.filter((m) => !seen.has(m.id))];
-            });
-            setNextToken(res.nextPageToken);
-            setTotalEstimate(res.resultSizeEstimate);
-          } catch (e) {
-            // A superseded request's failure is as irrelevant as its result —
-            // don't raise an error banner over a correctly loaded newer list.
-            if (seq !== loadSeq.current && !(e instanceof AuthError)) return;
-            throw e;
-          }
-        } finally {
-          if (seq === loadSeq.current) setLoading(false);
-        }
-      });
-    },
-    [guard],
-  );
-
-  // Targeted list updates: full reloads reset pagination ("더 보기" pages
-  // vanish), so star/read changes patch the row and removals filter it.
-  const patchMessage = useCallback((id: string, patch: Partial<MessageSummary>) => {
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
-  }, []);
-  const removeMessage = useCallback((id: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== id));
-  }, []);
 
   // ---- 목록 체크박스 선택 + 일괄 처리 ----
   // 체크박스 토글. shift-클릭이면 직전 클릭 행과의 사이를 한꺼번에 켜고/끈다.
   const onToggleCheck = useCallback((id: string, shiftKey: boolean) => {
     setAllResultsSelected(false);
-    const list = messagesRef.current;
+    const list = getMessages();
     const idx = list.findIndex((m) => m.id === id);
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -555,33 +555,6 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     lastCheckedIdx.current = null;
   }, []);
 
-  const patchMany = useCallback(
-    (ids: Set<string>, patch: Partial<MessageSummary>) => {
-      setMessages((prev) =>
-        prev.map((m) => (ids.has(m.id) ? { ...m, ...patch } : m)),
-      );
-    },
-    [],
-  );
-  const removeMany = useCallback((ids: Set<string>) => {
-    setMessages((prev) => prev.filter((m) => !ids.has(m.id)));
-  }, []);
-  // 선택 행들의 단일 라벨을 더하거나 빼 labelIds를 갱신 (별표 등).
-  const toggleLabelMany = useCallback(
-    (ids: Set<string>, label: string, add: boolean) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (!ids.has(m.id)) return m;
-          const has = m.labelIds.includes(label);
-          if (add && !has) return { ...m, labelIds: [...m.labelIds, label] };
-          if (!add && has)
-            return { ...m, labelIds: m.labelIds.filter((l) => l !== label) };
-          return m;
-        }),
-      );
-    },
-    [],
-  );
 
   // Selection requested by a notification click — the label-change effect
   // below would otherwise wipe it (it resets selection on label switch).
@@ -601,8 +574,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     }
     // A failed first-page fetch must not leave the previous label's rows (and
     // its cross-query nextToken behind 더 보기) rendered under the new label.
-    setMessages([]);
-    setNextToken(undefined);
+    resetMailList();
     setSelectedIds(new Set()); // 라벨/검색 전환 시 선택 해제
     setAllResultsSelected(false);
     lastCheckedIdx.current = null;
@@ -614,78 +586,24 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     [guard],
   );
 
-  // Poll INBOX (60s, visible tab only): notify on new unread mail and keep
-  // the list/labels fresh. Polling is the right call here — Gmail push
-  // (Pub/Sub watch) needs a public webhook this 보안망-local app can't have.
-  useEffect(() => {
-    const tick = async () => {
-      if (document.visibilityState !== "visible") return;
-      try {
-        const res = await api.messages({ label: "INBOX", maxResults: 5 });
-        const top = res.messages[0];
-        if (!top) return;
-        const seenIds = lastSeenIds.current;
-        if (seenIds && top.id !== seenIds[0]) {
-          // Set difference, not top-id walk: deleting/archiving the top mail
-          // must not make old mail look "new" (false notifications).
-          const fresh = res.messages.filter((m) => !seenIds.includes(m.id));
-          // Date gate on top: old mail scrolling back into the 5-item window
-          // (after deletions above it) is not "new" either.
-          const freshNew = fresh.filter((m) => m.date > newestSeenDate.current);
-          if (
-            typeof Notification !== "undefined" &&
-            Notification.permission === "granted"
-          ) {
-            for (const m of freshNew.filter((x) => x.unread).slice(0, 3)) {
-              const n = new Notification(parseAddr(m.from).name, {
-                body: m.subject || m.snippet,
-                tag: m.id,
-              });
-              n.onclick = () => {
-                window.focus();
-                setView("mail");
-                pendingSelect.current = {
-                  label: "INBOX",
-                  sel: { id: m.id, threadId: m.threadId },
-                  at: Date.now(),
-                };
-                setActiveLabel("INBOX");
-                setSelected({ id: m.id, threadId: m.threadId });
-                n.close();
-              };
-            }
-          }
-          if (fresh.length > 0) {
-            void refreshLabels();
-            // 새 메일을 목록 "맨 앞에 병합"한다 — load(true) 전체 리로드는
-            // '더 보기'로 불러온 페이지·스크롤을 날린다. INBOX·검색없음일 때만.
-            if (activeLabel === "INBOX" && !query) {
-              setMessages((prev) => {
-                const have = new Set(prev.map((m) => m.id));
-                const add = res.messages.filter((m) => !have.has(m.id));
-                if (add.length === 0) return prev;
-                return [...add, ...prev];
-              });
-            }
-          }
-        }
-        lastSeenIds.current = res.messages.map((m) => m.id);
-        for (const m of res.messages) {
-          if (m.date > newestSeenDate.current) newestSeenDate.current = m.date;
-        }
-      } catch (e) {
-        // Dead session: return to login instead of silently never polling
-        // again — but never while the compose editor holds typed text (the
-        // unmount would destroy it; user-initiated actions surface the
-        // session error inside the editor instead).
-        if (e instanceof AuthError && !composeOpenRef.current) onLogout();
-        // other transient polling failures: next tick retries
-      }
-    };
-    void tick();
-    const iv = setInterval(tick, 60_000);
-    return () => clearInterval(iv);
-  }, [activeLabel, query, load, refreshLabels, onLogout]);
+  useInboxPoll({
+    activeLabel,
+    query,
+    composeOpen,
+    onLogout: bgLogout,
+    onRefreshLabels: refreshLabels,
+    onPrependInboxMessages: prependInboxMessages,
+    onActivate: (message) => {
+      setView("mail");
+      pendingSelect.current = {
+        label: "INBOX",
+        sel: { id: message.id, threadId: message.threadId },
+        at: Date.now(),
+      };
+      setActiveLabel("INBOX");
+      setSelected({ id: message.id, threadId: message.threadId });
+    },
+  });
 
   const systemLabels = labels
     .filter((l) => l.type === "system" && SYSTEM_ORDER.includes(l.id))
@@ -805,73 +723,44 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     }
   };
 
-  // ---- 보내기 취소 (undo send) ----
-  // 발송을 N초(설정) 지연 큐에 넣고 토스트로 실행취소/즉시발송을 제공한다.
-  // 실제 api.send는 타이머 만료(또는 지금 보내기) 시에만 나간다.
-  const outboxTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
-  const [outbox, setOutbox] = useState<
-    { key: number; payload: SendPayload; draftId?: string }[]
-  >([]);
-  const removeOutbox = useCallback((key: number) => {
-    const t = outboxTimers.current.get(key);
-    if (t) clearTimeout(t);
-    outboxTimers.current.delete(key);
-    setOutbox((prev) => prev.filter((o) => o.key !== key));
-  }, []);
-  const flushOutbox = useCallback(
-    (key: number, payload: SendPayload, draftId?: string) => {
-      removeOutbox(key);
-      void guard(async () => {
-        await api.send(payload);
-        // 발송 성공 후에만 원본 드래프트 정리 (실패 시 드래프트가 복구 수단).
-        if (draftId) await api.deleteDraft(draftId).catch(() => {});
-        load(true);
-        void refreshLabels();
-      });
+  const { outbox, queueSend, cancelSend: cancelQueuedSend, sendNow } = useOutbox({
+    onSent: () => {
+      load(true);
+      refreshLabels();
     },
-    [guard, load, refreshLabels, removeOutbox],
-  );
-  const queueSend = useCallback(
-    (payload: SendPayload, draftId?: string) => {
-      const key = Date.now() + Math.random();
-      outboxTimers.current.set(
-        key,
-        setTimeout(() => flushOutbox(key, payload, draftId), getUndoSec() * 1000),
-      );
-      setOutbox((prev) => [...prev, { key, payload, draftId }]);
+    onError: (error) => {
+      if (error instanceof AuthError) onLogout();
+      else setError((error as Error).message);
     },
-    [flushOutbox],
-  );
+  });
   const cancelSend = useCallback(
     (key: number) => {
-      const o = outbox.find((x) => x.key === key);
-      removeOutbox(key);
-      if (!o) return;
-      const p = o.payload;
-      // 작성창을 발송 직전 상태 그대로 복원한다 (첨부 포함).
+      const item = cancelQueuedSend(key);
+      if (!item) return;
+      const payload = item.payload;
       openCompose({
-        to: p.to,
-        cc: p.cc,
-        bcc: p.bcc,
-        subject: p.subject,
-        from: p.from,
-        threadId: p.threadId,
-        inReplyTo: p.inReplyTo,
-        references: p.references,
-        draftId: o.draftId,
-        bodyHtml: p.bodyHtml ?? textToHtml(p.body),
-        attachments: [...(p.attachments ?? []), ...(p.driveAttachments ?? [])].map(
-          (a) => ({
-            filename: a.filename,
-            mimeType: a.mimeType,
-            data: a.data,
-            contentId: (a as { contentId?: string }).contentId,
-            size: Math.floor((a.data.length * 3) / 4),
+        to: payload.to,
+        cc: payload.cc,
+        bcc: payload.bcc,
+        subject: payload.subject,
+        from: payload.from,
+        threadId: payload.threadId,
+        inReplyTo: payload.inReplyTo,
+        references: payload.references,
+        draftId: item.draftId,
+        bodyHtml: payload.bodyHtml ?? textToHtml(payload.body),
+        attachments: [...(payload.attachments ?? []), ...(payload.driveAttachments ?? [])].map(
+          (attachment) => ({
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+            contentId: (attachment as { contentId?: string }).contentId,
+            size: Math.floor((attachment.data.length * 3) / 4),
           }),
         ),
       });
     },
-    [outbox, openCompose, removeOutbox],
+    [cancelQueuedSend, openCompose],
   );
 
   // ---- 메일 → 일정 만들기 ----
@@ -881,8 +770,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const createEventFromMail = useCallback(
     (m: MessageFull) => {
       void guard(async () => {
-        // 캘린더 뷰를 아직 안 열었으면 목록이 비어 있다 — 여기서 채운다.
-        if (calendars.length === 0) setCalendars(await api.calendars());
+        await ensureCalendars();
         setEvEditor({
           initial: {
             summary: m.subject || "(제목 없음)",
@@ -891,7 +779,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         });
       });
     },
-    [guard, calendars.length],
+    [guard, ensureCalendars],
   );
 
   // ---- 키보드 단축키 (Gmail식) ----
@@ -920,7 +808,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       if (isTyping(e.target)) return;
       // 모달(작성창/설정/일정)이 열려 있으면 목록 단축키는 쉰다.
       if (document.querySelector(".modal-backdrop")) return;
-      const list = messagesRef.current;
+      const list = getMessages();
       const cur = selectedRef.current;
       const curMsg = cur ? list.find((m) => m.id === cur.id) : undefined;
       switch (e.key) {
@@ -936,7 +824,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             return;
           }
           // 마지막 행에서 j: 다음 페이지를 이어서 불러온다 (무한 스크롤과 동일).
-          if (dir === 1 && nextTokenRef.current && !loadingRef.current) load(false);
+          if (dir === 1 && getNextToken() && !loadingRef.current) load(false);
           return;
         }
         case "e": {
@@ -946,7 +834,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           e.preventDefault();
           void guard(async () => {
             await api.modify(curMsg.id, { remove: ["INBOX"] });
-            if (!queryRef.current && labelRef.current === "INBOX") removeMessage(curMsg.id);
+            if (shouldRemoveArchivedMessage(getActiveLabel(), getQuery())) removeMessage(curMsg.id);
             setSelected(null);
             void refreshLabels();
           });
@@ -985,7 +873,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [guard, load, openCompose, refreshLabels, removeMessage]);
+  }, [getActiveLabel, getMessages, getNextToken, getQuery, guard, load, openCompose, refreshLabels, removeMessage]);
 
   // j/k로 옮긴 선택이 화면 밖이면 목록을 따라 스크롤한다 (클릭 선택엔 no-op).
   useEffect(() => {
@@ -1144,7 +1032,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </div>
       )}
 
-      <div className={`body ${navOpen ? "" : "nav-collapsed"}`}>
+      <div className={`body ${navOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""}`}>
         <nav className="sidebar" id="app-sidebar" aria-hidden={!navOpen}>
           <div className="sidebar-inner">
             <button
@@ -1158,19 +1046,20 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               <div className="nav-sub">
                 {calLoading && <div className="nav-note">불러오는 중…</div>}
                 {calErr && <div className="nav-note">{calErr}</div>}
+                <CalendarMetadataDiagnostic anomaly={primaryAnomaly} />
                 <CalendarChecklist
                   title="내 캘린더"
-                  items={calendars.filter(
-                    (c) => c.primary || c.accessRole === "owner",
-                  )}
+                  items={calendars.filter((c) => c.primary || c.accessRole === "owner")}
                   hidden={hiddenCals}
                   onToggle={toggleCal}
+                  primaryColorOverride={primaryColorOverride}
+                  onPrimaryColorChange={(color) => {
+                    if (primaryCalendar) setPrimaryColor(primaryCalendar.id, color);
+                  }}
                 />
                 <CalendarChecklist
                   title="다른 캘린더"
-                  items={calendars.filter(
-                    (c) => !(c.primary || c.accessRole === "owner"),
-                  )}
+                  items={calendars.filter((c) => !(c.primary || c.accessRole === "owner"))}
                   hidden={hiddenCals}
                   onToggle={toggleCal}
                 />
@@ -1242,26 +1131,34 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </nav>
 
         {view === "drive" ? (
-          <DriveView onLogout={bgLogout} />
+          <DeferredView resetKey="drive">
+            <DriveView onLogout={bgLogout} />
+          </DeferredView>
         ) : view === "calendar" ? (
-          <CalendarView
-            onLogout={bgLogout}
-            hiddenCals={hiddenCals}
-            calendars={calendars}
-          />
+          <DeferredView resetKey="calendar">
+            <CalendarView
+              onLogout={bgLogout}
+              hiddenCals={hiddenCals}
+              calendars={calendars}
+              primaryColorOverride={primaryColorOverride}
+            />
+          </DeferredView>
         ) : query ? (
-          <SearchResults
-            query={query}
-            messages={messages}
-            loading={loading}
-            hasMore={!!nextToken}
-            onMore={() => load(false)}
-            onSelect={onSelectMsg}
-            selectedId={selected?.id}
-            calendars={calendars}
-            hiddenCals={hiddenCals}
-            onLogout={bgLogout}
-          />
+          <DeferredView resetKey={`search:${query}`}>
+            <SearchResults
+              query={query}
+              messages={messages}
+              loading={loading}
+              hasMore={!!nextToken}
+              onMore={() => load(false)}
+              onSelect={onSelectMsg}
+              selectedId={selected?.id}
+              calendars={calendars}
+              hiddenCals={hiddenCals}
+              primaryColorOverride={primaryColorOverride}
+              onLogout={bgLogout}
+            />
+          </DeferredView>
         ) : (
           <>
             <section className="list">
@@ -1442,15 +1339,35 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
 
       {evEditor && (
-        <EventEditModal
-          calendars={calendars.filter(
-            (c) => c.accessRole === "owner" || c.accessRole === "writer",
-          )}
-          initial={evEditor.initial}
-          onLogout={bgLogout}
-          onClose={() => setEvEditor(null)}
-          onSaved={() => setEvEditor(null)}
-        />
+        <DeferredView
+          resetKey="event-editor"
+          fallback={
+            <div className="modal-backdrop">
+              <div className="modal center" role="alert">
+                <p>일정 편집기를 불러오지 못했습니다.</p>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setEvEditor(null)}>
+                    닫기
+                  </button>
+                  <button className="btn primary" onClick={() => window.location.reload()}>
+                    다시 불러오기
+                  </button>
+                </div>
+              </div>
+            </div>
+          }
+        >
+          <EventEditModal
+            calendars={calendars.filter(
+              (calendar) => calendar.accessRole === "owner" || calendar.accessRole === "writer",
+            )}
+            primaryColorOverride={primaryColorOverride}
+            initial={evEditor.initial}
+            onLogout={bgLogout}
+            onClose={() => setEvEditor(null)}
+            onSaved={() => setEvEditor(null)}
+          />
+        </DeferredView>
       )}
 
       {outbox.length > 0 && (
@@ -1460,7 +1377,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               <span>메일을 곧 보냅니다…</span>
               <button
                 className="undo-btn"
-                onClick={() => flushOutbox(o.key, o.payload, o.draftId)}
+                onClick={() => sendNow(o.key)}
               >
                 지금 보내기
               </button>
@@ -1666,29 +1583,66 @@ function CalendarChecklist({
   items,
   hidden,
   onToggle,
+  primaryColorOverride,
+  onPrimaryColorChange,
 }: {
   title: string;
   items: Calendar[];
   hidden: Set<string>;
   onToggle: (id: string) => void;
+  primaryColorOverride?: string | null;
+  onPrimaryColorChange?: (color: string | null) => void;
 }) {
   if (items.length === 0) return null;
   return (
     <>
       <div className="sidebar-sep">{title}</div>
-      {items.map((c) => {
-        const color = c.backgroundColor ?? "#1a73e8";
-        const on = !hidden.has(c.id);
+      {items.map((calendar) => {
+        const primary = calendar.primary === true;
+        const color = getCalendarDisplayColor(
+          calendar,
+          primary ? primaryColorOverride : undefined,
+        );
+        const visible = !hidden.has(calendar.id);
         return (
-          <label key={c.id} className="cal-check" title={c.summary}>
-            <input
-              type="checkbox"
-              checked={on}
-              onChange={() => onToggle(c.id)}
-              style={{ accentColor: color }}
-            />
-            <span className="cal-check-name">{c.summary}</span>
-          </label>
+          <div key={calendar.id} className={`cal-check-wrap${primary ? " primary" : ""}`}>
+            <label className="cal-check" title={calendar.summary}>
+              <input
+                id={`calendar-${calendar.id}`}
+                type="checkbox"
+                checked={visible}
+                onChange={() => onToggle(calendar.id)}
+                style={{ accentColor: color }}
+              />
+              <span className="cal-check-dot" style={{ background: color }} aria-hidden="true" />
+              <span className="cal-check-name">
+                <span>{calendar.summary}</span>
+                {primary && <span className="cal-primary-badge">기본</span>}
+              </span>
+            </label>
+            {primary && onPrimaryColorChange && (
+              <div className="cal-color-tools">
+                <label>
+                  <span>기본 캘린더 색상</span>
+                  <input
+                    type="color"
+                    aria-label="기본 캘린더 색상"
+                    value={color || PRIMARY_CALENDAR_DEFAULT_COLOR}
+                    onChange={(event) => onPrimaryColorChange(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="clear cal-color-reset"
+                  aria-label="색상 초기화"
+                  title="색상 초기화"
+                  onClick={() => onPrimaryColorChange(null)}
+                >
+                  ↺
+                </button>
+              </div>
+            )}
+          </div>
         );
       })}
     </>

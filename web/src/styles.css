@@ -235,6 +235,11 @@ body {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
+.nav-toggle {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+}
 .icon-btn:hover {
   background: rgba(16, 24, 40, 0.07);
   color: var(--text);
@@ -338,6 +343,19 @@ body {
   transition: grid-template-columns 0.26s cubic-bezier(0.2, 0.7, 0.3, 1),
     padding-left 0.26s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
+.body.calendar-mode {
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px 22px 22px;
+}
+
+.body.calendar-mode.nav-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.body.calendar-mode .sidebar-inner {
+  width: 240px;
+}
 /* 접힌 상태: 첫 칼럼을 0으로 접고, 사이드바가 먹던 gap(14px)까지 회수해
    왼쪽 여백이 오른쪽과 같은 16px로 맞는다. */
 .body.nav-collapsed {
@@ -415,33 +433,114 @@ body {
   color: var(--muted);
   padding: 6px 14px;
 }
+.cal-check-wrap {
+  border-radius: 12px;
+  margin: 2px 0;
+}
+
+.cal-check-wrap.primary {
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(16, 24, 40, 0.06);
+  margin: 4px 0 8px;
+}
+
 .cal-check {
   width: 100%;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  /* 체크박스만 작게 노리지 않도록 행 전체를 36px 표적으로 */
-  min-height: 36px;
-  padding: 8px 12px;
-  border-radius: var(--radius-s);
-  cursor: pointer;
-  font-size: 13.5px;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 13px;
   transition: background 0.15s ease;
 }
+
 .cal-check:hover {
-  background: rgba(16, 24, 40, 0.05);
+  background: rgba(16, 24, 40, 0.045);
 }
-.cal-check input {
-  cursor: pointer;
-  width: 17px;
-  height: 17px;
+
+.cal-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
   flex: none;
-  accent-color: var(--accent);
+  cursor: pointer;
 }
+
+.cal-check-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.8);
+}
+
 .cal-check-name {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.cal-check-name > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cal-primary-badge {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fbe9e7;
+  color: #a92720;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.cal-color-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 8px 38px;
+}
+
+.cal-color-tools label {
+  min-width: 0;
+  flex: 1;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.cal-color-tools label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-color-tools input[type="color"] {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.cal-color-reset {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 8px;
 }
 .label-row {
   width: 100%;
@@ -946,299 +1045,650 @@ body {
 
 /* ---- calendar ---- */
 .calendar {
-  grid-column: 2 / 4;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: transparent;
-  padding: 16px 22px;
-}
-.cal-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-.cal-range {
-  flex: none;
-  display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.agenda-scroll {
-  flex: 1;
+  grid-column: 2 / -1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  padding: 24px 26px 30px;
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
-  padding: 6px 18px 14px;
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: 18px;
+  box-shadow: 0 12px 38px rgba(16, 24, 40, 0.07);
+  scrollbar-gutter: stable;
 }
+
+.cal-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.cal-titleblock {
+  min-width: 0;
+}
+
+.cal-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .cal-head h2 {
   margin: 0;
-  font-size: 20px;
-  letter-spacing: -0.3px;
+  color: #172033;
+  font-size: 25px;
+  font-weight: 750;
+  letter-spacing: -0.7px;
 }
-.paperclip {
-  opacity: 0.6;
-}
-.cal-day {
-  margin-bottom: 18px;
-}
-.cal-date {
-  position: sticky;
-  top: 0;
-  background: var(--panel);
+
+.cal-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
   font-size: 13px;
-  font-weight: 600;
-  color: var(--accent);
-  padding: 10px 0 6px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-  z-index: 1;
+  line-height: 1.5;
 }
-.cal-event {
+
+.cal-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
-  /* 목록 한 줄이 42px — 좁은 행에서 제목을 조준하던 답답함 제거 */
-  min-height: 42px;
-  padding: 10px 12px;
-  border-radius: var(--radius-s);
-  text-decoration: none;
-  color: var(--text);
-  transition:
-    background 0.13s ease,
-    box-shadow 0.13s ease;
-}
-.cal-event:hover {
-  background: #f3f6fa;
-  box-shadow: var(--shadow-1);
-}
-.cal-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  flex: none;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
-}
-.cal-time {
-  font-size: 13px;
-  color: var(--muted);
-  width: 64px;
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-.cal-title {
-  font-size: 14.5px;
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cal-loc {
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.cal-cal {
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--bg);
-  padding: 2px 8px;
-  border-radius: 10px;
-  white-space: nowrap;
+  gap: 10px;
   flex: none;
 }
-.cal-modes {
-  display: flex;
-  gap: 6px;
-}
-.cal-monthnav {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.cal-monthnav strong {
-  font-size: 17px;
-  min-width: 132px;
-  text-align: center;
-  letter-spacing: -0.2px;
-}
-.month-grid {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  grid-template-rows: auto;
-  grid-auto-rows: 1fr;
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  overflow: hidden;
-  box-shadow: var(--shadow-1);
-}
-.month-dow {
-  background: #f4f6fa;
-  text-align: center;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  color: var(--muted);
-  padding: 10px 0;
-}
-/* 주말은 색으로 구분 — 요일 헤더만 보고 바로 짚을 수 있게 */
-.month-dow.sun {
-  color: #d0483c;
-}
-.month-dow.sat {
-  color: #2f6adc;
-}
-.month-cell {
-  background: var(--panel);
-  min-height: 0;
-  padding: 6px 7px 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  overflow: hidden;
-}
-.month-cell.creatable {
-  cursor: pointer;
-}
-.month-cell.creatable:hover {
-  background: #f3f6fc;
-}
-.month-cell.other {
-  background: #fafbfd;
-}
-.month-cell.other.creatable:hover {
-  background: #f1f4fa;
-}
-.month-cell.other .month-daynum {
-  color: #c0c4cc;
-}
-.month-cellhead {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.month-count {
-  margin-left: auto;
-  min-width: 18px;
-  height: 18px;
+
+.cal-modes,
+.cal-range-options {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: #eef1f6;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 10px;
+  background: #f3f5f8;
+}
+
+.cal-modes button,
+.cal-range-options button {
+  min-width: 54px;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--muted);
-  font-size: 10.5px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
 }
-.month-cell.today .month-count {
-  background: var(--accent-bg);
-  color: var(--accent);
+
+.cal-modes button.active,
+.cal-range-options button.active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
 }
+
+.cal-create {
+  min-height: 44px;
+  padding-inline: 16px;
+  border-radius: 11px;
+  box-shadow: 0 5px 14px rgba(33, 96, 216, 0.2);
+}
+
+.cal-create span {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.cal-monthnav {
+  display: grid;
+  grid-template-columns: 92px minmax(150px, auto) 92px;
+  align-items: center;
+  justify-content: start;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.cal-monthnav-group {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cal-navbtn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 21px;
+}
+
+.cal-today {
+  min-height: 44px;
+  border-radius: 10px;
+}
+
+.cal-monthnav strong {
+  color: #202a3c;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.35px;
+  text-align: center;
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+  height: clamp(600px, calc(100dvh - 260px), 760px);
+  min-height: 600px;
+  overflow: hidden;
+  background: #e7eaf0;
+  border: 1px solid #e1e5ec;
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.05);
+}
+
+.month-grid.weeks-4 {
+  grid-template-rows: auto repeat(4, minmax(0, 1fr));
+}
+
+.month-grid.weeks-5 {
+  grid-template-rows: auto repeat(5, minmax(0, 1fr));
+}
+
+.month-grid.weeks-6 {
+  grid-template-rows: auto repeat(6, minmax(0, 1fr));
+}
+
+.month-dow {
+  padding: 10px 4px;
+  background: #f8f9fb;
+  color: #697386;
+  font-size: 11.5px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.month-dow.sun {
+  color: #bb443b;
+}
+
+.month-dow.sat {
+  color: #3769b2;
+}
+
+.month-cell {
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  overflow: hidden;
+  background: #fff;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.month-cell.other {
+  background: #fbfcfd;
+}
+
+.month-cell.selected {
+  box-shadow: inset 0 0 0 2px rgba(33, 96, 216, 0.28);
+}
+
+
+.month-cellhead {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
 .month-daynum {
-  /* 날짜 숫자 자체가 클릭 표적 — 28px 원으로 키워 오늘 표시도 또렷하게 */
   min-width: 28px;
   height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text);
   align-self: flex-start;
   padding: 0 7px;
+  border: 0;
   border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+
+button.month-daynum {
+  cursor: pointer;
+}
+
+button.month-daynum:hover {
+  background: #eaf0fb;
+}
+
+.month-cell.other .month-daynum {
+  color: #687386;
+}
+
 .month-cell.sun .month-daynum {
-  color: #d0483c;
+  color: #bb443b;
 }
+
 .month-cell.sat .month-daynum {
-  color: #2f6adc;
+  color: #3769b2;
 }
-.month-cell.creatable:hover .month-daynum {
-  background: #e6edfa;
-}
+
 .month-cell.today .month-daynum {
   background: var(--accent);
   color: #fff;
-  font-weight: 700;
-  box-shadow: 0 2px 6px rgba(33, 96, 216, 0.35);
+  font-weight: 750;
+  box-shadow: 0 2px 7px rgba(33, 96, 216, 0.28);
 }
-/* 일정 칩: 캘린더색 파스텔 배경(인라인 color-mix) 위에 도트+제목 */
-.month-ev {
-  display: flex;
+
+.month-count {
+  min-width: 19px;
+  height: 19px;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  text-decoration: none;
-  color: var(--text);
-  font-size: 12.5px;
-  line-height: 1.35;
-  min-height: 24px;
-  border-radius: 7px;
-  padding: 3px 7px;
-  white-space: nowrap;
-  overflow: hidden;
-  transition:
-    filter 0.13s ease,
-    transform 0.13s ease;
-}
-.month-ev:hover {
-  filter: brightness(0.96) saturate(1.15);
-  transform: translateX(1px);
-}
-.month-ev-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-.month-ev-time {
-  flex: none;
-  color: var(--muted);
-  font-size: 11.5px;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #f0f2f6;
+  color: #657084;
+  font-size: 10.5px;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
-.month-ev-t {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.month-more {
-  font-size: 12px;
+
+.month-cell.today .month-count {
+  background: var(--accent-bg);
   color: var(--accent);
-  font-weight: 600;
-  padding: 3px 6px;
-  min-height: 24px;
-  border-radius: 7px;
 }
-.month-more:hover {
+
+.month-ev {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  min-height: 20px;
+  max-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  overflow: hidden;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 5px;
+  color: #263044;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 0.12s ease, box-shadow 0.12s ease;
+}
+
+.month-ev:hover {
+  filter: brightness(0.97) saturate(1.05);
+  box-shadow: 0 2px 5px rgba(16, 24, 40, 0.09);
+}
+
+.month-ev-dot {
+  display: none;
+}
+.month-ev-cal {
+  min-width: 0;
+  display: none;
+}
+
+.month-ev-time {
+  flex: none;
+  color: #667085;
+  font-size: 9.5px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.month-ev-t {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.month-more {
+  width: 100%;
+  min-height: 20px;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+}
+
+.month-more:hover,
+.month-more:focus-visible {
   background: var(--accent-bg);
 }
 
-/* 일정 칩/줄은 전부 <button> — 버튼 기본 스타일을 한 번에 지운다 */
-.cal-event,
-.month-ev,
-.month-more {
-  width: 100%;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  font-family: inherit;
+.cal-range {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 12px;
+  padding: 13px 15px;
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: 12px;
+  background: #f8f9fb;
 }
 
+.cal-range > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cal-range-label {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cal-range strong {
+  overflow: hidden;
+  color: #283247;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-range-options button {
+  min-height: 44px;
+  min-width: 48px;
+}
+
+.agenda-scroll {
+  min-height: 0;
+  padding: 2px 18px 18px;
+  overflow: visible;
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: 14px;
+  background: #fff;
+}
+.cal-refresh-warning {
+  margin: 10px;
+  padding: 10px 12px;
+  border: 1px solid #f0cf7a;
+  border-radius: 10px;
+  background: #fff8e6;
+  color: #6f4b00;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cal-day {
+  margin-bottom: 10px;
+}
+
+.cal-date {
+  position: sticky;
+  top: -1px;
+  z-index: 1;
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 10px 2px 7px;
+  border: 0;
+  border-bottom: 1px solid #eceff3;
+  background: rgba(255, 255, 255, 0.96);
+  color: #2e5da8;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.cal-event {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.cal-event:hover {
+  background: #f5f7fa;
+}
+
+.cal-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(16, 24, 40, 0.035);
+}
+
+.cal-time {
+  width: 64px;
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-loc {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-cal {
+  flex: none;
+  max-width: 140px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f1f3f6;
+  color: var(--muted);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar :is(button, input, select, textarea, a):focus-visible,
+.cal-check-wrap :is(button, input, label):focus-visible {
+  outline: 3px solid rgba(33, 96, 216, 0.34);
+  outline-offset: 2px;
+}
+.ev-dialog .modal-head button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.ev-dialog .modal-foot .btn {
+  min-height: 44px;
+}
+
+.calendar .dlg-grip {
+  width: 32px;
+  height: 32px;
+}
+
+@media (max-width: 1100px) {
+  .body.calendar-mode {
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .body.calendar-mode .sidebar-inner {
+    width: 210px;
+  }
+
+  .calendar {
+    padding: 20px 18px 26px;
+  }
+
+  .month-cell {
+    padding: 5px;
+  }
+
+  .month-ev {
+    gap: 3px;
+    padding-inline: 4px;
+  }
+
+  .month-ev-dot {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .body.calendar-mode {
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .body.calendar-mode .sidebar-inner {
+    width: 190px;
+  }
+
+  .calendar {
+    padding: 16px 10px 22px;
+    border-radius: 14px;
+  }
+
+  .cal-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .cal-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .cal-head p {
+    display: none;
+  }
+
+  .cal-monthnav {
+    grid-template-columns: 88px minmax(112px, 1fr) 58px;
+    gap: 4px;
+  }
+
+  .cal-navbtn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .cal-monthnav strong {
+    font-size: 15px;
+  }
+
+  .month-dow {
+    padding-inline: 1px;
+    font-size: 10.5px;
+  }
+
+  .month-cell {
+    padding: 4px 3px;
+  }
+
+  .month-ev {
+    gap: 2px;
+    padding-inline: 3px;
+  }
+
+  .month-count {
+    display: none;
+  }
+
+  .cal-color-tools {
+    padding-left: 36px;
+  }
+
+  .cal-color-tools label {
+    justify-content: flex-end;
+  }
+
+  .cal-color-tools label > span {
+    display: none;
+  }
+
+  .cal-loc,
+  .cal-cal {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar *,
+  .cal-check-wrap * {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+}
 /* dialog (day list + event detail) */
 .dialog {
   background: var(--panel);
@@ -1334,6 +1784,7 @@ body {
 }
 .ev-input {
   width: 100%;
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 9px 12px;
@@ -1352,6 +1803,7 @@ textarea.ev-input {
 }
 .ev-title-input {
   width: 100%;
+  min-height: 44px;
   border: none;
   border-bottom: 1.5px solid var(--border);
   background: transparent;
@@ -1436,6 +1888,7 @@ textarea.ev-input {
   background: var(--bg);
 }
 .ev-seg button {
+  min-height: 44px;
   border: none;
   background: transparent;
   font: inherit;
@@ -1462,6 +1915,7 @@ textarea.ev-input {
   gap: 6px;
 }
 .ev-chip {
+  min-height: 44px;
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--muted);
@@ -1503,6 +1957,7 @@ textarea.ev-input {
 }
 .ev-more {
   width: 100%;
+  min-height: 44px;
   border: 1px dashed var(--border-strong);
   background: transparent;
   color: var(--muted);

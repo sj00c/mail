@@ -53,10 +53,15 @@
 - 새 메일이 오면 데스크톱 알림
 
 ### 📅 캘린더
-- 월 보기 / 목록 보기, **마우스 휠로 이전·다음 달 넘기기**
+- 월 보기 / 목록 보기, **이전·다음·오늘 버튼으로 월 이동**
+- Notion·Linear 계열의 차분한 화면 구조 — 일정 관리, 보기 전환, 새 일정, 월 탐색의 우선순위가 한눈에 보입니다.
+- 월과 목록을 오갈 때 같은 날짜 맥락을 유지해 탐색 위치를 잃지 않습니다.
 - 날짜를 클릭하면 바로 일정 만들기 — **참석자 초대, 알림(10분 전 등), Google Meet 화상회의**까지 한 화면에서
 - 메일을 읽다가 **"📅 일정" 버튼**을 누르면 그 메일 내용으로 일정이 만들어져요
-- 캘린더별로 보이기/숨기기 토글
+- 캘린더는 처음에 모두 표시되며, 기본 캘린더는 항상 목록과 새 일정 선택의 첫 번째 항목이고 기본 빨강색으로 시작합니다. 각 캘린더는 필요할 때 숨겼다가 다시 표시할 수 있습니다.
+- 캘린더 색은 이 브라우저에만 저장되어 Google Calendar의 색이나 일정 데이터를 바꾸지 않으며, 기본색으로 되돌릴 수 있습니다.
+- 월 그리드는 달에 따라 4·5·6주로 늘어나며 일정이 많아도 `더보기`로 접지 않고 모든 일정 칩을 직접 표시합니다. 칩은 12px 이상의 읽을 수 있는 글자 크기를 유지하고, 밀집 날짜는 해당 주 행과 캘린더 화면 자체가 늘어납니다.
+- 1280·1024·768px 반응형 화면, 키보드 포커스, WCAG AA 대비, 모션 감소 설정을 검증합니다.
 
 ### 🗂 드라이브
 - 폴더 탐색, 검색, 업로드 · 다운로드, 새 폴더, 이름 바꾸기
@@ -310,7 +315,7 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1
 | 화상회의 잡기 | 일정 만들 때 **Meet 추가** 체크 → 저장하면 Meet 링크가 생겨요 |
 | 메일을 일정으로 | 메일 읽는 화면의 **📅 일정** 버튼 |
 | 첨부를 Drive에 보관 | 첨부 이름 옆 **☁️** 버튼 |
-| 다음 달 일정 훑기 | 캘린더 월 화면에서 **마우스 휠** 위/아래 |
+| 다음 달 일정 훑기 | 캘린더 월 화면의 **‹ / › 버튼** |
 | 지난 메일 더 보기 | 목록을 그냥 아래로 스크롤 — 자동으로 이어서 불러와요 |
 | 여러 메일 한꺼번에 정리 | 목록에서 체크박스 선택 (Shift-클릭으로 범위 선택) → 읽음/별표/보관/휴지통 |
 | 현재 페이지를 넘어 전체 정리 | **전체메일** 또는 원하는 편지함 → 상단 전체 선택 → **이 보기의 모든 메일 선택** → 읽음/안읽음/휴지통. 실행 전에 서버가 정확한 개수를 다시 확인해 보여줘요 |
@@ -401,7 +406,7 @@ Google이 로그인 권한을 만료하거나 사용자가 권한을 회수한 �
 | | |
 |---|---|
 | 백엔드 | Bun · Hono · Gmail / Calendar / Drive / People REST API |
-| 프론트 | React 18 · Vite |
+| 프론트 | React 18 · Vite · React.lazy (캘린더·드라이브·통합검색은 첫 사용 시 로드) |
 | 인증 | OAuth2 (state 검증, 토큰 원자적 저장/자동 갱신) |
 
 ### 실행 모드
@@ -436,13 +441,19 @@ Google이 로그인 권한을 만료하거나 사용자가 권한을 회수한 �
 server/
   index.ts     Hono 라우트 (/auth/*, /api/*) + 프로덕션 정적 서빙
   auth.ts      OAuth2 + 토큰 저장/갱신
-  gmail.ts     Gmail API 래퍼 (목록/대화/발송/드래프트/첨부/전체 일괄처리)
+  gmail.ts     Gmail API 래퍼 (목록/대화/발송/드래프트/첨부/전체 일괄처리; 목록 상세 조회는 multipart batch로 외부 HTTP 왕복을 묶음)
   calendar.ts  Calendar API 래퍼 (일정 CRUD/검색/참석자·알림·Meet)
   drive.ts     Drive API 래퍼 (탐색/검색/업로드/다운로드/휴지통/공유)
 web/src/
-  App.tsx      전체 UI (메일/캘린더/드라이브/통합 검색/작성/설정)
+  App.tsx      앱 셸·메일 상태·설정
+  views/       Reader/Compose/Calendar/Drive/Search 화면 모듈
+  hooks/       Mailbox 상태 훅
+  lib/         형식/HTML/설정 유틸리티
   api.ts       프론트 API 클라이언트 + 타입
-  styles.css   디자인 토큰 + 전체 스타일
+  test/setup.ts Vitest/jsdom 테스트 환경
+e2e/
+  fixtures/app.ts  인증·API를 모두 모의하는 Playwright fixture
+  *.spec.ts        lazy 로딩·월 캘린더 브라우저 회귀
 docs/
   OAUTH_SETUP.md   OAuth 셋업 상세 가이드
   PRD.md           점검 리포트 · 릴리스 노트 · 백로그
@@ -451,6 +462,6 @@ deploy/
   run.sh / run.cmd             빌드 후 서버 기동 진입점
 ```
 
-CI(`.github/workflows/ci.yml`)가 push/PR마다 `typecheck` + `build`를 검증한다.
+CI(`.github/workflows/ci.yml`)는 push/PR마다 모의 API만 사용해 `test:unit` → `typecheck` → `build` → 프로덕션 `dist` Chromium `test:e2e` 순서로 검증합니다. 개발자는 `bun run test:unit`, `bun run test:e2e:production`를 각각 실행할 수 있습니다.
 
 </details>

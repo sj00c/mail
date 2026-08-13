@@ -1,6 +1,14 @@
 import { gmail as gmailApi, type gmail_v1 } from "@googleapis/gmail";
 import { getAuthedClient } from "./auth.ts";
+import { httpStatusOf } from "./apiErrors.ts";
 import { uploadAndShare } from "./drive.ts";
+import {
+  buildMessageMetadataBatch,
+  GmailBatchPartError,
+  GMAIL_BATCH_MAX_PARTS,
+  makeBatchBoundary,
+  parseMessageMetadataBatch,
+} from "./gmailBatch.ts";
 
 async function api(): Promise<gmail_v1.Gmail> {
   const auth = await getAuthedClient();
@@ -103,14 +111,6 @@ function decodeBody(data?: string | null): string {
   return Buffer.from(data, "base64url").toString("utf-8");
 }
 
-function errStatus(err: unknown): number | undefined {
-  const e = err as { status?: unknown; code?: unknown; response?: { status?: unknown } };
-  for (const v of [e?.status, e?.code, e?.response?.status]) {
-    const n = Number(v);
-    if (Number.isInteger(n) && n >= 100 && n <= 599) return n;
-  }
-  return undefined;
-}
 
 type ExtractAcc = {
   html: string | null;
@@ -147,6 +147,167 @@ function walkParts(part: gmail_v1.Schema$MessagePart | undefined, acc: ExtractAc
   for (const child of part.parts ?? []) walkParts(child, acc);
 }
 
+export type MessageListTransport = {
+  list(opts: {
+    q?: string;
+    labelIds?: string[];
+    pageToken?: string;
+    maxResults: number;
+    includeSpamTrash: boolean;
+  }): Promise<gmail_v1.Schema$ListMessagesResponse>;
+  batch(body: string, boundary: string): Promise<{
+    contentType?: string;
+    body: string;
+  }>;
+  refresh(): Promise<void>;
+  waitBeforeRetry?(milliseconds: number): Promise<void>;
+};
+
+type MessageListAuth = {
+  request(options: {
+    url: string;
+    method: "POST";
+    data: string;
+    headers: Record<string, string>;
+    responseType: "text";
+  }): Promise<{ headers?: Record<string, string | string[] | undefined>; data?: string }>;
+  refreshAccessToken(): Promise<unknown>;
+};
+
+export function createMessageListTransport(auth: MessageListAuth): MessageListTransport {
+  const g = gmailApi({ version: "v1", auth: auth as never });
+  return {
+    async list(opts) {
+      const res = await g.users.messages.list({
+        userId: "me",
+        q: opts.q,
+        labelIds: opts.labelIds,
+        includeSpamTrash: opts.includeSpamTrash,
+        pageToken: opts.pageToken,
+        maxResults: opts.maxResults,
+      });
+      return res.data;
+    },
+    async batch(body, boundary) {
+      const res = await auth.request({
+        url: "https://gmail.googleapis.com/batch/gmail/v1",
+        method: "POST",
+        data: body,
+        headers: { "Content-Type": `multipart/mixed; boundary=${boundary}` },
+        responseType: "text",
+      });
+      const contentType = res.headers?.["content-type"];
+      return {
+        contentType: Array.isArray(contentType) ? contentType[0] : contentType,
+        body: res.data ?? "",
+      };
+    },
+    async refresh() {
+      await auth.refreshAccessToken();
+    },
+  };
+}
+
+async function messageListTransport(): Promise<MessageListTransport> {
+  const auth = await getAuthedClient();
+  return createMessageListTransport({
+    async request(options) {
+      const res = await auth.request<string>(options);
+      return {
+        headers: { "content-type": res.headers?.["content-type"] },
+        data: res.data,
+      };
+    },
+    async refreshAccessToken() {
+      await auth.refreshAccessToken();
+    },
+  });
+}
+
+export async function listMessagesWithTransport(
+  opts: {
+    q?: string;
+    labelIds?: string[];
+    pageToken?: string;
+    maxResults?: number;
+  },
+  transport: MessageListTransport,
+): Promise<{
+  messages: MessageSummary[];
+  nextPageToken?: string;
+  resultSizeEstimate: number;
+}> {
+  const maxResults = opts.maxResults ?? 25;
+  const list = await transport.list({
+    q: opts.q,
+    labelIds: opts.labelIds,
+    includeSpamTrash:
+      opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH") || false,
+    pageToken: opts.pageToken,
+    maxResults,
+  });
+  const refs = list.messages ?? [];
+  const messages: MessageSummary[] = [];
+  let refreshed = false;
+  const transientRetryDelays = [1_000, 2_000, 4_000];
+  const waitBeforeRetry = transport.waitBeforeRetry ??
+    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+
+  // Chunks intentionally run in request order: this preserves list order. One
+  // auth refresh budget is shared by the complete logical list operation.
+  for (let offset = 0; offset < refs.length; offset += GMAIL_BATCH_MAX_PARTS) {
+    const chunk = refs.slice(offset, offset + GMAIL_BATCH_MAX_PARTS);
+    const fetchChunk = async () => {
+      const boundary = makeBatchBoundary();
+      const response = await transport.batch(buildMessageMetadataBatch(
+        chunk.map((ref) => ref.id ?? ""),
+        boundary,
+      ), boundary);
+      return parseMessageMetadataBatch(response.contentType, response.body, chunk.length);
+    };
+
+    let transientRetries = 0;
+    let parts: ReturnType<typeof parseMessageMetadataBatch>;
+    while (true) {
+      try {
+        parts = await fetchChunk();
+      } catch (error) {
+        const status = httpStatusOf(error);
+        if ((status === 429 || (status !== undefined && status >= 500)) &&
+          transientRetries < transientRetryDelays.length) {
+          await waitBeforeRetry(transientRetryDelays[transientRetries++]);
+          continue;
+        }
+        throw error;
+      }
+
+      if (!refreshed && parts.some((part) => part.status === 401 || part.status === 403)) {
+        refreshed = true;
+        await transport.refresh();
+        continue;
+      }
+      if (parts.some((part) => part.status === 429 || part.status >= 500) &&
+        transientRetries < transientRetryDelays.length) {
+        await waitBeforeRetry(transientRetryDelays[transientRetries++]);
+        continue;
+      }
+      break;
+    }
+    for (const part of parts) {
+      if (part.status === 404) continue;
+      if (part.status < 200 || part.status >= 300)
+        throw new GmailBatchPartError(part.status, offset + part.index, part.reason);
+      messages.push(toSummary(part.body as gmail_v1.Schema$Message));
+    }
+  }
+
+  return {
+    messages,
+    nextPageToken: list.nextPageToken ?? undefined,
+    resultSizeEstimate: list.resultSizeEstimate ?? refs.length,
+  };
+}
+
 export async function listMessages(opts: {
   q?: string;
   labelIds?: string[];
@@ -157,45 +318,7 @@ export async function listMessages(opts: {
   nextPageToken?: string;
   resultSizeEstimate: number;
 }> {
-  const g = await api();
-  const list = await g.users.messages.list({
-    userId: "me",
-    q: opts.q,
-    labelIds: opts.labelIds,
-    includeSpamTrash:
-      opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH"),
-    pageToken: opts.pageToken,
-    maxResults: opts.maxResults ?? 25,
-  });
-  const ids = list.data.messages ?? [];
-  const messages = await Promise.all(
-    ids.map(async (ref) => {
-      // A message deleted between list and get (404) must not sink the
-      // whole list response. Other failures (429 rate limit, 5xx) still
-      // propagate — silently dropping rows would render a quietly
-      // incomplete inbox with HTTP 200.
-      try {
-        const full = await g.users.messages.get({
-          userId: "me",
-          id: ref.id!,
-          format: "metadata",
-          metadataHeaders: ["From", "To", "Subject", "Date", "Content-Type"],
-        });
-        return toSummary(full.data);
-      } catch (err) {
-        if (errStatus(err) === 404) {
-          console.error(`[gmail] message ${ref.id} vanished (404), skipping`);
-          return null;
-        }
-        throw err;
-      }
-    }),
-  );
-  return {
-    messages: messages.filter((m): m is MessageSummary => m !== null),
-    nextPageToken: list.data.nextPageToken ?? undefined,
-    resultSizeEstimate: list.data.resultSizeEstimate ?? messages.length,
-  };
+  return listMessagesWithTransport(opts, await messageListTransport());
 }
 
 function toFull(m: gmail_v1.Schema$Message): MessageFull {

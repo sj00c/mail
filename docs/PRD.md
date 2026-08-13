@@ -36,9 +36,9 @@
 
 - **메일 목록**: 스크롤이 바닥 300px 앞에 오면 다음 페이지 자동 로드(`MoreSentinel`, IntersectionObserver — root를 실제 스크롤 컨테이너로 잡아 조상 overflow 클리핑에 의한 rootMargin 무력화 방지). "더 보기" 버튼은 폴백으로 유지. 기존 중복제거·시퀀스 가드(`loadSeq`) 로직 그대로 활용.
 - **통합검색 메일 컬럼**: 동일 센티널 적용.
-- **캘린더 월 뷰**: 휠/트랙패드 스크롤로 이전·다음 달 이동. 누적 임계값(100) + 450ms 쿨다운으로 트랙패드 관성이 여러 달을 한 번에 넘기지 않게 제한.
+- **캘린더 월 뷰(과거 2.2 동작, 현행 2.7에서 제거)**: 당시에는 휠/트랙패드로 월을 이동했으나, 모든 일정을 직접 표시하는 현행 화면에서는 휠이 긴 월 그리드를 스크롤한다. 월 이동은 이전·다음·오늘 버튼을 사용한다.
 - **캘린더 목록(agenda) 뷰**: 바닥 도달 시 조회 범위 자동 확장 7→30→90→365일.
-- **검증**: 메일 목록 스크롤 시 행 자동 추가(DOM 257→512), 월 뷰 휠 7월→8월→6월 양방향, agenda 30일→90일 자동 확장(61개 날짜 그룹) 브라우저 E2E 확인. `tsc --noEmit` + `vite build` 통과.
+- **당시 검증 기록**: 2.2 릴리스에서는 메일 목록 자동 추가, 월 뷰 휠 이동, agenda 조회 범위 확장을 브라우저로 검증했다. 현행 월 뷰 검증은 2.7의 직접 일정 표시·패널 스크롤·버튼 월 이동 기준을 따른다.
 
 ### 2.3 [해결 완료] "seokjuCho" 유니코드 오류 — 앱 버그 아님 (Google 측 원본 데이터를 수정)
 
@@ -93,14 +93,31 @@
 - Google Gmail Help — 검색 연산자와 메시지/대화 차이: https://support.google.com/mail/answer/7190
 - Google Gmail Help — 검색 기본값은 Spam/Trash 제외: https://support.google.com/mail/answer/6593
 - Gmail Community — 스레드 첨부 전체보기 요구: https://support.google.com/mail/thread/422934286
+## 2.7 성능·캘린더·검증 릴리스 (2026-08-05)
+
+- Gmail 목록의 상세 메시지 조회는 multipart batch 요청으로 묶어 브라우저와 Gmail 사이의 외부 HTTP 왕복을 줄인다. 각 하위 Gmail 요청 자체의 비용 또는 쿼터 절감은 주장하지 않는다.
+- `web/src/hooks`로 Mailbox 상태 훅을 분리하고 캘린더·드라이브·통합검색 화면은 `React.lazy`로 첫 사용 시 불러온다. 로드 실패 중에도 앱 셸과 메일 탐색은 유지된다.
+- 모든 캘린더를 기본 표시하고 사용자가 명시적으로 숨긴 브라우저 상태만 적용한다. 기본 캘린더(`primary: true`)는 목록과 새 일정 선택의 첫 항목이며 새 일정의 기본값이다. 기본 빨강색은 브라우저 로컬 설정이고, 다른 캘린더처럼 숨기거나 다시 보일 수 있다. 색 변경·초기화는 Calendar API를 변경하지 않는다.
+- 월 그리드는 4·5·6주와 일정 수에 맞춰 높이가 늘어나며, 일정 칩을 `더보기`로 접지 않고 모두 직접 표시한다. 각 칩은 캘린더 색, 12px 이상의 글자, 27px 이상의 높이를 유지하고 셀에서 잘리지 않는다.
+- 검증 기반을 Vitest/jsdom/Testing Library와 Chromium Playwright로 추가했다. 브라우저 fixture는 인증과 API를 모두 모의하며, `dist`를 SPA fallback으로 제공하는 정적 서버에서 해시된 프로덕션 자산을 시험한다. CI는 Google 계정·토큰·실서비스에 연결하지 않고 unit → typecheck → build → e2e 순서로 실행한다.
+
+## 2.8 캘린더 UI/UX 재설계 (2026-08-06)
+
+- 캘린더 화면을 Notion·Linear 계열의 차분한 정보 구조로 재설계했다. 화면 제목·설명, 월/목록 세그먼트, 새 일정, 월 탐색을 명확한 위계로 배치하고 캘린더 필터와 기본 색상 제어를 독립된 사이드바 카드로 정돈했다.
+- 월과 목록 보기는 같은 날짜 앵커를 공유한다. 미래 달에서 목록으로 전환하면 그 달부터 시작하고, 목록에서 선택한 날짜는 월로 돌아갈 때 유지된다.
+- 모든 일정은 직접 표시한다. 밀집 날짜는 글자를 12px 미만으로 줄이거나 `더보기`·날짜 칸 내부 스크롤을 만들지 않고 해당 주 행과 캘린더 화면을 확장한다.
+- 일정 선택은 기존 중앙 상세 모달을 유지하며 dialog 의미, Escape 닫기, Tab 초점 순환, 호출 요소 초점 복귀를 보강했다.
+- 1280·1024·768px 반응형 레이아웃, 44px 주요 조작 표적, 명확한 `:focus-visible`, WCAG AA 대비, `prefers-reduced-motion`을 수용 기준으로 삼는다. 새 대형 UI 의존성이나 장식용 애니메이션은 추가하지 않는다.
+- 기준 스크린샷은 `docs/screenshots/calendar.png`, `calendar-1024.png`, `calendar-768.png`에 보관한다.
+
 ## 3. 최적화 백로그 (우선순위순)
 
-이미 적용돼 있는 것: 응답 gzip(`compress()`), 캘린더 목록 5분 캐시, 프론트 SWR 캐시(`calCache` 30s), 목록 부분 패치(전체 리로드 회피), 요청 시퀀스 가드, `fields` 파라미터로 응답 축소.
+이미 적용돼 있는 것: 응답 gzip(`compress()`), 캘린더 목록 5분 캐시, 프론트 SWR 캐시(`calCache` 30s), 목록 부분 패치(전체 리로드 회피), 요청 시퀀스 가드, `fields` 파라미터로 응답 축소, Gmail 상세 조회 multipart batch.
 
-1. **[P1] 메일 목록 N+1**: `messages.list` 후 페이지당 25회 `messages.get`(병렬이지만 26 API 왕복/쿼터). Gmail batch HTTP 엔드포인트(`/batch/gmail/v1`)로 1왕복 묶음 처리 → 목록 로딩 지연·쿼터 소모 감소. 무한 스크롤 도입으로 호출 빈도가 늘어 체감 효과 큼.
+1. ~~**[P1] 메일 목록 N+1**~~ — 적용됨: 목록 상세 조회는 multipart batch로 외부 HTTP 왕복을 묶는다. Gmail 하위 요청 비용·쿼터가 줄어든다고 가정하지 않는다.
 2. **[P1] 라벨 unread 카운트 N+1**: `labels.list` 후 표시 라벨마다 `labels.get`. 동일하게 batch 묶음 대상.
 3. **[P2] 메일 목록 windowing**: 무한 스크롤로 DOM이 무한 증식 가능(500행+). 행 높이 고정이라 가상 스크롤 도입 용이.
-4. ~~**[P2] `App.tsx` 분할**~~ — 적용됨: 6,674줄 단일 파일을 `lib/`(format·mailHtml·attachments·settings) + `ui/dialog` + `views/`(reader·compose·calendar·drive·search) 10개 모듈로 분리, App.tsx는 셸(App/Login/Mailbox/Settings) 1,696줄만 유지. 순수 이동(번들 동일 254KB) — 남은 후보: `React.lazy` 지연 로드, `Mailbox`(1,313줄·훅 78개) 훅 추출(useMailList/useOutbox/useInboxPoll).
+4. ~~**[P2] `App.tsx` 분할**~~ — 적용됨: 화면 모듈과 `web/src/hooks`의 Mailbox 훅으로 분리하고 캘린더·드라이브·통합검색은 첫 사용 시 lazy 로드한다.
 5. **[P3] 캘린더 fan-out**: 캘린더 5개 × 최대 4페이지 `events.list` 병렬 호출. 현 규모에선 문제없음 — 캘린더 수가 늘면 batch 검토.
 
 ## 4. 기능 백로그 (제안)
@@ -118,4 +135,4 @@
 - `server/index.ts` — 첨부→Drive 저장 라우트.
 - `web/src/api.ts` — 타입 확장 + `attachmentToDrive`.
 - `web/src/styles.css` — `.ev-times min-width` 수정; 툴바 select·서명 에디터·undo 토스트·chip 래퍼 스타일.
-- `web/src/App.tsx` — `MoreSentinel`(무한 스크롤); 월 뷰 휠 내비; agenda 자동 확장; 날짜 클릭 기본 시간 일정; 서식 서명 편집기; 기본 글꼴 + 툴바 글꼴; 보내기 취소 큐; 첨부→Drive 버튼; 메일→일정; 일정 편집기 참석자/알림/Meet.
+- `web/src/App.tsx` — `MoreSentinel`(무한 스크롤); 당시 월 뷰 휠 내비(현행 2.7에서 제거); agenda 자동 확장; 날짜 클릭 기본 시간 일정; 서식 서명 편집기; 기본 글꼴 + 툴바 글꼴; 보내기 취소 큐; 첨부→Drive 버튼; 메일→일정; 일정 편집기 참석자/알림/Meet.

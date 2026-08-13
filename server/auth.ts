@@ -1,6 +1,7 @@
 import { OAuth2Client, type Credentials } from "google-auth-library";
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Scopes: gmail (read/send/label/mark-read/archive/trash; no permanent delete)
 // + Google Calendar read/write (create/update/delete events)
@@ -17,7 +18,7 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/contacts.other.readonly",
 ];
 
-const TOKEN_PATH = join(import.meta.dir, ".data", "token.json");
+const TOKEN_PATH = join(dirname(fileURLToPath(import.meta.url)), ".data", "token.json");
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;

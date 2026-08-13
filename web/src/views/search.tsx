@@ -18,7 +18,12 @@ import {
   searchTerms,
 } from "../lib/format.tsx";
 import { MoreSentinel } from "../ui/dialog.tsx";
-import { calCache, EventDetailModal, EventEditModal } from "./calendar.tsx";
+import {
+  calCache,
+  EventDetailModal,
+  EventEditModal,
+  getEventDisplayColor,
+} from "./calendar.tsx";
 import { DriveCard } from "./drive.tsx";
 import { listParty } from "./reader.tsx";
 
@@ -70,11 +75,15 @@ export function MailCard({
 
 export function EventCard({
   e,
+  calendars,
+  primaryColorOverride,
   terms,
   past,
   onClick,
 }: {
   e: CalEvent;
+  calendars: Calendar[];
+  primaryColorOverride?: string | null;
   terms: string[];
   past?: boolean;
   onClick: () => void;
@@ -97,7 +106,10 @@ export function EventCard({
       className={`scard ev-card${past ? " past" : ""}`}
       onClick={onClick}
     >
-      <span className="ev-datebox" style={{ borderTopColor: e.color ?? "#1a73e8" }}>
+      <span
+        className="ev-datebox"
+        style={{ borderTopColor: getEventDisplayColor(e, calendars, primaryColorOverride) }}
+      >
         <span className="ev-db-month">
           {d.getFullYear() !== new Date().getFullYear()
             ? `${String(d.getFullYear()).slice(2)}년 ${d.getMonth() + 1}월`
@@ -113,7 +125,10 @@ export function EventCard({
           {e.location ? <> · 📍 {highlightText(e.location, terms)}</> : null}
         </span>
         <span className="scard-tagrow">
-          <span className="cal-dot" style={{ background: e.color ?? "#1a73e8" }} />
+          <span
+            className="cal-dot"
+            style={{ background: getEventDisplayColor(e, calendars, primaryColorOverride) }}
+          />
           <span className="scard-tag">{e.calendarSummary}</span>
         </span>
       </span>
@@ -132,6 +147,7 @@ export function SearchResults({
   calendars,
   hiddenCals,
   onLogout,
+  primaryColorOverride,
 }: {
   query: string;
   messages: MessageSummary[];
@@ -143,6 +159,7 @@ export function SearchResults({
   calendars: Calendar[];
   hiddenCals: Set<string>;
   onLogout: () => void;
+  primaryColorOverride?: string | null;
 }) {
   const [events, setEvents] = useState<CalEvent[] | null>(null);
   const [evErr, setEvErr] = useState<string | null>(null);
@@ -246,6 +263,8 @@ export function SearchResults({
                 <EventCard
                   key={`${e.calendarId}|${e.id}|${e.start}`}
                   e={e}
+                  calendars={calendars}
+                  primaryColorOverride={primaryColorOverride}
                   terms={terms}
                   onClick={() => setDetailEv(e)}
                 />
@@ -257,6 +276,8 @@ export function SearchResults({
                 <EventCard
                   key={`${e.calendarId}|${e.id}|${e.start}`}
                   e={e}
+                  calendars={calendars}
+                  primaryColorOverride={primaryColorOverride}
                   terms={terms}
                   past
                   onClick={() => setDetailEv(e)}
@@ -314,6 +335,8 @@ export function SearchResults({
       {detailEv && (
         <EventDetailModal
           ev={detailEv}
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
           onLogout={onLogout}
           canEdit={writable.some((c) => c.id === detailEv.calendarId)}
           onEdit={(d) => {
@@ -343,7 +366,8 @@ export function SearchResults({
       )}
       {editor && (
         <EventEditModal
-          calendars={writable}
+          calendars={calendars}
+          primaryColorOverride={primaryColorOverride}
           initial={editor.initial}
           eventId={editor.eventId}
           onLogout={onLogout}
