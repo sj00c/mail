@@ -83,10 +83,17 @@ export const MessageRow = memo(function MessageRow({
       <span
         className="msg-check-cell"
         role="checkbox"
+        tabIndex={0}
         aria-checked={checked}
         aria-label={`${addr.name || addr.email} 선택`}
         onClick={(e) => {
           e.stopPropagation(); // 행 클릭(리더 열기)으로 번지지 않게
+          onToggleCheck(m.id, e.shiftKey);
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          e.stopPropagation();
           onToggleCheck(m.id, e.shiftKey);
         }}
       >

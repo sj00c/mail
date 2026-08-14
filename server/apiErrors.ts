@@ -33,3 +33,10 @@ export function needAuthError(err: unknown): boolean {
 export function apiErrorStatus(err: unknown): 401 | 500 {
   return needAuthError(err) ? 401 : 500;
 }
+
+export function publicApiError(err: unknown): string {
+  if (needAuthError(err)) return "NOT_AUTHENTICATED";
+  if (err instanceof Error && /^GMAIL_BATCH_(?:PART_\d{3}_[A-Z_]+|MALFORMED_RESPONSE)$/.test(err.message))
+    return err.message;
+  return "INTERNAL_SERVER_ERROR";
+}

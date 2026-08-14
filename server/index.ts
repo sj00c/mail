@@ -10,7 +10,7 @@ import {
   isAuthed,
   logout,
 } from "./auth.ts";
-import { apiErrorStatus, httpStatusOf } from "./apiErrors.ts";
+import { apiErrorStatus, httpStatusOf, publicApiError } from "./apiErrors.ts";
 import {
   createDraft,
   deleteDraft,
@@ -102,9 +102,8 @@ app.get("/auth/callback", async (c) => {
     // Bounce back to the SPA (Vite :5173 in dev, self at "/" in prod).
     return c.redirect(APP_URL);
   } catch (e) {
-    return c.html(
-      `<h2>Token exchange failed</h2><pre>${escapeHtml((e as Error).message)}</pre>`,
-    );
+    console.error("[auth/callback]", e);
+    return c.html("<h2>Google 로그인을 완료하지 못했습니다. 앱으로 돌아가 다시 시도하세요.</h2>", 500);
   }
 });
 
@@ -147,6 +146,10 @@ export function createMessageListApi(
     const pageToken = c.req.query("pageToken") || undefined;
     const max = finiteOr(c.req.query("maxResults"), "maxResults");
     if (!max.ok) return c.json({ error: max.error }, 400);
+    if (max.value !== undefined &&
+      (!Number.isInteger(max.value) || max.value < 1 || max.value > 500)) {
+      return c.json({ error: "maxResults must be an integer from 1 to 500" }, 400);
+    }
     return c.json(await listMessagesImpl({
       q,
       labelIds: label ? [label] : undefined,
@@ -156,8 +159,8 @@ export function createMessageListApi(
   });
   messages.onError((e, c) => {
     const status = apiErrorStatus(e);
-    if (status === 401) return c.json({ error: "NOT_AUTHENTICATED" }, status);
-    return c.json({ error: (e as Error).message }, status);
+    console.error("[api/messages]", e);
+    return c.json({ error: publicApiError(e) }, status);
   });
 
   return messages;
@@ -410,9 +413,8 @@ api.post("/drive/files/:id/trash", async (c) => {
 // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).
 api.onError((e, c) => {
   const status = apiErrorStatus(e);
-  if (status === 401) return c.json({ error: "NOT_AUTHENTICATED" }, status);
   console.error("[api]", e);
-  return c.json({ error: (e as Error).message }, status);
+  return c.json({ error: publicApiError(e) }, status);
 });
 app.route("/api", api);
 // Unknown API paths must 404 as JSON — falling through to the SPA fallback

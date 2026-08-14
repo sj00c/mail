@@ -301,21 +301,23 @@ export function useCalendarEvents(
   useEffect(() => {
     const key = rangeKey(range);
     let cancelled = false;
+    let requestSeq = 0;
     const cached = calCache.get(key);
     setEvents(cached?.events ?? null);
     setErr(null);
 
     const refresh = () => {
+      const seq = ++requestSeq;
       api
         .calendarEvents(range)
         .then((evs) => {
-          if (cancelled) return;
+          if (cancelled || seq !== requestSeq) return;
           calCache.set(key, { events: evs, ts: Date.now() });
           setEvents(evs);
           setErr(null);
         })
         .catch((e) => {
-          if (cancelled) return;
+          if (cancelled || seq !== requestSeq) return;
           if (e instanceof AuthError) onLogout();
           else setErr((e as Error).message);
         });
@@ -348,9 +350,9 @@ export function CalReauth({ err }: { err: string }) {
     <div className="empty">
       <p>캘린더를 불러오지 못했습니다.</p>
       <p className="muted">{err}</p>
-      <a className="btn primary" href="/auth/login">
-        캘린더 권한 다시 허용하기
-      </a>
+      <button className="btn primary" onClick={() => window.location.reload()}>
+        다시 불러오기
+      </button>
     </div>
   );
 }
@@ -715,6 +717,14 @@ export function DayEventsModal({
   onClose: () => void;
 }) {
   const dlg = useResizableDialog("day-events", 460, 360);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => dlg.ref.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      previous?.focus();
+    };
+  }, [dlg.ref]);
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
@@ -1117,12 +1127,12 @@ export function EventEditModal({
   const writable = [...calendars.filter((c) => c.accessRole === "owner" || c.accessRole === "writer")].sort(
     (a, b) => Number(b.id === primaryId) - Number(a.id === primaryId),
   );
-  const [calendarId, setCalendarId] = useState(
+  const initialCalendarId =
     initial.calendarId ||
       writable.find((c) => c.id === primaryId)?.id ||
       writable[0]?.id ||
-      "",
-  );
+      "";
+  const [calendarId, setCalendarId] = useState(initialCalendarId);
   const [summary, setSummary] = useState(initial.summary ?? "");
   const [allDay, setAllDay] = useState(init.allDay);
   const [sDate, setSDate] = useState(init.sDate);
@@ -1222,6 +1232,7 @@ export function EventEditModal({
   const canSave = !busy && !rangeErr && (!!eventId || !!summary.trim());
 
   const dirty =
+    calendarId !== initialCalendarId ||
     summary !== (initial.summary ?? "") ||
     location !== (initial.location ?? "") ||
     description !== (initial.description ?? "") ||

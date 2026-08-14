@@ -53,6 +53,7 @@ import {
   CalendarIcon,
   DraftIcon,
   DriveIcon,
+  EditIcon,
   InboxIcon,
   MailIcon,
   RestoreIcon,
@@ -192,20 +193,6 @@ function SvgIcon({ children }: { children: ReactNode }) {
     </svg>
   );
 }
-
-const IconPen = () => (
-  <SvgIcon>
-    <path d="M12 20h9" />
-    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-  </SvgIcon>
-);
-
-const IconSend = () => (
-  <SvgIcon>
-    <path d="m22 2-7 20-4-9-9-4Z" />
-    <path d="M22 2 11 13" />
-  </SvgIcon>
-);
 
 const IconSliders = () => (
   <SvgIcon>
@@ -967,7 +954,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </button>
         <div className="brand">
           <span className="brand-mark">
-            <IconSend />
+            <SendIcon />
           </span>
           Mail
         </div>
@@ -1006,7 +993,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           className="btn primary compose-btn"
           onClick={() => openCompose(undefined)}
         >
-          <IconPen />새 메일
+          <EditIcon />새 메일
         </button>
         <div className="account">
           {email && (
@@ -1042,10 +1029,17 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       </header>
 
       {error && (
-        <div className="error" onClick={() => setError(null)}>
+        <div className="error" role="alert">
           <span className="notice-icon"><AlertIcon /></span>
           <span>{userFacingError(error)}</span>
-          <span className="notice-close">클릭하여 닫기</span>
+          <button
+            type="button"
+            className="clear notice-close"
+            aria-label="오류 알림 닫기"
+            onClick={() => setError(null)}
+          >
+            닫기
+          </button>
         </div>
       )}
 
@@ -1438,6 +1432,14 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const sigEditorRef = useRef<HTMLDivElement>(null);
   const dlg = useResizableDialog("settings", 520, 380);
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => dlg.ref.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      previous?.focus();
+    };
+  }, [dlg.ref]);
   const [importMsg, setImportMsg] = useState<string | null>(null);
   // 저장된 HTML 서명(없으면 평문을 HTML로). 에디터는 uncontrolled라 1회만 읽는다.
   const initialSig = useMemo(() => {
@@ -1511,12 +1513,39 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         className="modal"
         ref={dlg.ref}
         style={dlg.style}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          if (event.key !== "Tab") return;
+          const controls = Array.from(
+            event.currentTarget.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), select:not([disabled]), input:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+            ),
+          );
+          if (controls.length === 0) return;
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
       >
         <div className="modal-head">
-          <strong>설정</strong>
+          <strong id="settings-title">설정</strong>
           <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
-          <button className="clear" onClick={onClose}>
+          <button className="clear" aria-label="설정 닫기" onClick={onClose}>
             ✕
           </button>
         </div>
@@ -1539,6 +1568,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <div className="settings-row">
           <select
             className="ev-input"
+            aria-label="기본 글꼴"
             value={fontFamily}
             onChange={(e) => setFontFamily(e.target.value)}
           >
@@ -1550,6 +1580,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           </select>
           <select
             className="ev-input"
+            aria-label="기본 글자 크기"
             value={fontSize}
             onChange={(e) => setFontSize(e.target.value)}
           >
@@ -1566,6 +1597,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <div className="settings-row">
           <select
             className="ev-input"
+            aria-label="보내기 취소 시간"
             value={undoSec}
             onChange={(e) => setUndoSec(e.target.value)}
           >

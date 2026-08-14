@@ -35,6 +35,7 @@ env_value() {
 
 [ "$(uname -s)" = "Darwin" ] || fail "이 파일은 macOS용입니다. Windows에서는 deploy\\install.ps1을 실행하세요."
 [ -f "$DIR/.env" ] || fail ".env 파일이 없습니다. README의 안내대로 .env를 먼저 만들고 Google 연결 정보를 입력하세요."
+chmod 600 "$DIR/.env"
 
 CLIENT_ID="$(env_value GOOGLE_CLIENT_ID)"
 CLIENT_SECRET="$(env_value GOOGLE_CLIENT_SECRET)"

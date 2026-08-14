@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { createMessageListApi } from "./index.ts";
 import { describe, expect, it } from "vitest";
 import { GmailBatchPartError } from "./gmailBatch.ts";
-import { apiErrorStatus, needAuthError } from "./apiErrors.ts";
+import { apiErrorStatus, needAuthError, publicApiError } from "./apiErrors.ts";
 
 describe("API error classification", () => {
   it("classifies final embedded 401 as authentication failure", () => {
@@ -29,6 +29,10 @@ describe("API error classification", () => {
     });
     expect(needAuthError(error)).toBe(true);
     expect(apiErrorStatus(error)).toBe(401);
+  });
+
+  it("redacts unknown server errors from API clients", () => {
+    expect(publicApiError(new Error("private upstream detail"))).toBe("INTERNAL_SERVER_ERROR");
   });
 });
 describe("/api/messages", () => {
@@ -92,6 +96,20 @@ describe("/api/messages", () => {
       ],
       resultSizeEstimate: 1,
     });
+  });
+
+  it.each(["0", "-1", "1.5", "501"])("rejects invalid maxResults=%s", async (maxResults) => {
+    let called = false;
+    const response = await appFor(async () => {
+      called = true;
+      throw new Error("must not run");
+    }).request(`http://test/api/messages?maxResults=${maxResults}`);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "maxResults must be an integer from 1 to 500",
+    });
+    expect(called).toBe(false);
   });
 
   it("maps authentication failures to NOT_AUTHENTICATED", async () => {

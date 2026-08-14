@@ -1,6 +1,11 @@
 ﻿# Windows 원클릭 설치: .env 확인 -> Bun/의존성 설치 -> 빌드 -> 자동 실행 등록.
 $ErrorActionPreference = "Stop"
 
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+  Write-Host "이 설치 파일은 Windows 전용입니다. macOS에서는 bash deploy/install.sh를 실행하세요." -ForegroundColor Red
+  exit 1
+}
+
 $dir = (Resolve-Path "$PSScriptRoot\..").Path
 $run = Join-Path $dir "deploy\run.cmd"
 $task = "MailLocal"

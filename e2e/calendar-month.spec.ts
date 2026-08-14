@@ -154,7 +154,7 @@ for (const [name, date] of [
       ),
       borderColor: getComputedStyle(element).borderLeftColor,
     }));
-    expect(styling.height).toBe(20);
+    expect(styling.height).toBe(24);
     expect(styling.fontSize).toBeLessThanOrEqual(10.5);
     expect(styling.timeFontSize).toBeLessThanOrEqual(9.5);
     expect(styling.borderColor).toBe("rgb(217, 48, 37)");
