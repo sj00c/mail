@@ -22,7 +22,7 @@ async function newlyLoadedChunks(chunks: string[], action: () => Promise<void>) 
 }
 
 async function openCalendar(page: Page) {
-  await page.getByRole("button", { name: /📅 캘린더/ }).click();
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
   await expect(page.locator(".calendar")).toBeVisible();
 }
 
@@ -33,9 +33,9 @@ test("production mail boot excludes lazy feature chunks until their first use", 
   const initialChunks = new Set(chunks);
 
   const calendarChunks = await newlyLoadedChunks(chunks, () => openCalendar(page));
-  await page.getByRole("button", { name: /📬 메일/ }).click();
+  await page.getByRole("button", { name: "메일", exact: true }).click();
   const driveChunks = await newlyLoadedChunks(chunks, async () => {
-    await page.getByRole("button", { name: /🗂 드라이브/ }).click();
+    await page.getByRole("button", { name: "드라이브", exact: true }).click();
     await expect(page.locator(".drive")).toBeVisible();
   });
   await page.getByPlaceholder("Search").fill("invoice");
@@ -58,7 +58,7 @@ test("production calendar chunk loads once and stays cached when returning to ma
 
   const calendarRequestCounts = new Map(calendarChunks.map((url) => [url, requestCount(chunks, url)]));
 
-  await page.getByRole("button", { name: /📬 메일/ }).click();
+  await page.getByRole("button", { name: "메일", exact: true }).click();
   await openCalendar(page);
   for (const [url, count] of calendarRequestCounts) expect(requestCount(chunks, url)).toBe(count);
 });
@@ -77,7 +77,7 @@ test("blocking the discovered production calendar chunk preserves the shell and 
   await installAppMocks(page);
   for (const url of calendarChunks) await page.route(url, (route) => route.abort());
   await openMailbox(page);
-  await page.getByRole("button", { name: /📅 캘린더/ }).click();
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
 
   await expect(page.locator("#app-sidebar")).toBeVisible();
   await expect(page.locator("header")).toBeVisible();

@@ -306,6 +306,9 @@ body {
 }
 
 .error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: #fdecea;
   color: var(--danger);
   border: 1px solid #f6c9c4;
@@ -321,9 +324,36 @@ body {
   max-width: min(720px, 90vw);
   border-radius: var(--radius-m);
   box-shadow: var(--shadow-3);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notice-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+}
+
+.notice-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.notice-close {
+  flex: none;
+  margin-left: 4px;
+  color: currentColor;
+  opacity: 0.68;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .vacation-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: #fff7e6;
   color: #8a5a00;
   border-bottom: 1px solid #f3e2b8;
@@ -393,86 +423,221 @@ body {
     transition: none;
   }
 }
-.nav-section {
-  width: 100%;
+.workspace-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 4px;
+  border: 1px solid rgba(16, 24, 40, 0.07);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.04);
+}
+
+.workspace-tab {
+  min-width: 0;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 3px 6px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.workspace-tab:hover {
+  color: var(--text);
+  background: rgba(16, 24, 40, 0.045);
+}
+
+.workspace-tab:active {
+  transform: translateY(1px);
+}
+
+.workspace-tab.active {
+  color: #174ea6;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(16, 24, 40, 0.1);
+}
+
+.workspace-tab-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(102, 112, 133, 0.09);
+}
+
+.workspace-tab-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.workspace-tab.active .workspace-tab-icon {
+  color: #2160d8;
+  background: rgba(33, 96, 216, 0.11);
+}
+
+.workspace-tab:focus-visible {
+  outline: 3px solid rgba(33, 96, 216, 0.32);
+  outline-offset: 2px;
+}
+
+.nav-sub {
+  margin: 0 0 12px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.46);
+  border: 1px solid rgba(16, 24, 40, 0.055);
+}
+
+.workspace-panel {
+  animation: workspace-panel-in 0.18s ease-out;
+}
+
+.workspace-panel-title {
+  padding: 9px 10px 5px;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.65px;
+  text-transform: uppercase;
+}
+
+.workspace-context {
   display: flex;
   align-items: center;
-  gap: 6px;
-  border: none;
-  background: transparent;
-  padding: 11px 12px;
-  border-radius: var(--radius-s);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-  text-align: left;
-  transition: background 0.15s ease;
+  gap: 10px;
+  padding: 14px 12px;
+  border: 1px solid rgba(16, 24, 40, 0.055);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.46);
+  animation: workspace-panel-in 0.18s ease-out;
 }
-.nav-section:hover {
-  background: rgba(16, 24, 40, 0.05);
-}
-.nav-section.active {
-  color: var(--accent);
-}
-.nav-section .chev {
-  font-size: 10px;
-  color: var(--muted);
-  width: 12px;
+
+.workspace-context-mark {
+  width: 32px;
+  height: 32px;
   flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #2160d8;
+  background: rgba(33, 96, 216, 0.1);
 }
-.nav-section.active .chev {
-  color: var(--accent);
+
+.workspace-context strong,
+.workspace-context span {
+  display: block;
 }
-.nav-sub {
-  margin: 0 0 10px;
-  padding-left: 6px;
+
+.workspace-context strong {
+  margin-bottom: 3px;
+  font-size: 12.5px;
+}
+
+.workspace-context div > span {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+@keyframes workspace-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tab,
+  .workspace-panel,
+  .workspace-context {
+    animation: none;
+    transition: none;
+  }
 }
 .nav-note {
   font-size: 12px;
   color: var(--muted);
-  padding: 6px 14px;
+  padding: 8px 10px;
 }
 .cal-check-wrap {
-  border-radius: 12px;
-  margin: 2px 0;
+  border-radius: 10px;
+  margin: 1px 0;
+  transition: background 0.15s ease;
 }
 
 .cal-check-wrap.primary {
-  background: rgba(255, 255, 255, 0.66);
-  border: 1px solid rgba(16, 24, 40, 0.06);
-  margin: 4px 0 8px;
+  margin-bottom: 4px;
+  background: rgba(33, 96, 216, 0.035);
 }
 
 .cal-check {
+  position: relative;
   width: 100%;
   min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
-  border-radius: 12px;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 10px;
   font-size: 13px;
   transition: background 0.15s ease;
+  cursor: pointer;
 }
 
 .cal-check:hover {
-  background: rgba(16, 24, 40, 0.045);
+  background: rgba(16, 24, 40, 0.055);
 }
 
 .cal-check input[type="checkbox"] {
   width: 18px;
   height: 18px;
   flex: none;
+  margin: 0;
+  opacity: 0;
   cursor: pointer;
 }
 
-.cal-check-dot {
-  width: 9px;
-  height: 9px;
+.cal-check-indicator {
+  position: absolute;
+  left: 9px;
+  width: 18px;
+  height: 18px;
   flex: none;
-  border-radius: 999px;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.8);
+  display: grid;
+  place-items: center;
+  border: 2px solid;
+  border-radius: 6px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  pointer-events: none;
+}
+
+.cal-check input:checked + .cal-check-indicator::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+.cal-check input:focus-visible + .cal-check-indicator {
+  outline: 3px solid rgba(33, 96, 216, 0.3);
+  outline-offset: 2px;
 }
 
 .cal-check-name {
@@ -492,10 +657,10 @@ body {
 
 .cal-primary-badge {
   flex: none;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 999px;
-  background: #fbe9e7;
-  color: #a92720;
+  background: rgba(33, 96, 216, 0.09);
+  color: #2457a7;
   font-size: 10px;
   font-weight: 700;
 }
@@ -503,8 +668,11 @@ body {
 .cal-color-tools {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 8px 8px 38px;
+  gap: 2px;
+  min-height: 44px;
+  margin: -2px 5px 4px 36px;
+  padding: 0 4px 0 8px;
+  border-top: 1px solid rgba(16, 24, 40, 0.055);
 }
 
 .cal-color-tools label {
@@ -513,9 +681,10 @@ body {
   min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 11.5px;
   cursor: pointer;
 }
 
@@ -526,21 +695,38 @@ body {
 }
 
 .cal-color-tools input[type="color"] {
-  width: 36px;
-  height: 36px;
+  width: 18px;
+  height: 18px;
   flex: none;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fff;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(16, 24, 40, 0.16);
+  overflow: hidden;
   cursor: pointer;
+  /* 실제 색상점은 작게 유지하되 label 전체를 눌러 색상 선택기를 연다. */
+}
+
+.cal-color-tools input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.cal-color-tools input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 999px;
 }
 
 .cal-color-reset {
-  width: 44px;
+  width: auto;
+  min-width: 52px;
   height: 44px;
   flex: none;
+  padding: 0 7px;
   border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 .label-row {
   width: 100%;
@@ -575,11 +761,68 @@ body {
   white-space: nowrap;
 }
 .label-ic {
-  font-size: 13px;
   width: 17px;
+  height: 17px;
   flex: none;
-  text-align: center;
-  filter: saturate(0.9);
+  display: grid;
+  place-items: center;
+}
+.label-ic svg {
+  width: 16px;
+  height: 16px;
+}
+.btn > svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.paperclip svg,
+.thread-peek-att svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+}
+.drive-icon svg,
+.drive-card-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.drive-act svg,
+.crumb svg {
+  width: 16px;
+  height: 16px;
+}
+.crumb,
+.ev-row,
+.ev-err,
+.scard-empty,
+.search-col-head,
+.settings-label,
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ev-row > svg,
+.ev-err > svg,
+.scard-empty > svg,
+.search-col-head > svg,
+.settings-label > svg,
+.chip > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.cal-loc {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.cal-loc svg,
+.scard-sub svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
 }
 .badge {
   background: var(--accent);
@@ -595,11 +838,11 @@ body {
 }
 .sidebar-sep {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--muted);
-  padding: 12px 14px 4px;
+  padding: 12px 9px 5px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.65px;
 }
 
 .list {
@@ -1661,10 +1904,6 @@ button.month-daynum:hover {
 
   .month-count {
     display: none;
-  }
-
-  .cal-color-tools {
-    padding-left: 36px;
   }
 
   .cal-color-tools label {

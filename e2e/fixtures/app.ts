@@ -65,7 +65,7 @@ export async function installAppMocks(
 
 export async function openMailbox(page: Page) {
   await page.goto("/");
-  await expect(page.getByRole("button", { name: /📬 메일/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "메일", exact: true })).toBeVisible();
   await expect(page.getByText("받은편지함")).toBeVisible();
 }
 

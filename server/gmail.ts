@@ -249,7 +249,7 @@ export async function listMessagesWithTransport(
   const refs = list.messages ?? [];
   const messages: MessageSummary[] = [];
   let refreshed = false;
-  const transientRetryDelays = [1_000, 2_000, 4_000];
+  const transientRetryDelays = [1_000, 2_000, 4_000, 8_000];
   const waitBeforeRetry = transport.waitBeforeRetry ??
     ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
 
@@ -257,20 +257,22 @@ export async function listMessagesWithTransport(
   // auth refresh budget is shared by the complete logical list operation.
   for (let offset = 0; offset < refs.length; offset += GMAIL_BATCH_MAX_PARTS) {
     const chunk = refs.slice(offset, offset + GMAIL_BATCH_MAX_PARTS);
-    const fetchChunk = async () => {
+    let pending = chunk.map((ref, index) => ({ ref, index }));
+    const resolved = new Map<number, MessageSummary | undefined>();
+    const fetchPending = async () => {
       const boundary = makeBatchBoundary();
       const response = await transport.batch(buildMessageMetadataBatch(
-        chunk.map((ref) => ref.id ?? ""),
+        pending.map(({ ref }) => ref.id ?? ""),
         boundary,
       ), boundary);
-      return parseMessageMetadataBatch(response.contentType, response.body, chunk.length);
+      return parseMessageMetadataBatch(response.contentType, response.body, pending.length);
     };
 
     let transientRetries = 0;
-    let parts: ReturnType<typeof parseMessageMetadataBatch>;
-    while (true) {
+    while (pending.length > 0) {
+      let parts: ReturnType<typeof parseMessageMetadataBatch>;
       try {
-        parts = await fetchChunk();
+        parts = await fetchPending();
       } catch (error) {
         const status = httpStatusOf(error);
         if ((status === 429 || (status !== undefined && status >= 500)) &&
@@ -281,23 +283,55 @@ export async function listMessagesWithTransport(
         throw error;
       }
 
-      if (!refreshed && parts.some((part) => part.status === 401 || part.status === 403)) {
+      const retryPending: typeof pending = [];
+      let hasAuthFailure = false;
+      let hasTransientFailure = false;
+      for (const part of parts) {
+        const item = pending[part.index];
+        if (part.status === 404) {
+          resolved.set(item.index, undefined);
+        } else if (part.status >= 200 && part.status < 300) {
+          resolved.set(item.index, toSummary(part.body as gmail_v1.Schema$Message));
+        } else if (part.status === 401 || part.status === 403) {
+          hasAuthFailure = true;
+          retryPending.push(item);
+        } else if (part.status === 429 || part.status >= 500) {
+          hasTransientFailure = true;
+          retryPending.push(item);
+        } else {
+          throw new GmailBatchPartError(part.status, offset + item.index, part.reason);
+        }
+      }
+
+      if (hasAuthFailure && !refreshed) {
         refreshed = true;
         await transport.refresh();
-        continue;
+      } else if (hasAuthFailure) {
+        const failedPart = parts.find((part) => part.status === 401 || part.status === 403)!;
+        throw new GmailBatchPartError(
+          failedPart.status,
+          offset + pending[failedPart.index].index,
+          failedPart.reason,
+        );
       }
-      if (parts.some((part) => part.status === 429 || part.status >= 500) &&
-        transientRetries < transientRetryDelays.length) {
+
+      if (hasTransientFailure && transientRetries >= transientRetryDelays.length) {
+        const failedPart = parts.find((part) => part.status === 429 || part.status >= 500)!;
+        throw new GmailBatchPartError(
+          failedPart.status,
+          offset + pending[failedPart.index].index,
+          failedPart.reason,
+        );
+      }
+
+      pending = retryPending;
+      if (hasTransientFailure) {
         await waitBeforeRetry(transientRetryDelays[transientRetries++]);
-        continue;
       }
-      break;
     }
-    for (const part of parts) {
-      if (part.status === 404) continue;
-      if (part.status < 200 || part.status >= 300)
-        throw new GmailBatchPartError(part.status, offset + part.index, part.reason);
-      messages.push(toSummary(part.body as gmail_v1.Schema$Message));
+    for (let index = 0; index < chunk.length; index++) {
+      const message = resolved.get(index);
+      if (message) messages.push(message);
     }
   }
 

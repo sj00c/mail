@@ -153,6 +153,30 @@ describe("listMessages batch transport", () => {
     expect(transport.retryDelays).toEqual([1_000]);
     expect(calls).toBe(2);
   });
+
+  it("retries only rate-limited batch parts instead of repeating successful requests", async () => {
+    const requestedIds: string[][] = [];
+    const transport = transportFor(["ready", "limited"]);
+    transport.batch = async (body) => {
+      const ids = [...body.matchAll(/messages\/([^?]+)\?/g)]
+        .map((match) => decodeURIComponent(match[1]));
+      requestedIds.push(ids);
+      return {
+        contentType: `multipart/mixed; boundary=${boundary}`,
+        body: multipart(ids.map((id, index) => ({
+          index,
+          status: id === "limited" && requestedIds.length === 1 ? 429 : 200,
+          body: message(id),
+        }))),
+      };
+    };
+
+    await expect(listMessagesWithTransport({}, transport)).resolves.toMatchObject({
+      messages: [{ id: "ready" }, { id: "limited" }],
+    });
+    expect(requestedIds).toEqual([["ready", "limited"], ["limited"]]);
+    expect(transport.retryDelays).toEqual([1_000]);
+  });
   it("processes chunks sequentially and allows one refresh/retry only for an affected chunk", async () => {
     const ids = Array.from({ length: 101 }, (_, index) => `m${index}`);
     const requests: string[] = [];

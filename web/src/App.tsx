@@ -46,6 +46,22 @@ import {
   TriCheck,
   useResizableDialog,
 } from "./ui/dialog.tsx";
+import {
+  AlertIcon,
+  ArchiveIcon,
+  BanIcon,
+  CalendarIcon,
+  DraftIcon,
+  DriveIcon,
+  InboxIcon,
+  MailIcon,
+  RestoreIcon,
+  SendIcon,
+  StarIcon,
+  TagIcon,
+  TrashIcon,
+  VacationIcon,
+} from "./ui/icons.tsx";
 import { Compose, RichEditor, type ComposeInit } from "./views/compose.tsx";
 import { MessageRow, Reader } from "./views/reader.tsx";
 import { useInboxPoll } from "./hooks/useInboxPoll.ts";
@@ -149,6 +165,14 @@ const EMPTY_IDS: string[] = [];
 
 // 사이드바 접힘 상태 (localStorage): "0"이면 접힌 채로 뜬다.
 const NAV_OPEN_KEY = "mail.nav.open";
+
+export function userFacingError(message: string): string {
+  if (/GMAIL_BATCH_PART_429_/.test(message))
+    return "Gmail 요청이 잠시 몰렸습니다. 자동 재시도 후에도 제한되어 잠시 뒤 다시 불러옵니다.";
+  if (/GMAIL_BATCH_PART_5\d\d_/.test(message))
+    return "Gmail 서버가 일시적으로 응답하지 않습니다. 잠시 뒤 다시 불러옵니다.";
+  return message;
+}
 
 // 상단바 아이콘: 이모지 대신 인라인 SVG (외부 에셋 없이 선형 아이콘)
 function SvgIcon({ children }: { children: ReactNode }) {
@@ -1019,13 +1043,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
       {error && (
         <div className="error" onClick={() => setError(null)}>
-          ⚠️ {error} (클릭하여 닫기)
+          <span className="notice-icon"><AlertIcon /></span>
+          <span>{userFacingError(error)}</span>
+          <span className="notice-close">클릭하여 닫기</span>
         </div>
       )}
 
       {acctSettings?.vacation.enabled && (
         <div className="vacation-note">
-          🏖 Gmail 휴가 자동응답이 켜져 있습니다
+          <span className="notice-icon"><VacationIcon /></span>
+          Gmail 휴가 자동응답이 켜져 있습니다
           {acctSettings.vacation.subject && ` — “${acctSettings.vacation.subject}”`}
           {acctSettings.vacation.endTime &&
             ` (${new Date(acctSettings.vacation.endTime).toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}까지)`}
@@ -1035,50 +1062,44 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       <div className={`body ${navOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""}`}>
         <nav className="sidebar" id="app-sidebar" aria-hidden={!navOpen}>
           <div className="sidebar-inner">
-            <button
-              className={`nav-section ${view === "calendar" ? "active" : ""}`}
-              onClick={() => setView("calendar")}
-            >
-              <span className="chev">{view === "calendar" ? "▾" : "▸"}</span>
-              <span>📅 캘린더</span>
-            </button>
-            {view === "calendar" && (
-              <div className="nav-sub">
-                {calLoading && <div className="nav-note">불러오는 중…</div>}
-                {calErr && <div className="nav-note">{calErr}</div>}
-                <CalendarMetadataDiagnostic anomaly={primaryAnomaly} />
-                <CalendarChecklist
-                  title="내 캘린더"
-                  items={calendars.filter((c) => c.primary || c.accessRole === "owner")}
-                  hidden={hiddenCals}
-                  onToggle={toggleCal}
-                  primaryColorOverride={primaryColorOverride}
-                  onPrimaryColorChange={(color) => {
-                    if (primaryCalendar) setPrimaryColor(primaryCalendar.id, color);
-                  }}
-                />
-                <CalendarChecklist
-                  title="다른 캘린더"
-                  items={calendars.filter((c) => !(c.primary || c.accessRole === "owner"))}
-                  hidden={hiddenCals}
-                  onToggle={toggleCal}
-                />
-              </div>
-            )}
-  
-            <button
-              className={`nav-section ${view === "mail" ? "active" : ""}`}
-              onClick={() => {
-                setView("mail");
-                setQuery("");
-                setSearchInput("");
-              }}
-            >
-              <span className="chev">{view === "mail" ? "▾" : "▸"}</span>
-              <span>📬 메일</span>
-            </button>
+            <div className="workspace-switcher" aria-label="서비스 전환">
+              <button
+                className={`workspace-tab ${view === "mail" ? "active" : ""}`}
+                aria-pressed={view === "mail"}
+                onClick={() => {
+                  setView("mail");
+                  setQuery("");
+                  setSearchInput("");
+                }}
+              >
+                <span className="workspace-tab-icon"><MailIcon /></span>
+                <span>메일</span>
+              </button>
+              <button
+                className={`workspace-tab ${view === "drive" ? "active" : ""}`}
+                aria-pressed={view === "drive"}
+                onClick={() => {
+                  setView("drive");
+                  setQuery("");
+                  setSearchInput("");
+                }}
+              >
+                <span className="workspace-tab-icon"><DriveIcon /></span>
+                <span>드라이브</span>
+              </button>
+              <button
+                className={`workspace-tab ${view === "calendar" ? "active" : ""}`}
+                aria-pressed={view === "calendar"}
+                onClick={() => setView("calendar")}
+              >
+                <span className="workspace-tab-icon"><CalendarIcon /></span>
+                <span>캘린더</span>
+              </button>
+            </div>
+
             {view === "mail" && (
-              <div className="nav-sub">
+              <div className="nav-sub workspace-panel">
+                <div className="workspace-panel-title">편지함</div>
                 <LabelRow
                   label={{ id: "ALL", name: "전체메일", type: "system", unread: 0 }}
                   active={!query && activeLabel === "ALL"}
@@ -1115,18 +1136,40 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                 ))}
               </div>
             )}
-  
-            <button
-              className={`nav-section ${view === "drive" ? "active" : ""}`}
-              onClick={() => {
-                setView("drive");
-                setQuery("");
-                setSearchInput("");
-              }}
-            >
-              <span className="chev">{view === "drive" ? "▾" : "▸"}</span>
-              <span>🗂 드라이브</span>
-            </button>
+
+            {view === "calendar" && (
+              <div className="nav-sub workspace-panel">
+                {calLoading && <div className="nav-note">불러오는 중…</div>}
+                {calErr && <div className="nav-note">{calErr}</div>}
+                <CalendarMetadataDiagnostic anomaly={primaryAnomaly} />
+                <CalendarChecklist
+                  title="내 캘린더"
+                  items={calendars.filter((c) => c.primary || c.accessRole === "owner")}
+                  hidden={hiddenCals}
+                  onToggle={toggleCal}
+                  primaryColorOverride={primaryColorOverride}
+                  onPrimaryColorChange={(color) => {
+                    if (primaryCalendar) setPrimaryColor(primaryCalendar.id, color);
+                  }}
+                />
+                <CalendarChecklist
+                  title="다른 캘린더"
+                  items={calendars.filter((c) => !(c.primary || c.accessRole === "owner"))}
+                  hidden={hiddenCals}
+                  onToggle={toggleCal}
+                />
+              </div>
+            )}
+
+            {view === "drive" && (
+              <div className="workspace-context">
+                <span className="workspace-context-mark"><DriveIcon /></span>
+                <div>
+                  <strong>내 드라이브</strong>
+                  <span>파일과 폴더를 한눈에 관리하세요</span>
+                </div>
+              </div>
+            )}
           </div>
         </nav>
 
@@ -1192,7 +1235,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                       <span className="bulk-actions">
                         {inTrashView ? (
                           <button className="btn sm" onClick={bulkRestore}>
-                            ♻️ 복원
+                            <RestoreIcon />복원
                           </button>
                         ) : (
                           <>
@@ -1201,14 +1244,14 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                               disabled={bulkAllBusy}
                               onClick={() => bulkRead(true)}
                             >
-                              ✉️ 읽음
+                              <MailIcon />읽음
                             </button>
                             <button
                               className="btn sm"
                               disabled={bulkAllBusy}
                               onClick={() => bulkRead(false)}
                             >
-                              📩 안읽음
+                              <MailIcon />안읽음
                             </button>
                             {!allResultsSelected && (
                               <>
@@ -1217,7 +1260,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                                 </button>
                                 {isInboxView && (
                                   <button className="btn sm" onClick={bulkArchive}>
-                                    📥 보관
+                                    <ArchiveIcon />보관
                                   </button>
                                 )}
                               </>
@@ -1227,7 +1270,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                               disabled={bulkAllBusy}
                               onClick={bulkTrash}
                             >
-                              🗑 휴지통
+                              <TrashIcon />휴지통
                             </button>
                           </>
                         )}
@@ -1547,14 +1590,14 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-const LABEL_ICONS: Record<string, string> = {
-  ALL: "📨",
-  INBOX: "📥",
-  STARRED: "⭐",
-  SENT: "📤",
-  DRAFT: "📝",
-  SPAM: "🚫",
-  TRASH: "🗑",
+const LABEL_ICONS: Record<string, () => ReactNode> = {
+  ALL: ArchiveIcon,
+  INBOX: InboxIcon,
+  STARRED: StarIcon,
+  SENT: SendIcon,
+  DRAFT: DraftIcon,
+  SPAM: BanIcon,
+  TRASH: TrashIcon,
 };
 
 function LabelRow({
@@ -1567,10 +1610,11 @@ function LabelRow({
   onClick: () => void;
 }) {
   const name = SYSTEM_LABEL_NAMES[label.id] ?? label.name;
+  const LabelIcon = LABEL_ICONS[label.id] ?? TagIcon;
   return (
     <button className={`label-row ${active ? "active" : ""}`} onClick={onClick}>
       <span className="label-name">
-        <span className="label-ic">{LABEL_ICONS[label.id] ?? "🏷️"}</span>
+        <span className="label-ic"><LabelIcon /></span>
         {name}
       </span>
       {label.unread > 0 && <span className="badge">{label.unread}</span>}
@@ -1612,9 +1656,15 @@ function CalendarChecklist({
                 type="checkbox"
                 checked={visible}
                 onChange={() => onToggle(calendar.id)}
-                style={{ accentColor: color }}
               />
-              <span className="cal-check-dot" style={{ background: color }} aria-hidden="true" />
+              <span
+                className="cal-check-indicator"
+                style={{
+                  backgroundColor: visible ? color : "transparent",
+                  borderColor: color,
+                }}
+                aria-hidden="true"
+              />
               <span className="cal-check-name">
                 <span>{calendar.summary}</span>
                 {primary && <span className="cal-primary-badge">기본</span>}
@@ -1622,8 +1672,8 @@ function CalendarChecklist({
             </label>
             {primary && onPrimaryColorChange && (
               <div className="cal-color-tools">
-                <label>
-                  <span>기본 캘린더 색상</span>
+                <label title="기본 캘린더 색상 변경">
+                  <span>일정 색상</span>
                   <input
                     type="color"
                     aria-label="기본 캘린더 색상"
@@ -1638,7 +1688,7 @@ function CalendarChecklist({
                   title="색상 초기화"
                   onClick={() => onPrimaryColorChange(null)}
                 >
-                  ↺
+                  기본값
                 </button>
               </div>
             )}

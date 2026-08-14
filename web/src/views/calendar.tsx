@@ -46,6 +46,14 @@ import {
   MoreSentinel,
   useResizableDialog,
 } from "../ui/dialog.tsx";
+import {
+  AlertIcon,
+  CalendarIcon,
+  ClockIcon,
+  EditIcon,
+  LocationIcon,
+  TrashIcon,
+} from "../ui/icons.tsx";
 import { loadContactsOnce, RecipientField } from "./compose.tsx";
 function uniquePrimaryId(calendars: readonly Calendar[]) {
   const primaries = calendars.filter((calendar) => calendar.primary);
@@ -673,7 +681,7 @@ export function AgendaList({
                 />
                 <span className="cal-time">{evTimeLabel(e, key)}</span>
                 <span className="cal-title">{e.summary}</span>
-                {e.location && <span className="cal-loc">📍 {e.location}</span>}
+                {e.location && <span className="cal-loc"><LocationIcon />{e.location}</span>}
                 <span className="cal-cal">{e.calendarSummary}</span>
               </button>
             ))}
@@ -750,7 +758,7 @@ export function DayEventsModal({
               />
               <span className="cal-time">{evTimeLabel(event, dayKey)}</span>
               <span className="cal-title">{event.summary}</span>
-              {event.location && <span className="cal-loc">📍 {event.location}</span>}
+              {event.location && <span className="cal-loc"><LocationIcon />{event.location}</span>}
               <span className="cal-cal">{event.calendarSummary}</span>
             </button>
           ))}
@@ -842,12 +850,12 @@ export function EventDetailModal({
             />
             {ev.summary}
           </h3>
-          <div className="ev-row">🕒 {formatEventWhen(ev)}</div>
+          <div className="ev-row"><ClockIcon />{formatEventWhen(ev)}</div>
           {ev.calendarSummary && (
-            <div className="ev-row muted">🗂 {ev.calendarSummary}</div>
+            <div className="ev-row muted"><CalendarIcon />{ev.calendarSummary}</div>
           )}
           {(d?.location || ev.location) && (
-            <div className="ev-row">📍 {d?.location || ev.location}</div>
+            <div className="ev-row"><LocationIcon />{d?.location || ev.location}</div>
           )}
           {d?.hangoutLink && (
             <div className="ev-row">
@@ -871,7 +879,7 @@ export function EventDetailModal({
             </div>
           )}
           {!d && !err && <div className="ev-row muted">불러오는 중…</div>}
-          {err && <div className="ev-row muted">⚠️ {err}</div>}
+          {err && <div className="ev-row muted"><AlertIcon />{err}</div>}
           {d?.description && (
             <iframe
               title="event-description"
@@ -890,7 +898,7 @@ export function EventDetailModal({
           {canEdit && d && (
             <>
               <button className="btn" onClick={() => onEdit(d)}>
-                ✏️ 수정
+                <EditIcon />수정
               </button>
               <button
                 className="btn danger"
@@ -913,7 +921,7 @@ export function EventDetailModal({
                   }
                 }}
               >
-                🗑 삭제
+                <TrashIcon />삭제
               </button>
             </>
           )}
@@ -1432,7 +1440,7 @@ export function EventEditModal({
                 <option key={t} value={t} />
               ))}
             </datalist>
-            {rangeErr && <div className="ev-err">⚠️ {rangeErr}</div>}
+            {rangeErr && <div className="ev-err"><AlertIcon />{rangeErr}</div>}
           </div>
           {writable.length > 1 && (
             <div className="ev-cal-row">
@@ -1464,7 +1472,7 @@ export function EventEditModal({
               <input
                 className="ev-input"
                 aria-label="장소"
-                placeholder="📍 장소 (선택)"
+                placeholder="장소 (선택)"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
               />
@@ -1512,7 +1520,7 @@ export function EventEditModal({
               ＋ 장소 · 참석자 · 알림 · 설명
             </button>
           )}
-          {err && <div className="ev-err">⚠️ {err}</div>}
+          {err && <div className="ev-err"><AlertIcon />{err}</div>}
         </div>
         <div className="modal-foot">
           <span className="ev-kbd-hint">⌘↵ 저장 · Esc 닫기</span>

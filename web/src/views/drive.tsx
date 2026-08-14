@@ -9,6 +9,7 @@ import {
 } from "../api.ts";
 import { blobToBase64 } from "../lib/attachments.ts";
 import { formatBytes, highlightText } from "../lib/format.tsx";
+import { DriveIcon, FileIcon, FolderIcon, TrashIcon } from "../ui/icons.tsx";
 
 export function DriveCard({ f, terms }: { f: DriveFile; terms: string[] }) {
   return (
@@ -19,7 +20,7 @@ export function DriveCard({ f, terms }: { f: DriveFile; terms: string[] }) {
       rel="noreferrer"
       title={f.name}
     >
-      <span className="avatar drive-card-icon">{f.isFolder ? "📁" : "📄"}</span>
+      <span className="avatar drive-card-icon">{f.isFolder ? <FolderIcon /> : <FileIcon />}</span>
       <span className="scard-main">
         <span className="scard-top">
           <span className="scard-from">{highlightText(f.name, terms)}</span>
@@ -174,7 +175,7 @@ export function DriveView({ onLogout }: { onLogout: () => void }) {
       <div className="drive-head">
         <div className="drive-crumbs">
           <button className="crumb" onClick={() => openFolder("root")}>
-            🗂 내 드라이브
+            <DriveIcon />내 드라이브
           </button>
           {crumbs.map((c) => (
             <span key={c.id}>
@@ -252,7 +253,7 @@ export function DriveView({ onLogout }: { onLogout: () => void }) {
               className={`drive-row${f.isFolder ? " folder" : ""}`}
               onDoubleClick={() => f.isFolder && openFolder(f.id)}
             >
-              <span className="drive-icon">{f.isFolder ? "📁" : "📄"}</span>
+              <span className="drive-icon">{f.isFolder ? <FolderIcon /> : <FileIcon />}</span>
               {f.isFolder ? (
                 <button
                   className="drive-name"
@@ -283,7 +284,7 @@ export function DriveView({ onLogout }: { onLogout: () => void }) {
                   ✎
                 </button>
                 <button className="drive-act" title="휴지통" onClick={() => trash(f)}>
-                  🗑
+                  <TrashIcon />
                 </button>
               </span>
             </div>

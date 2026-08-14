@@ -26,6 +26,7 @@ import {
   getUndoSec,
 } from "../lib/settings.ts";
 import { DialogGrip, DialogTools, useResizableDialog } from "../ui/dialog.tsx";
+import { AlertIcon, AttachmentIcon } from "../ui/icons.tsx";
 
 // 서명/붙여넣기로 본문에 박힌 data:image base64 → cid 인라인 첨부. 이메일
 // 클라이언트는 data: URI 이미지를 막으므로, 발송 직전 multipart/related cid로
@@ -964,7 +965,7 @@ export function Compose({
               // 인라인 이미지(cid:)는 본문에 박혀 있으므로 칩으로 안 보인다.
               f.contentId ? null : (
                 <span key={`${f.filename}-${i}`} className="chip">
-                  📎 {f.filename} ({Math.round(f.size / 1024)}KB)
+                  <AttachmentIcon />{f.filename} ({Math.round(f.size / 1024)}KB)
                   <button
                     type="button"
                     className="chip-x"
@@ -978,11 +979,11 @@ export function Compose({
           </div>
         )}
         {formErr && (
-          <div className="muted settings-label">⚠️ {formErr}</div>
+          <div className="muted settings-label"><AlertIcon />{formErr}</div>
         )}
         <div className="modal-foot">
           <label className="btn">
-            📎 파일 첨부
+            <AttachmentIcon />파일 첨부
             <input
               type="file"
               multiple

@@ -16,7 +16,7 @@ const primaryEvent = {
 
 async function openCalendar(page: Parameters<typeof installAppMocks>[0]) {
   await openMailbox(page);
-  await page.getByRole("button", { name: /📅 캘린더/ }).click();
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
   await expect(page.locator(".month-grid")).toBeVisible();
 }
 

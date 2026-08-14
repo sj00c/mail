@@ -20,6 +20,17 @@ import {
   reSubject,
   rewriteCidRefs,
 } from "../lib/mailHtml.ts";
+import {
+  AlertIcon,
+  ArchiveIcon,
+  AttachmentIcon,
+  BanIcon,
+  CalendarIcon,
+  CloudIcon,
+  MailIcon,
+  RestoreIcon,
+  TrashIcon,
+} from "../ui/icons.tsx";
 import type { ComposeInit } from "./compose.tsx";
 
 // 목록/카드에 표시할 상대방: 보낸함·임시보관함(내가 보낸 것)은 받는사람을,
@@ -101,7 +112,7 @@ export const MessageRow = memo(function MessageRow({
         </span>
         <span className="msg-subject">
           {m.subject || "(제목 없음)"}
-          {m.hasAttachments && <span className="paperclip"> 📎</span>}
+          {m.hasAttachments && <span className="paperclip"><AttachmentIcon /></span>}
         </span>
         <span className="msg-snippet">{m.snippet}</span>
       </span>
@@ -212,7 +223,7 @@ export function Reader({
   }, []);
   const composeTo = useCallback((email: string) => onReply({ to: email }), [onReply]);
 
-  if (loadErr) return <div className="empty">⚠️ {loadErr}</div>;
+  if (loadErr) return <div className="empty"><AlertIcon />{loadErr}</div>;
   if (!msg) return <div className="empty">불러오는 중…</div>;
 
   return (
@@ -255,7 +266,7 @@ export function Reader({
             title="이 메일 내용으로 캘린더 일정 만들기"
             onClick={() => onCreateEvent(msg)}
           >
-            📅 일정
+            <CalendarIcon />일정
           </button>
           {thread && thread.length > 1 && (
             <button
@@ -348,7 +359,7 @@ export function Reader({
               })
             }
           >
-            {msg.unread ? "✉️ 읽음" : "📩 안읽음"}
+            <MailIcon />{msg.unread ? "읽음" : "안읽음"}
           </button>
           {inTrash ? (
             // 휴지통: trash/보관/스팸은 모두 no-op이므로 '복원'만 노출.
@@ -362,7 +373,7 @@ export function Reader({
                 })
               }
             >
-              ♻️ 받은편지함으로 복원
+              <RestoreIcon />받은편지함으로 복원
             </button>
           ) : (
             <>
@@ -376,7 +387,7 @@ export function Reader({
                   })
                 }
               >
-                📥 보관
+                <ArchiveIcon />보관
               </button>
               <button
                 className="btn"
@@ -392,7 +403,7 @@ export function Reader({
                   })
                 }
               >
-                {msg.labelIds.includes("SPAM") ? "✅ 스팸 아님" : "🚫 스팸"}
+                <BanIcon />{msg.labelIds.includes("SPAM") ? "스팸 아님" : "스팸"}
               </button>
               <button
                 className="btn danger"
@@ -404,7 +415,7 @@ export function Reader({
                   })
                 }
               >
-                🗑 삭제
+                <TrashIcon />삭제
               </button>
             </>
           )}
@@ -595,7 +606,7 @@ export const ThreadMessage = memo(function ThreadMessage({
     void guard(async () => {
       try {
         await api.attachmentToDrive(m.id, a.id, a.filename, a.mimeType);
-        setDriveMsg(`✅ Drive에 저장됨: ${a.filename}`);
+        setDriveMsg(`Drive에 저장됨: ${a.filename}`);
       } catch (e) {
         setDriveMsg(null); // 에러는 guard 배너로 — 낙관 문구는 지운다
         throw e;
@@ -618,7 +629,7 @@ export const ThreadMessage = memo(function ThreadMessage({
           <span className="thread-peek-snip">{m.snippet || "(내용 없음)"}</span>
           {m.attachments.some((a) => !a.contentId) && (
             <span className="thread-peek-att" title="첨부 있음">
-              📎
+              <AttachmentIcon />
             </span>
           )}
           <span className="thread-peek-when">{DATETIME_FMT.format(new Date(m.date))}</span>
@@ -681,7 +692,7 @@ export const ThreadMessage = memo(function ThreadMessage({
                     void guard(() => saveAttachment(m.id, a));
                   }}
                 >
-                  📎 {a.filename} ({Math.round(a.size / 1024)}KB)
+                  <AttachmentIcon />{a.filename} ({Math.round(a.size / 1024)}KB)
                 </a>
                 <button
                   type="button"
@@ -689,7 +700,7 @@ export const ThreadMessage = memo(function ThreadMessage({
                   title="내 Drive에 저장"
                   onClick={() => saveToDrive(a)}
                 >
-                  ☁️
+                  <CloudIcon />
                 </button>
               </span>
             ))}

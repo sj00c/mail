@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import { CalendarMetadataDiagnostic, DeferredViewBoundary } from "./App.tsx";
+import { CalendarMetadataDiagnostic, DeferredViewBoundary, userFacingError } from "./App.tsx";
 
 function BrokenView(): never {
   throw new Error("chunk failed");
@@ -55,5 +55,16 @@ describe("CalendarMetadataDiagnostic", () => {
 
     rerender(<CalendarMetadataDiagnostic anomaly={null} />);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("userFacingError", () => {
+  it("replaces internal Gmail batch codes with actionable Korean messages", () => {
+    expect(userFacingError("GMAIL_BATCH_PART_429_REQUEST_FAILED")).not.toContain("GMAIL_BATCH");
+    expect(userFacingError("GMAIL_BATCH_PART_429_REQUEST_FAILED")).toContain("잠시");
+  });
+
+  it("preserves unrelated messages", () => {
+    expect(userFacingError("파일 업로드 실패")).toBe("파일 업로드 실패");
   });
 });

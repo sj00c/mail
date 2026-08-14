@@ -19,6 +19,15 @@ import {
 } from "../lib/format.tsx";
 import { MoreSentinel } from "../ui/dialog.tsx";
 import {
+  AlertIcon,
+  AttachmentIcon,
+  CalendarIcon,
+  ClockIcon,
+  DriveIcon,
+  MailIcon,
+  LocationIcon,
+} from "../ui/icons.tsx";
+import {
   calCache,
   EventDetailModal,
   EventEditModal,
@@ -63,7 +72,7 @@ export function MailCard({
         </span>
         <span className="scard-title">
           {highlightText(m.subject || "(제목 없음)", terms)}
-          {m.hasAttachments && <span className="paperclip"> 📎</span>}
+          {m.hasAttachments && <span className="paperclip"><AttachmentIcon /></span>}
         </span>
         {m.snippet && (
           <span className="scard-sub">{highlightText(m.snippet, terms)}</span>
@@ -121,8 +130,8 @@ export function EventCard({
       <span className="scard-main">
         <span className="scard-title">{highlightText(e.summary, terms)}</span>
         <span className="scard-sub">
-          🕒 {when}
-          {e.location ? <> · 📍 {highlightText(e.location, terms)}</> : null}
+          <ClockIcon />{when}
+          {e.location ? <><span aria-hidden="true">·</span><LocationIcon />{highlightText(e.location, terms)}</> : null}
         </span>
         <span className="scard-tagrow">
           <span
@@ -247,9 +256,9 @@ export function SearchResults({
       </div>
       <div className="search-cols">
         <section className="search-col">
-          <div className="search-col-head">📅 일정</div>
+          <div className="search-col-head"><CalendarIcon />일정</div>
           {evErr ? (
-            <div className="scard-empty">⚠️ {evErr}</div>
+            <div className="scard-empty"><AlertIcon />{evErr}</div>
           ) : !events ? (
             <>
               <div className="skel" />
@@ -287,7 +296,7 @@ export function SearchResults({
           )}
         </section>
         <section className="search-col">
-          <div className="search-col-head">✉️ 메일</div>
+          <div className="search-col-head"><MailIcon />메일</div>
           {messages.length === 0 && !loading ? (
             <div className="scard-empty">일치하는 메일이 없습니다.</div>
           ) : (
@@ -317,9 +326,9 @@ export function SearchResults({
           )}
         </section>
         <section className="search-col">
-          <div className="search-col-head">🗂 드라이브</div>
+          <div className="search-col-head"><DriveIcon />드라이브</div>
           {fileErr ? (
-            <div className="scard-empty">⚠️ {fileErr}</div>
+            <div className="scard-empty"><AlertIcon />{fileErr}</div>
           ) : !files ? (
             <>
               <div className="skel" />
