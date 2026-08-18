@@ -15,13 +15,26 @@ export class GmailBatchPartError extends Error {
   readonly retryable: boolean;
 
   constructor(status: number, batchIndex: number, reason = "request_failed") {
-    const safeReason = reason === "insufficient_scope" ? reason : "request_failed";
+    const safeReason = [
+      "insufficient_scope",
+      "user_rate_limit",
+      "project_rate_limit",
+      "backend_error",
+    ].includes(reason)
+      ? reason
+      : "request_failed";
     super(`GMAIL_BATCH_PART_${status}_${safeReason.toUpperCase()}`);
     this.name = "GmailBatchPartError";
     this.status = status;
     this.batchIndex = batchIndex;
     this.reason = safeReason;
-    this.retryable = status === 401 || status === 403 || status === 429 || status >= 500;
+    this.retryable =
+      status === 401 ||
+      status === 429 ||
+      status >= 500 ||
+      safeReason === "user_rate_limit" ||
+      safeReason === "project_rate_limit" ||
+      safeReason === "backend_error";
   }
 }
 
@@ -99,8 +112,14 @@ function splitMultipart(body: string, boundary: string): string[] {
 function parseReason(body: unknown): string | undefined {
   if (!body || typeof body !== "object") return undefined;
   const error = (body as { error?: { status?: unknown; errors?: { reason?: unknown }[] } }).error;
-  if (error?.status === "PERMISSION_DENIED" || error?.errors?.some((e) => e.reason === "insufficientPermissions"))
+  const reasons = error?.errors?.map((item) => item.reason) ?? [];
+  if (reasons.includes("insufficientPermissions"))
     return "insufficient_scope";
+  if (reasons.includes("userRateLimitExceeded") || error?.status === "RESOURCE_EXHAUSTED")
+    return "user_rate_limit";
+  if (reasons.includes("rateLimitExceeded") || reasons.includes("quotaExceeded"))
+    return "project_rate_limit";
+  if (reasons.includes("backendError")) return "backend_error";
   return undefined;
 }
 

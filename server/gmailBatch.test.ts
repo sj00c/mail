@@ -44,6 +44,24 @@ describe("Gmail multipart metadata batches", () => {
     expect(parsed.map((part) => (part.body as { id: string }).id)).toEqual(["first", "second"]);
   });
 
+  it("retains only safe quota classifications for diagnosis", () => {
+    const parsed = parseMessageMetadataBatch(
+      `multipart/mixed; boundary=${boundary}`,
+      response([{
+        index: 0,
+        status: 429,
+        body: {
+          error: {
+            status: "RESOURCE_EXHAUSTED",
+            errors: [{ reason: "userRateLimitExceeded" }],
+          },
+        },
+      }]),
+      1,
+    );
+    expect(parsed[0].reason).toBe("user_rate_limit");
+  });
+
   it("rejects malformed, missing, duplicate, and unknown response parts without exposing payloads", () => {
     const malformed = response([{ index: 0, status: 200, body: { snippet: "secret" } }]);
     expect(() => parseMessageMetadataBatch(`multipart/mixed; boundary=${boundary}`, malformed, 2)).toThrow(GmailBatchParseError);

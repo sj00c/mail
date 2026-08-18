@@ -6,6 +6,7 @@ type Options = {
   query: string;
   composeOpen: boolean;
   onLogout: () => void;
+  getCurrentMessages: () => MessageSummary[];
   onRefreshLabels: () => void;
   onPrependInboxMessages: (messages: MessageSummary[]) => void;
   onActivate: (message: MessageSummary) => void;
@@ -25,9 +26,21 @@ export function useInboxPoll(options: Options) {
 
   useEffect(() => {
     let mounted = true;
+    let inFlight = false;
     const tick = async () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || inFlight) return;
+      inFlight = true;
       try {
+        if (lastSeenIds.current === null &&
+          optionsRef.current.activeLabel === "INBOX" &&
+          !optionsRef.current.query) {
+          const current = optionsRef.current.getCurrentMessages();
+          lastSeenIds.current = current.slice(0, 5).map((message) => message.id);
+          newestSeenDate.current = current.reduce(
+            (newest, message) => message.date > newest ? message.date : newest,
+            newestSeenDate.current,
+          );
+        }
         const res = await api.messages({ label: "INBOX", maxResults: 5 });
         if (!mounted) return;
         const top = res.messages[0];
@@ -60,9 +73,10 @@ export function useInboxPoll(options: Options) {
         }
       } catch (error) {
         if (error instanceof AuthError && !optionsRef.current.composeOpen) optionsRef.current.onLogout();
+      } finally {
+        inFlight = false;
       }
     };
-    void tick();
     const interval = setInterval(tick, 60_000);
     return () => {
       mounted = false;

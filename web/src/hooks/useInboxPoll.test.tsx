@@ -30,6 +30,7 @@ const options = (overrides = {}) => ({
   query: "",
   composeOpen: false,
   onLogout: vi.fn(),
+  getCurrentMessages: () => [],
   onRefreshLabels: vi.fn(),
   onPrependInboxMessages: vi.fn(),
   onActivate: vi.fn(),
@@ -44,15 +45,15 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("useInboxPoll", () => {
-  it("does one immediate poll and one 60-second interval without recreation on option changes", async () => {
+  it("waits 60 seconds before polling and does not recreate the interval on option changes", async () => {
     const initial = options();
     const { rerender } = renderHook((props) => useInboxPoll(props), { initialProps: initial });
     await act(async () => {});
-    expect(messages).toHaveBeenCalledTimes(1);
+    expect(messages).not.toHaveBeenCalled();
 
     rerender({ ...initial, activeLabel: "STARRED", query: "changed" });
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
-    expect(messages).toHaveBeenCalledTimes(2);
+    expect(messages).toHaveBeenCalledTimes(1);
   });
 
   it("gates hidden documents and clears its interval on unmount", async () => {
@@ -71,7 +72,7 @@ describe("useInboxPoll", () => {
     messages.mockRejectedValue(new AuthError());
     const handlers = options({ composeOpen: true });
     const { rerender } = renderHook((props) => useInboxPoll(props), { initialProps: handlers });
-    await act(async () => {});
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(handlers.onLogout).not.toHaveBeenCalled();
 
     rerender({ ...handlers, composeOpen: false });

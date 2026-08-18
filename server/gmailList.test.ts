@@ -84,6 +84,23 @@ function transportFor(ids: string[], statuses: number[] = []): MessageListTransp
   });
 
 describe("listMessages batch transport", () => {
+  it("retries a rate-limited reference list before creating metadata batches", async () => {
+    const transport = transportFor(["one"]);
+    const list = transport.list.bind(transport);
+    let calls = 0;
+    transport.list = async (opts) => {
+      calls++;
+      if (calls === 1) throw Object.assign(new Error("rate limited"), { status: 429 });
+      return list(opts);
+    };
+
+    await expect(listMessagesWithTransport({}, transport)).resolves.toMatchObject({
+      messages: [{ id: "one" }],
+    });
+    expect(calls).toBe(2);
+    expect(transport.retryDelays).toEqual([1_000]);
+  });
+
   it.each([[0, 0], [1, 1], [25, 1], [50, 1], [51, 2], [101, 3]])(
     "uses no more than fifty message GETs per batch for %i refs",
     async (count, expectedBatches) => {
@@ -101,7 +118,7 @@ describe("listMessages batch transport", () => {
     expect(result.messages.map((item) => item.id)).toEqual(["first", "third"]);
   });
 
-  it("refreshes and retries a 401/403 batch exactly once", async () => {
+  it("refreshes and retries a 401 batch exactly once", async () => {
     let calls = 0;
     const transport = transportFor(["one"]);
     const batch = transport.batch.bind(transport);
@@ -135,6 +152,32 @@ describe("listMessages batch transport", () => {
     });
     expect(transport.retryDelays).toEqual([1_000, 2_000]);
     expect(calls).toBe(3);
+  });
+
+  it("backs off quota-related 403 responses without refreshing auth", async () => {
+    let calls = 0;
+    const transport = transportFor(["one"]);
+    const batch = transport.batch.bind(transport);
+    transport.batch = async (body, sentBoundary) => {
+      calls++;
+      if (calls === 1) {
+        return {
+          contentType: `multipart/mixed; boundary=${boundary}`,
+          body: multipart([{
+            index: 0,
+            status: 403,
+            body: { error: { errors: [{ reason: "userRateLimitExceeded" }] } },
+          }]),
+        };
+      }
+      return batch(body, sentBoundary);
+    };
+
+    await expect(listMessagesWithTransport({}, transport)).resolves.toMatchObject({
+      messages: [{ id: "one" }],
+    });
+    expect(transport.refreshCalls).toBe(0);
+    expect(transport.retryDelays).toEqual([1_000]);
   });
 
   it("retries an outer 429 response before parsing the batch", async () => {
@@ -190,7 +233,7 @@ describe("listMessages batch transport", () => {
         requests.push(body);
         const chunk = [...body.matchAll(/messages\/([^?]+)\?/g)]
           .map((match) => decodeURIComponent(match[1]));
-        const status = batches++ === 1 ? 403 : 200;
+        const status = batches++ === 1 ? 401 : 200;
         return {
           contentType: `multipart/mixed; boundary=${boundary}`,
           body: multipart(chunk.map((id, index) => ({

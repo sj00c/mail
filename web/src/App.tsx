@@ -602,6 +602,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     query,
     composeOpen,
     onLogout: bgLogout,
+    getCurrentMessages: getMessages,
     onRefreshLabels: refreshLabels,
     onPrependInboxMessages: prependInboxMessages,
     onActivate: (message) => {

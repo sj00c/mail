@@ -238,20 +238,35 @@ export async function listMessagesWithTransport(
   resultSizeEstimate: number;
 }> {
   const maxResults = opts.maxResults ?? 25;
-  const list = await transport.list({
-    q: opts.q,
-    labelIds: opts.labelIds,
-    includeSpamTrash:
-      opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH") || false,
-    pageToken: opts.pageToken,
-    maxResults,
-  });
-  const refs = list.messages ?? [];
-  const messages: MessageSummary[] = [];
-  let refreshed = false;
   const transientRetryDelays = [1_000, 2_000, 4_000, 8_000];
   const waitBeforeRetry = transport.waitBeforeRetry ??
     ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  let listRetries = 0;
+  let list: gmail_v1.Schema$ListMessagesResponse;
+  while (true) {
+    try {
+      list = await transport.list({
+        q: opts.q,
+        labelIds: opts.labelIds,
+        includeSpamTrash:
+          opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH") || false,
+        pageToken: opts.pageToken,
+        maxResults,
+      });
+      break;
+    } catch (error) {
+      const status = httpStatusOf(error);
+      if ((status === 429 || (status !== undefined && status >= 500)) &&
+        listRetries < transientRetryDelays.length) {
+        await waitBeforeRetry(transientRetryDelays[listRetries++]);
+        continue;
+      }
+      throw error;
+    }
+  }
+  const refs = list.messages ?? [];
+  const messages: MessageSummary[] = [];
+  let refreshed = false;
 
   // Chunks intentionally run in request order: this preserves list order. One
   // auth refresh budget is shared by the complete logical list operation.
@@ -292,10 +307,15 @@ export async function listMessagesWithTransport(
           resolved.set(item.index, undefined);
         } else if (part.status >= 200 && part.status < 300) {
           resolved.set(item.index, toSummary(part.body as gmail_v1.Schema$Message));
-        } else if (part.status === 401 || part.status === 403) {
+        } else if (part.status === 401) {
           hasAuthFailure = true;
           retryPending.push(item);
-        } else if (part.status === 429 || part.status >= 500) {
+        } else if (
+          part.status === 429 ||
+          part.status >= 500 ||
+          (part.status === 403 &&
+            ["user_rate_limit", "project_rate_limit", "backend_error"].includes(part.reason ?? ""))
+        ) {
           hasTransientFailure = true;
           retryPending.push(item);
         } else {
@@ -307,7 +327,7 @@ export async function listMessagesWithTransport(
         refreshed = true;
         await transport.refresh();
       } else if (hasAuthFailure) {
-        const failedPart = parts.find((part) => part.status === 401 || part.status === 403)!;
+        const failedPart = parts.find((part) => part.status === 401)!;
         throw new GmailBatchPartError(
           failedPart.status,
           offset + pending[failedPart.index].index,
@@ -316,7 +336,12 @@ export async function listMessagesWithTransport(
       }
 
       if (hasTransientFailure && transientRetries >= transientRetryDelays.length) {
-        const failedPart = parts.find((part) => part.status === 429 || part.status >= 500)!;
+        const failedPart = parts.find((part) =>
+          part.status === 429 ||
+          part.status >= 500 ||
+          (part.status === 403 &&
+            ["user_rate_limit", "project_rate_limit", "backend_error"].includes(part.reason ?? ""))
+        )!;
         throw new GmailBatchPartError(
           failedPart.status,
           offset + pending[failedPart.index].index,
@@ -409,29 +434,50 @@ const DISPLAYED_SYSTEM = new Set([
   "TRASH",
 ]);
 
+export async function listLabelsWithTransport(
+  labels: Array<{ id?: string | null; name?: string | null; type?: string | null }>,
+  getUnread: (id: string) => Promise<number>,
+): Promise<{ id: string; name: string; type: string; unread: number }[]> {
+  const result = labels.map((label) => ({
+    id: label.id ?? "",
+    name: label.name ?? "",
+    type: label.type ?? "user",
+    unread: 0,
+  }));
+  const pending = result
+    .map((label, index) => ({ label, index }))
+    .filter(({ label }) => label.id && (label.type === "user" || DISPLAYED_SYSTEM.has(label.id)));
+  let next = 0;
+  const workers = Array.from({ length: Math.min(5, pending.length) }, async () => {
+    while (next < pending.length) {
+      const item = pending[next++];
+      try {
+        result[item.index] = { ...item.label, unread: await getUnread(item.label.id) };
+      } catch (error) {
+        if (httpStatusOf(error) !== 404) throw error;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return result;
+}
+
 export async function listLabels(): Promise<
   { id: string; name: string; type: string; unread: number }[]
 > {
   const g = await api();
   const res = await g.users.labels.list({ userId: "me" });
-  const labels = res.data.labels ?? [];
-  const detailed = await Promise.all(
-    labels.map(async (l) => {
-      const base = { id: l.id!, name: l.name!, type: l.type ?? "user", unread: 0 };
-      if (base.type !== "user" && !DISPLAYED_SYSTEM.has(base.id)) return base;
-      try {
-        const d = await g.users.labels.get({
-          userId: "me",
-          id: l.id!,
-          fields: "messagesUnread",
-        });
-        return { ...base, unread: d.data.messagesUnread ?? 0 };
-      } catch {
-        return base;
-      }
-    }),
+  return listLabelsWithTransport(
+    res.data.labels ?? [],
+    async (id) => {
+      const detail = await g.users.labels.get({
+        userId: "me",
+        id,
+        fields: "messagesUnread",
+      });
+      return detail.data.messagesUnread ?? 0;
+    },
   );
-  return detailed;
 }
 
 function encodeHeaderWord(s: string, fold = true): string {
