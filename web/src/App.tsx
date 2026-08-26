@@ -42,7 +42,7 @@ import {
   DialogGrip,
   DialogTools,
   MoreSentinel,
-  SlideOver,
+  ReaderPopup,
   TriCheck,
   useResizableDialog,
 } from "./ui/dialog.tsx";
@@ -68,6 +68,7 @@ import { MessageRow, Reader } from "./views/reader.tsx";
 import { useInboxPoll } from "./hooks/useInboxPoll.ts";
 import { useCalendarCatalog } from "./hooks/useCalendarCatalog.ts";
 import { shouldRemoveArchivedMessage, useMailList } from "./hooks/useMailList.ts";
+import { useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { useOutbox } from "./hooks/useOutbox.ts";
 import { PRIMARY_CALENDAR_DEFAULT_COLOR, getCalendarDisplayColor } from "./lib/calendarPresentation.ts";
 
@@ -291,6 +292,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [query, setQuery] = useState(initialQuery);
   const [searchInput, setSearchInput] = useState(initialQuery);
   const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
+  const [kbdHelpOpen, setKbdHelpOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const composeOpenRef = useRef(composeOpen);
   composeOpenRef.current = composeOpen;
@@ -325,6 +327,14 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       return !v;
     });
   }, []);
+
+  // 창이 좁으면 3분할을 유지할 수 없다 — 목록만 남기고 리더는 팝업으로
+  // 띄운다. 900px는 실측 기준(그 아래부터 리더 폭이 280px 밑으로 떨어진다).
+  const narrow = useMediaQuery("(max-width: 900px)");
+  // 사이드바까지 겹쳐 뜨는 폭에서는 기본으로 접어 둔다 — 좁은 화면에서
+  // 사이드바가 목록을 덮은 채로 열려 있으면 첫 화면이 메일 목록이 아니게 된다.
+  const narrowNav = useMediaQuery("(max-width: 700px)");
+  const navEffectivelyOpen = navOpen && !narrowNav;
 
   // ⌘\ / Ctrl+\ 로도 접었다 편다. 작성 중인 본문에 문자가 들어가지 않도록
   // 수식 키가 눌린 조합만 가로챈다.
@@ -895,7 +905,22 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       ?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  // Shared between the normal reader pane and the search slide-over.
+  // 목록 헤더 ? 팝오버 — 바깥 클릭/Esc로 닫는다.
+  useEffect(() => {
+    if (!kbdHelpOpen) return;
+    const close = () => setKbdHelpOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setKbdHelpOpen(false);
+    };
+    document.addEventListener("click", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [kbdHelpOpen]);
+
+  // 넓은 화면은 오른쪽 리더 패널에, 검색 결과·좁은 화면은 팝업에 같은 리더를 렌더한다.
   const readerEl = selected ? (
     <Reader
       id={selected.id}
@@ -1054,8 +1079,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         </div>
       )}
 
-      <div className={`body ${navOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""}`}>
-        <nav className="sidebar" id="app-sidebar" aria-hidden={!navOpen}>
+      <div className={`body ${navEffectivelyOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""} ${narrow ? "reader-overlay" : ""}`}>
+        <nav className="sidebar" id="app-sidebar" aria-hidden={!navEffectivelyOpen}>
           <div className="sidebar-inner">
             <div className="workspace-switcher" aria-label="서비스 전환">
               <button
@@ -1287,6 +1312,45 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                       전체 선택
                     </button>
                   )}
+                  <span className="kbd-help-wrap">
+                    <button
+                      type="button"
+                      className="clear kbd-help-btn"
+                      title="키보드 단축키"
+                      aria-label="키보드 단축키"
+                      aria-expanded={kbdHelpOpen}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setKbdHelpOpen((v) => !v);
+                      }}
+                    >
+                      ?
+                    </button>
+                    {kbdHelpOpen && (
+                      <div className="kbd-help-pop" onClick={(e) => e.stopPropagation()}>
+                        <div className="kbd-hints">
+                          <span>
+                            <kbd>j</kbd>/<kbd>k</kbd> 이전·다음
+                          </span>
+                          <span>
+                            <kbd>e</kbd> 보관
+                          </span>
+                          <span>
+                            <kbd>#</kbd> 삭제
+                          </span>
+                          <span>
+                            <kbd>c</kbd> 새 메일
+                          </span>
+                          <span>
+                            <kbd>/</kbd> 검색
+                          </span>
+                          <span>
+                            <kbd>u</kbd> 목록으로
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </span>
                 </div>
               )}
               {messages.length === 0 && !loading && (
@@ -1314,39 +1378,15 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               )}
             </section>
 
-            <section className="reader">
-              {readerEl ?? (
-                <div className="empty">
-                  <div>메일을 선택하세요.</div>
-                  <div className="kbd-hints">
-                    <span>
-                      <kbd>j</kbd>/<kbd>k</kbd> 이전·다음
-                    </span>
-                    <span>
-                      <kbd>e</kbd> 보관
-                    </span>
-                    <span>
-                      <kbd>#</kbd> 삭제
-                    </span>
-                    <span>
-                      <kbd>c</kbd> 새 메일
-                    </span>
-                    <span>
-                      <kbd>/</kbd> 검색
-                    </span>
-                    <span>
-                      <kbd>u</kbd> 목록으로
-                    </span>
-                  </div>
-                </div>
-              )}
-            </section>
+            {/* 리더 패널 — 선택이 없으면 비워 둔다(안내 문구·단축키 힌트는
+               목록 헤더의 ? 팝오버로 옮겼다). */}
+            {!narrow && <section className="reader">{readerEl}</section>}
           </>
         )}
       </div>
 
-      {view === "mail" && query && readerEl && (
-        <SlideOver onClose={() => setSelected(null)}>{readerEl}</SlideOver>
+      {view === "mail" && (query || narrow) && readerEl && (
+        <ReaderPopup onClose={() => setSelected(null)}>{readerEl}</ReaderPopup>
       )}
 
       {composeOpen && (

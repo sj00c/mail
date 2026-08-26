@@ -1,8 +1,11 @@
 import type { ReactNode, SVGProps } from "react";
 
+// width/height는 CSS(.chip svg 등)와 호출부 props가 언제든 덮어쓴다. 기본값을
+// 두는 이유는 어떤 선택자와도 매칭되지 않은 아이콘이 SVG 기본 크기(300x150)로
+// 부풀어 패널을 통째로 잡아먹는 사고를 구조적으로 막기 위해서다.
 export function Icon({ children, ...props }: SVGProps<SVGSVGElement> & { children: ReactNode }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
       {children}
     </svg>
   );

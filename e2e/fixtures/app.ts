@@ -52,8 +52,18 @@ export async function installAppMocks(
     if (url.pathname === "/api/settings/account") return json({ sendAs: [], vacation: { enabled: false, subject: "", endTime: null } });
     if (url.pathname === "/api/signature") return json({ html: "" });
     if (url.pathname === "/api/messages") return json({ messages: options.messages ?? [], resultSizeEstimate: (options.messages ?? []).length });
-    if (url.pathname.startsWith("/api/threads/")) return json(options.messages ?? []);
+    if (url.pathname.startsWith("/api/threads/")) {
+      // 스레드 응답은 threadId로 거른다 — 전부 돌려주면 j/k 이동 스펙이
+      // 잘못된 본문을 렌더해도 통과해 버린다.
+      const threadId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+      return json(
+        (options.messages ?? []).filter(
+          (m) => (m as { threadId?: string }).threadId === threadId,
+        ),
+      );
+    }
     if (url.pathname.endsWith("/modify")) return json({ ok: true });
+    if (url.pathname.endsWith("/trash")) return json({ ok: true });
     if (url.pathname === "/api/calendar/calendars") return json([primaryCalendar, secondaryCalendar]);
     if (url.pathname === "/api/calendar/events") return json([]);
     if (url.pathname === "/api/contacts") return json([]);

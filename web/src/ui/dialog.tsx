@@ -1,4 +1,4 @@
-// 팝업 공통 부품: 크기 조절/최대화 훅과 손잡이, 슬라이드오버,
+// 팝업 공통 부품: 크기 조절/최대화 훅과 손잡이, 리더 팝업,
 // 3상태 체크박스, 무한 스크롤 센티널.
 import {
   useCallback,
@@ -184,24 +184,84 @@ export function TriCheck({
   );
 }
 
-export function SlideOver({
+// ── 리더 팝업 ─────────────────────────────────────────────────────────────
+// 메일을 열면 화면 중앙 팝업으로 띄운다. ⤢ 로 화면 가득 전환할 수 있고 그
+// 상태는 localStorage에 남는다. 목록 단축키(j/k/e/#)는 팝업이 떠 있는 동안에도
+// 살아 있어야 하므로 .modal-backdrop 클래스를 쓰지 않는다 — 전역 키 핸들러가
+// .modal-backdrop을 보면 목록 단축키를 쉰다.
+//
+// 자체 Escape 리스너는 두지 않는다(전역 핸들러가 Esc/u 닫기를 맡는다).
+// 예전 슬라이드오버는 자체 리스너 때문에 일정 모달이 열린 채 Esc를 누르면
+// 모달과 리더가 동시에 닫혔다 — 전역 핸들러는 .modal-backdrop에서 쉬므로
+// 그 버그가 사라진다. 대신 입력란에 포커스가 있는 동안에는 Esc도 u도 팝업을
+// 닫지 않는다(타이핑 중인 문자를 가로채면 안 된다) — 배경 클릭으로 닫는다.
+// 모두 의도된 동작이니 리스너를 되살리지 말 것.
+export const READER_FULLSCREEN_KEY = "mail.reader.fullscreen";
+
+export function ReaderPopup({
   onClose,
   children,
 }: {
   onClose: () => void;
   children: ReactNode;
 }) {
+  const [fullscreen, setFullscreen] = useState(() => {
+    try {
+      return localStorage.getItem(READER_FULLSCREEN_KEY) === "1";
+    } catch {
+      return false; // private mode
+    }
+  });
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 슬라이드오버 시절의 폭 저장값은 더 이상 안 쓴다 — 한 번만 지운다.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    try {
+      localStorage.removeItem("mail.slideover.width");
+    } catch {
+      // private mode
+    }
+  }, []);
+
+  // 배경 클릭 등으로 포커스가 흩어져도 Esc가 바로 먹도록 패널에 포커스.
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
+
+  const toggleFullscreen = () => {
+    setFullscreen((v) => {
+      const next = !v;
+      try {
+        if (next) localStorage.setItem(READER_FULLSCREEN_KEY, "1");
+        else localStorage.removeItem(READER_FULLSCREEN_KEY);
+      } catch {
+        // private mode: 이번 세션에만 적용
+      }
+      return next;
+    });
+  };
+
   return (
-    <div className="slideover-backdrop" onClick={onClose}>
-      <div className="slideover" onClick={(e) => e.stopPropagation()}>
-        {children}
+    <div className="reader-popup-backdrop" onClick={onClose}>
+      {/* 배경 단축키가 살아 있는 팝업이라 aria-modal은 사실이 아니게 되므로 쓰지 않는다. */}
+      <div
+        ref={panelRef}
+        className={`reader-popup${fullscreen ? " fullscreen" : ""}`}
+        role="dialog"
+        aria-label="메일 읽기"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="clear reader-popup-max"
+          title={fullscreen ? "기본 크기로" : "화면 가득 보기"}
+          aria-label={fullscreen ? "기본 크기로" : "화면 가득 보기"}
+          onClick={toggleFullscreen}
+        >
+          {fullscreen ? "⤡" : "⤢"}
+        </button>
+        <div className="reader-popup-scroll">{children}</div>
       </div>
     </div>
   );

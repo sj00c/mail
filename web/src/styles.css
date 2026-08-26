@@ -977,7 +977,7 @@ body {
   letter-spacing: 0.1px;
 }
 
-/* 리더 빈 화면의 키보드 단축키 안내 */
+/* 키보드 단축키 안내 — 목록 헤더의 ? 팝오버가 보여 준다 */
 .kbd-hints {
   display: flex;
   flex-wrap: wrap;
@@ -997,6 +997,42 @@ body {
   font: 600 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: #3c4453;
   text-align: center;
+}
+/* 목록 헤더의 ? 버튼 + 팝오버 */
+.kbd-help-wrap {
+  position: relative;
+  margin-left: auto;
+}
+.kbd-help-btn {
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.kbd-help-btn:hover {
+  background: #f0f3f8;
+  color: var(--text);
+}
+.kbd-help-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: 300px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-3);
+}
+.kbd-help-pop .kbd-hints {
+  margin-top: 0;
+  justify-content: flex-start;
 }
 
 .reader {
@@ -1083,9 +1119,22 @@ body {
   border-color: var(--border-strong);
   box-shadow: 0 2px 8px rgba(16, 24, 40, 0.09);
 }
+/* 첨부 칩 내부는 <a class=chip-link>(아이콘+파일명)와 <button class=chip-x>로
+   한 번 더 감싸여 있다 — .chip > svg 자식 선택자는 여기에 닿지 않으므로
+   래퍼 자체를 flex 행으로 두고 아이콘 크기를 따로 못박는다. */
 .chip .chip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   text-decoration: none;
   color: inherit;
+}
+.chip .chip-link svg,
+.chip .chip-x svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 .reader-body {
   margin-top: 16px;
@@ -1119,7 +1168,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Above the search slide-over (z 100/101) — event detail/editor modals
+  /* Above the reader popup (z 150) — event detail/editor modals
      opened from search cards must not render underneath it. */
   z-index: 200;
   animation: fadein 0.16s ease;
@@ -1275,12 +1324,15 @@ body {
   gap: 6px;
 }
 .chip-x {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;
   padding: 0;
+  flex: none;
 }
 .chip-x:hover {
   color: var(--danger);
@@ -1803,6 +1855,80 @@ button.month-daynum:hover {
 .calendar .dlg-grip {
   width: 32px;
   height: 32px;
+}
+
+/* ---- 메일 3분할 반응형 ----
+   목록이 360px 고정이면 창을 줄일 때 줄어드는 폭을 리더가 전부 뒤집어쓴다.
+   실측: 600px에서 리더가 2px로 붕괴하고 문서가 가로로 298px 넘쳤다.
+   목록을 먼저 줄이고, 그래도 리더가 못 버티는 폭(<=900px)에서는 3분할을
+   포기하고 리더를 팝업으로 띄운다(.body.reader-overlay). */
+@media (max-width: 1240px) {
+  .body:not(.calendar-mode) {
+    grid-template-columns: 200px minmax(260px, 320px) minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px 12px 14px;
+  }
+  .body.nav-collapsed:not(.calendar-mode) {
+    grid-template-columns: 0 minmax(260px, 320px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1040px) {
+  .body:not(.calendar-mode) {
+    grid-template-columns: 180px minmax(240px, 288px) minmax(0, 1fr);
+    gap: 10px;
+  }
+  .body.nav-collapsed:not(.calendar-mode) {
+    grid-template-columns: 0 minmax(240px, 288px) minmax(0, 1fr);
+  }
+  .body:not(.calendar-mode) .sidebar-inner {
+    width: 180px;
+  }
+  .reader-inner {
+    padding: 18px 20px;
+  }
+}
+
+/* 리더가 들어갈 자리가 없는 폭 — 목록만 남기고 리더는 팝업으로. */
+@media (max-width: 900px) {
+  .body.reader-overlay:not(.calendar-mode) {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .body.reader-overlay.nav-collapsed:not(.calendar-mode) {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+}
+
+/* 사이드바까지 자리를 못 만드는 폭 — 사이드바는 목록 위에 겹쳐 띄운다. */
+@media (max-width: 700px) {
+  .body.reader-overlay:not(.calendar-mode) {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 8px;
+    gap: 0;
+  }
+  .body.reader-overlay.nav-collapsed:not(.calendar-mode) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .body.reader-overlay:not(.calendar-mode) .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 208px;
+    z-index: 90;
+    background: var(--panel);
+    box-shadow: var(--shadow-3);
+    border-right: 1px solid var(--border);
+    padding: 8px 4px;
+  }
+  /* 접힌 상태에서는 화면 밖으로 밀어 두어 목록이 전폭을 쓴다. */
+  .body.reader-overlay.nav-collapsed:not(.calendar-mode) .sidebar {
+    transform: translateX(-100%);
+    pointer-events: none;
+  }
+  .body.reader-overlay:not(.calendar-mode) .sidebar-inner {
+    width: 200px;
+  }
 }
 
 @media (max-width: 1100px) {
@@ -2485,7 +2611,7 @@ textarea.ev-input {
 
 /* ---- 통합 검색 결과 (일정 | 메일 카드 2열) ---- */
 .search-page {
-  grid-column: 2 / 4;
+  grid-column: 2 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -2882,33 +3008,68 @@ mark {
   }
 }
 
-/* 메일 카드 클릭 → 오른쪽 슬라이드오버 리더 */
-.slideover-backdrop {
+/* 메일 열기 → 중앙 팝업 리더. 목록 단축키(j/k/e/#)가 팝업이 떠 있는 동안에도
+   살아 있어야 하므로 .modal-backdrop을 쓰지 않는다 — 전역 키 핸들러가
+   .modal-backdrop을 보면 목록 단축키를 쉰다. 일정 상세/편집 모달(z 200)은
+   이 팝업(z 150) 위에 뜬다. */
+.reader-popup-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(15, 19, 28, 0.34);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
-  z-index: 100;
+  z-index: 150;
   animation: fadein 0.16s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.slideover {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(820px, 92vw);
+.reader-popup {
+  position: relative;
+  width: min(860px, 92vw);
+  height: min(90vh, 1100px);
   background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
   box-shadow: var(--shadow-3);
-  border-left: 1px solid var(--border);
-  border-radius: 16px 0 0 16px;
-  overflow-y: auto;
-  z-index: 101;
-  animation: slidein 0.2s cubic-bezier(0.2, 0.7, 0.3, 1);
+  outline: none;
+  animation: popin 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* ⤢ 버튼은 스크롤과 무관하게 제자리에 있어야 하므로
+     스크롤은 안쪽 .reader-popup-scroll이 맡는다. */
+  display: flex;
+  overflow: hidden;
 }
-@keyframes slidein {
+.reader-popup.fullscreen {
+  width: calc(100vw - 24px);
+  height: calc(100dvh - 24px);
+}
+.reader-popup-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+.reader-popup-max {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.reader-popup-max:hover {
+  opacity: 1;
+  background: #f0f3f8;
+  color: var(--text);
+}
+@keyframes popin {
   from {
-    transform: translateX(48px);
+    transform: scale(0.98);
     opacity: 0;
   }
   to {
@@ -3226,7 +3387,7 @@ mark {
 
 /* ---- drive ---- */
 .drive {
-  grid-column: 2 / 4;
+  grid-column: 2 / -1;
   display: flex;
   flex-direction: column;
   min-height: 0;
