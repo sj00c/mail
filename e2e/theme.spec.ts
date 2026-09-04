@@ -59,9 +59,10 @@ test("dark theme repaints the shell but keeps mail bodies on paper", async ({ pa
   await page.getByRole("button", { name: "다크 모드로 전환" }).click();
   expect(await htmlTheme(page)).toBe("dark");
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
-  const darkList = await bg(page, ".list");
-  expect(darkList).not.toBe(lightList);
-  expect(darkList).toBe("rgb(23, 27, 35)");
+  // 전환 직후 400ms는 색이 크로스페이드 중이다 — 끝 값으로 수렴할 때까지 기다린다.
+  await expect(page.locator(".list").first()).toHaveCSS("background-color", "rgb(23, 27, 35)");
+  expect(await bg(page, ".list")).not.toBe(lightList);
+  await expect(page.locator("html")).not.toHaveClass(/theme-fade/);
 
   await page.locator(".msg-row").first().click();
   const frame = page.locator(".html-frame");

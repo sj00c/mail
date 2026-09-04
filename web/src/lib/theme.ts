@@ -49,9 +49,21 @@ export function getThemeState(): ThemeState {
   return cached;
 }
 
+// 테마가 실제로 바뀔 때만 잠시 크로스페이드 클래스를 달아 둔다(규칙은 styles.css의
+// html.theme-fade). 부트 시에는 이전 값이 없으므로 조용히 박기만 한다.
+let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+const FADE_MS = 400;
+
 export function applyTheme(): Theme {
   const { theme } = getThemeState();
-  document.documentElement.dataset.theme = theme;
+  const root = document.documentElement;
+  const prev = root.dataset.theme;
+  if (prev && prev !== theme) {
+    root.classList.add("theme-fade");
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => root.classList.remove("theme-fade"), FADE_MS + 50);
+  }
+  root.dataset.theme = theme;
   return theme;
 }
 

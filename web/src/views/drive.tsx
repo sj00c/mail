@@ -10,6 +10,7 @@ import {
 import { blobToBase64 } from "../lib/attachments.ts";
 import { formatBytes, highlightText } from "../lib/format.tsx";
 import { DriveIcon, FileIcon, FolderIcon, TrashIcon } from "../ui/icons.tsx";
+import { EmptyArt } from "../ui/illustrations.tsx";
 
 export function DriveCard({ f, terms }: { f: DriveFile; terms: string[] }) {
   return (
@@ -244,6 +245,7 @@ export function DriveView({ onLogout }: { onLogout: () => void }) {
           <div className="empty">불러오는 중…</div>
         ) : files.length === 0 ? (
           <div className="empty">
+            <EmptyArt kind="folder" />
             {query ? "검색 결과가 없습니다." : "이 폴더가 비어 있습니다."}
           </div>
         ) : (

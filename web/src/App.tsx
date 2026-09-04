@@ -65,6 +65,7 @@ import {
   TrashIcon,
   VacationIcon,
 } from "./ui/icons.tsx";
+import { EmptyArt } from "./ui/illustrations.tsx";
 import { Compose, RichEditor, type ComposeInit } from "./views/compose.tsx";
 import { MessageRow, Reader } from "./views/reader.tsx";
 import { useInboxPoll } from "./hooks/useInboxPoll.ts";
@@ -139,7 +140,7 @@ function DeferredView({
 }) {
   return (
     <DeferredViewBoundary resetKey={resetKey} fallback={fallback}>
-      <Suspense fallback={<div className="center">불러오는 중…</div>}>{children}</Suspense>
+      <Suspense fallback={<div className="center"><span className="spinner" aria-hidden="true" />불러오는 중…</div>}>{children}</Suspense>
     </DeferredViewBoundary>
   );
 }
@@ -246,6 +247,7 @@ export function App() {
   if (bootErr) {
     return (
       <div className="center login">
+        <LoginMark />
         <h1>Mail</h1>
         <p>서버에 연결할 수 없습니다.</p>
         <button className="btn primary" onClick={() => setRetry((r) => r + 1)}>
@@ -254,14 +256,27 @@ export function App() {
       </div>
     );
   }
-  if (authed === null) return <div className="center">로딩 중…</div>;
+  if (authed === null) {
+    return <div className="center"><span className="spinner" aria-hidden="true" />로딩 중…</div>;
+  }
   if (!authed) return <Login />;
   return <Mailbox onLogout={() => setAuthed(false)} />;
+}
+
+// 로그인/연결 오류 화면의 큰 브랜드 마크 — 링이 천천히 돈다(.login-orbit)
+function LoginMark() {
+  return (
+    <span className="login-mark" aria-hidden="true">
+      <span className="login-orbit" />
+      <SendIcon />
+    </span>
+  );
 }
 
 function Login() {
   return (
     <div className="center login">
+      <LoginMark />
       <h1>Mail</h1>
       <p>Gmail 계정을 연결하세요.</p>
       <a className="btn primary" href="/auth/login">
@@ -1038,12 +1053,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           )}
           <span className="email">{email}</span>
           <button
-            className="icon-btn"
+            className="icon-btn theme-toggle"
             title={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
             aria-label={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
             onClick={() => setThemePref(theme === "dark" ? "light" : "dark")}
           >
-            {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+            {theme === "dark" ? <SunIcon key="sun" /> : <MoonIcon key="moon" />}
           </button>
           <button
             className="icon-btn"
@@ -1367,7 +1382,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                 </div>
               )}
               {messages.length === 0 && !loading && (
-                <div className="empty">메일이 없습니다.</div>
+                <div className="empty">
+                  <EmptyArt kind="mail" />
+                  메일이 없습니다.
+                </div>
               )}
               {messages.map((m) => (
                 <MessageRow

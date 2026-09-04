@@ -85,6 +85,21 @@ describe("setThemePref / applyTheme", () => {
     expect(localStorage.getItem(THEME_KEY)).toBe("dark");
   });
 
+  it("crossfades only when the theme actually changes", () => {
+    vi.useFakeTimers();
+    installMatchMedia(false);
+    const root = document.documentElement;
+    applyTheme(); // 부트: 이전 값 없음 → 조용히
+    expect(root.classList.contains("theme-fade")).toBe(false);
+    setThemePref("light"); // 같은 테마 → 여전히 조용히
+    expect(root.classList.contains("theme-fade")).toBe(false);
+    setThemePref("dark");
+    expect(root.classList.contains("theme-fade")).toBe(true);
+    vi.advanceTimersByTime(500);
+    expect(root.classList.contains("theme-fade")).toBe(false);
+    vi.useRealTimers();
+  });
+
   it("returns a stable snapshot object while nothing changed", () => {
     installMatchMedia(false);
     const a = getThemeState();

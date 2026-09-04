@@ -57,6 +57,15 @@
   --scrollbar: rgba(16, 24, 40, 0.14);
   --scrollbar-hover: rgba(16, 24, 40, 0.26);
   --scrollbar-active: rgba(16, 24, 40, 0.42);
+  /* 패널 윗변 1px 하이라이트 — 유리판에 빛이 닿는 느낌. 라이트에서는 흰 패널이라 거의 안 보이고 다크에서 살아난다 */
+  --edge: rgba(255, 255, 255, 0.7);
+  --edge-highlight: inset 0 1px 0 var(--edge);
+  /* 캔버스 오로라 블럭 — body::before */
+  --glow-1: rgba(120, 158, 255, 0.2);
+  --glow-2: rgba(94, 197, 255, 0.14);
+  --grain-opacity: 0.045;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.15);
   --radius-s: 9px;
   --radius-m: 13px;
   --radius-l: 18px;
@@ -119,6 +128,10 @@
   --scrollbar: rgba(255, 255, 255, 0.14);
   --scrollbar-hover: rgba(255, 255, 255, 0.26);
   --scrollbar-active: rgba(255, 255, 255, 0.42);
+  --edge: rgba(255, 255, 255, 0.07);
+  --glow-1: rgba(96, 138, 255, 0.16);
+  --glow-2: rgba(70, 170, 255, 0.1);
+  --grain-opacity: 0.06;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.4), 0 24px 64px rgba(0, 0, 0, 0.55);
@@ -156,6 +169,45 @@ body {
     radial-gradient(900px 600px at 104% 112%, rgba(70, 170, 255, 0.08) 0%, rgba(70, 170, 255, 0) 50%),
     linear-gradient(180deg, #13171f 0%, #0d1015 100%);
   background-attachment: fixed;
+}
+/* 캔버스 위 두 격: 오로라(큰 블러 원 둘) + 그레인. 둘 다 패널 뒤(z -1)에 깔리므로
+   패널은 깨끗하고 여백만 질감을 갖는다. 둘 다 정적 레이어다 — 화면 전체 크기의 레이어를
+   움직이거나 블렌드하면 컴포지터가 매 프레임 일하게 되고, 그건 월간 리사이클러 같은
+   스크롤 민감 화면의 프레임을 빼앗는다. 움직임은 작은 요소들에게 맡긴다. */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+body::before {
+  background:
+    radial-gradient(640px 640px at 18% 12%, var(--glow-1) 0%, transparent 62%),
+    radial-gradient(720px 520px at 84% 92%, var(--glow-2) 0%, transparent 60%);
+}
+body::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+  opacity: var(--grain-opacity);
+}
+
+/* 테마 전환: JS가 400ms 동안 클래스를 달아 색이 퉁 바뀜지 않고 서서히 건너간다 */
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-fade,
+  html.theme-fade *,
+  html.theme-fade *::before,
+  html.theme-fade *::after {
+    transition:
+      background-color 0.4s ease,
+      background 0.4s ease,
+      color 0.4s ease,
+      border-color 0.4s ease,
+      box-shadow 0.4s ease,
+      fill 0.4s ease,
+      stroke 0.4s ease !important;
+  }
 }
 
 /* 스크롤바: 트랙은 비우고, 막대는 유리판 위에 얹힌 얇은 알약처럼.
@@ -207,6 +259,26 @@ body {
   *::-webkit-scrollbar-thumb {
     transition: none;
   }
+  /* 장식용 모션은 전부 끈다. 스피너만 예외 — 돌지 않는 스피너는 멈췄다는 오해를 부른다. */
+  .login,
+  .login-orbit,
+  .reader-inner,
+  .calendar,
+  .drive,
+  .search-page,
+  .error,
+  .undo-toast,
+  .theme-toggle svg,
+  .empty-art {
+    animation: none !important;
+  }
+  .btn.primary::after {
+    display: none;
+  }
+  .btn,
+  .btn:active {
+    transform: none;
+  }
 }
 
 .center {
@@ -218,10 +290,82 @@ body {
   gap: 12px;
 }
 
+/* 로그인 히어로: 큰 브랜드 마크 둘레를 강조색 링이 천천히 돈다 — 기다리는 화면이니
+   여기서만 무한 애니메이션을 허용한다. */
+.login {
+  gap: 8px;
+  animation: rise-in 0.5s var(--ease-out) both;
+}
 .login h1 {
   font-size: 40px;
-  margin: 0;
-  letter-spacing: -0.5px;
+  margin: 6px 0 0;
+  letter-spacing: -1px;
+  font-weight: 800;
+  background: linear-gradient(120deg, var(--text) 30%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.login p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 14.5px;
+}
+.login-mark {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 22px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, #3b76e6 0%, #1d4fc4 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 30px rgba(33, 96, 216, 0.35);
+}
+.login-mark svg {
+  width: 34px;
+  height: 34px;
+}
+.login-orbit {
+  position: absolute;
+  inset: -9px;
+  border-radius: 29px;
+  padding: 1.5px;
+  background: conic-gradient(from 0deg, transparent 0 62%, var(--accent) 88%, transparent 100%);
+  /* 링만 남기고 안을 파낸다 */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: spin 5s linear infinite;
+  pointer-events: none;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 로딩 스피너 — 글자만 덩그러니 놓이는 대신 */
+.spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid var(--hairline-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
 }
 
 .btn {
@@ -253,7 +397,7 @@ body {
   transform: translateY(-0.5px);
 }
 .btn:active {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.98);
   box-shadow: var(--shadow-1);
 }
 .btn:focus-visible {
@@ -274,6 +418,25 @@ body {
   box-shadow:
     0 2px 4px rgba(16, 24, 40, 0.12),
     0 6px 16px rgba(33, 96, 216, 0.34);
+}
+/* 호버 시 빛 한 줄기가 왼쪽에서 오른쪽으로 쓸고 지나간다 */
+.btn.primary {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn.primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.3) 50%, transparent 68%);
+  transform: translateX(-130%);
+  transition: transform 0.7s var(--ease-out);
+  pointer-events: none;
+}
+.btn.primary:hover::after {
+  transform: translateX(130%);
 }
 .btn.primary:disabled {
   opacity: 0.5;
@@ -324,7 +487,9 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(33, 96, 216, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 2px 8px rgba(33, 96, 216, 0.35);
 }
 .brand-mark svg {
   width: 14px;
@@ -357,6 +522,20 @@ body {
 .icon-btn:hover {
   background: var(--fill-2);
   color: var(--text);
+}
+/* 테마 토글: 해↔달 아이콘이 바뀜 때마다 돌며 틀어나온다(아이콘 요소가 교체되므로 매번 재생) */
+.theme-toggle svg {
+  animation: icon-pop 0.4s var(--ease-spring) both;
+}
+@keyframes icon-pop {
+  from {
+    opacity: 0;
+    transform: rotate(-60deg) scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .avatar.xs {
   width: 26px;
@@ -440,6 +619,17 @@ body {
   box-shadow: var(--shadow-3);
   font-size: 13px;
   font-weight: 600;
+  animation: toast-down 0.24s var(--ease-out) both;
+}
+@keyframes toast-down {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .notice-icon {
@@ -546,7 +736,7 @@ body {
   border: 1px solid var(--hairline);
   border-radius: 16px;
   background: var(--panel-glass-2);
-  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.04);
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.04), var(--edge-highlight);
 }
 
 .workspace-tab {
@@ -964,7 +1154,7 @@ body {
   overflow-y: auto;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .msg-row {
   width: 100%;
@@ -1090,6 +1280,38 @@ body {
   font-size: 13px;
   letter-spacing: 0.1px;
 }
+/* 빈 상태 일러스트 — 선화 SVG가 숨 쉬듯 떠 있다 */
+.empty-art {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 14px;
+  color: var(--accent);
+  animation: float 6s ease-in-out infinite;
+}
+.empty-art .art-soft {
+  fill: var(--accent-bg);
+}
+.empty-art .art-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.empty-art .art-spark {
+  fill: var(--accent);
+  opacity: 0.55;
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
 
 /* 키보드 단축키 안내 — 목록 헤더의 ? 팝오버가 보여 준다 */
 .kbd-hints {
@@ -1154,10 +1376,11 @@ body {
   background: var(--panel);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .reader-inner {
   padding: 24px 32px;
+  animation: rise-in 0.28s var(--ease-out) both;
 }
 .reader-head h2 {
   margin: 0 0 14px;
@@ -1314,8 +1537,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  box-shadow: var(--shadow-3);
-  animation: popin 0.18s ease;
+  box-shadow: var(--shadow-3), var(--edge-highlight);
+  animation: popin 0.22s var(--ease-out);
   /* 크기조절 손잡이의 기준 */
   position: relative;
 }
@@ -1469,7 +1692,7 @@ body {
   background: var(--panel);
   border: 1px solid var(--hairline);
   border-radius: 18px;
-  box-shadow: 0 12px 38px rgba(16, 24, 40, 0.07);
+  box-shadow: 0 12px 38px rgba(16, 24, 40, 0.07), var(--edge-highlight);
   scrollbar-gutter: stable;
 }
 
@@ -2184,8 +2407,8 @@ button.month-daynum:hover {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  box-shadow: var(--shadow-3);
-  animation: popin 0.18s ease;
+  box-shadow: var(--shadow-3), var(--edge-highlight);
+  animation: popin 0.22s var(--ease-out);
   position: relative;
 }
 /* 높이를 직접 늘렸을 때(인라인 height) 본문이 남는 공간을 먹고 스크롤한다 */
@@ -2749,6 +2972,7 @@ textarea.ev-input {
   flex-direction: column;
   background: transparent;
   padding: 18px 26px 0;
+  animation: rise-in 0.28s var(--ease-out) both;
 }
 .search-head {
   flex: none;
@@ -3163,9 +3387,9 @@ mark {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-3), var(--edge-highlight);
   outline: none;
-  animation: popin 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+  animation: popin 0.22s var(--ease-out);
   /* ⤢ 버튼은 스크롤과 무관하게 제자리에 있어야 하므로
      스크롤은 안쪽 .reader-popup-scroll이 맡는다. */
   display: flex;
@@ -3523,12 +3747,18 @@ mark {
 }
 
 /* ---- drive ---- */
+/* 메일·캨린더와 같은 떠 있는 카드 — 드라이브만 맨바닥이면 화면마다 결이 달라진다 */
 .drive {
   grid-column: 2 / -1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
+  animation: rise-in 0.28s var(--ease-out) both;
 }
 .drive-head {
   flex: none;
@@ -3755,6 +3985,17 @@ mark {
   padding: 12px 16px;
   font-size: 13.5px;
   box-shadow: var(--shadow-3);
+  animation: toast-up 0.26s var(--ease-out) both;
+}
+@keyframes toast-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 .undo-btn {
   border: none;
