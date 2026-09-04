@@ -1,15 +1,62 @@
+/* 색 토큰. 라이트가 기본이고, <html data-theme="dark">가 아래 블록에서
+   같은 이름을 덮어쓴다 — 규칙 본문에는 hex를 직접 쓰지 않는다.
+   예외: 메일 본문(iframe)·서식 편집기는 수신자가 보는 그대로 "종이"(--paper)
+   위에 그리므로 그 안쪽 색은 테마와 무관하게 고정이다. */
 :root {
+  color-scheme: light;
   --bg: #eef1f6;
   --panel: #ffffff;
   --panel-glass: rgba(255, 255, 255, 0.86);
+  --panel-glass-2: rgba(255, 255, 255, 0.7);
+  --panel-glass-3: rgba(255, 255, 255, 0.46);
+  /* 패널 위에 살짝 가라앉은 면: 행 hover, 요일 헤더, 섹션 카드 → 트랙/배지 → 그리드 선 */
+  --surface-1: #f6f8fb;
+  --surface-2: #f0f3f8;
+  --surface-3: #e7eaf0;
   --border: #e3e7ee;
+  --border-weak: #f0f2f6;
   --border-strong: #d3d9e3;
+  /* 글자색 알파 스케일 — 투명 배경 컨트롤의 hover/선, 다크에서는 흰색 계열 */
+  --hairline: rgba(16, 24, 40, 0.07);
+  --hairline-strong: rgba(16, 24, 40, 0.18);
+  --fill-1: rgba(16, 24, 40, 0.045);
+  --fill-2: rgba(16, 24, 40, 0.06);
+  --fill-3: rgba(16, 24, 40, 0.08);
   --text: #1b1f27;
+  --text-2: #3c4453;
   --muted: #647082;
+  --faint: #9aa3b2;
   --accent: #2160d8;
   --accent-strong: #1a51b8;
   --accent-bg: #e9f0fd;
+  --accent-bg-strong: #dce8ff;
+  --accent-border: #bcd3f7;
+  --accent-a4: rgba(33, 96, 216, 0.04);
+  --accent-a10: rgba(33, 96, 216, 0.1);
+  --accent-a18: rgba(33, 96, 216, 0.18);
+  --accent-a30: rgba(33, 96, 216, 0.3);
+  --accent-a50: rgba(33, 96, 216, 0.5);
+  --on-accent: #fff;
   --danger: #d92d20;
+  --danger-bg: #fdecea;
+  --danger-bg-weak: #fff8f7;
+  --danger-border: #f4c7c3;
+  --warn-bg: #fff7e6;
+  --warn-text: #8a5a00;
+  --warn-border: #f3e2b8;
+  --sun: #bb443b;
+  --sat: #3769b2;
+  --mark-bg: #fef0b8;
+  --paper: #ffffff;
+  --paper-text: #1b1f27;
+  --toast-bg: #202124;
+  --toast-text: #f1f3f4;
+  --toast-accent: #8ab4f8;
+  --scrim: rgba(15, 19, 28, 0.46);
+  --scrim-weak: rgba(15, 19, 28, 0.34);
+  --scrollbar: rgba(16, 24, 40, 0.14);
+  --scrollbar-hover: rgba(16, 24, 40, 0.26);
+  --scrollbar-active: rgba(16, 24, 40, 0.42);
   --radius-s: 9px;
   --radius-m: 13px;
   --radius-l: 18px;
@@ -17,6 +64,65 @@
   --shadow-2: 0 2px 6px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.08);
   --shadow-3: 0 8px 20px rgba(16, 24, 40, 0.1), 0 24px 64px rgba(16, 24, 40, 0.18);
   --ring: 0 0 0 3px rgba(33, 96, 216, 0.14);
+}
+
+/* 다크: 순검정 대신 네이비 기운의 차콜. 강조색은 어두운 면 위에서 읽히도록
+   한 단계 밝게, 그 위에 얹는 글자(--on-accent)는 반대로 어둡게. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1218;
+  --panel: #171b23;
+  --panel-glass: rgba(23, 27, 35, 0.86);
+  --panel-glass-2: rgba(23, 27, 35, 0.7);
+  --panel-glass-3: rgba(23, 27, 35, 0.46);
+  --surface-1: #1d222c;
+  --surface-2: #232935;
+  --surface-3: #2b323f;
+  --border: #262c37;
+  --border-weak: #20252f;
+  --border-strong: #353d4b;
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.18);
+  --fill-1: rgba(255, 255, 255, 0.045);
+  --fill-2: rgba(255, 255, 255, 0.065);
+  --fill-3: rgba(255, 255, 255, 0.09);
+  --text: #e6e9ef;
+  --text-2: #c3cad6;
+  --muted: #8d97a9;
+  --faint: #5f6a7d;
+  --accent: #7ea6f4;
+  --accent-strong: #9dbbf7;
+  --accent-bg: #1c2740;
+  --accent-bg-strong: #243456;
+  --accent-border: #2f4a80;
+  --accent-a4: rgba(126, 166, 244, 0.05);
+  --accent-a10: rgba(126, 166, 244, 0.12);
+  --accent-a18: rgba(126, 166, 244, 0.22);
+  --accent-a30: rgba(126, 166, 244, 0.38);
+  --accent-a50: rgba(126, 166, 244, 0.55);
+  --on-accent: #0c1424;
+  --danger: #f28b82;
+  --danger-bg: #3a1f1e;
+  --danger-bg-weak: #221a1b;
+  --danger-border: #5a2e2b;
+  --warn-bg: #2a2412;
+  --warn-text: #f0c66a;
+  --warn-border: #4a3f1a;
+  --sun: #f28b82;
+  --sat: #8ab4f8;
+  --mark-bg: #5a4a12;
+  --toast-bg: #e8eaed;
+  --toast-text: #202124;
+  --toast-accent: #1a5ec9;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --scrim-weak: rgba(0, 0, 0, 0.5);
+  --scrollbar: rgba(255, 255, 255, 0.14);
+  --scrollbar-hover: rgba(255, 255, 255, 0.26);
+  --scrollbar-active: rgba(255, 255, 255, 0.42);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.4), 0 24px 64px rgba(0, 0, 0, 0.55);
+  --ring: 0 0 0 3px rgba(126, 166, 244, 0.3);
 }
 
 * {
@@ -44,12 +150,19 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(1100px 700px at 6% -8%, rgba(96, 138, 255, 0.14) 0%, rgba(96, 138, 255, 0) 55%),
+    radial-gradient(900px 600px at 104% 112%, rgba(70, 170, 255, 0.08) 0%, rgba(70, 170, 255, 0) 50%),
+    linear-gradient(180deg, #13171f 0%, #0d1015 100%);
+  background-attachment: fixed;
+}
 
 /* 스크롤바: 트랙은 비우고, 막대는 유리판 위에 얹힌 얇은 알약처럼.
    기본은 흐릿하게 있다가 그 패널에 마우스가 올라오면 또렷해진다. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(16, 24, 40, 0.18) transparent;
+  scrollbar-color: var(--hairline-strong) transparent;
 }
 *::-webkit-scrollbar {
   width: 12px;
@@ -60,7 +173,7 @@ body {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(16, 24, 40, 0.14);
+  background-color: var(--scrollbar);
   border-radius: 999px;
   /* content-box 클립 덕분에 border가 트랙 여백이 된다 — 막대가 8px로 가늘어진다 */
   border: 4px solid transparent;
@@ -69,10 +182,10 @@ body {
 }
 /* 컨테이너(또는 그 안의 내용)에 마우스가 있을 때만 진하게 */
 *:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(16, 24, 40, 0.26);
+  background-color: var(--scrollbar-hover);
 }
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(16, 24, 40, 0.42);
+  background-color: var(--scrollbar-active);
   border-width: 3px;
 }
 *::-webkit-scrollbar-thumb:active {
@@ -134,7 +247,7 @@ body {
     border-color 0.15s ease;
 }
 .btn:hover {
-  background: #f7f9fc;
+  background: var(--surface-1);
   border-color: var(--border-strong);
   box-shadow: 0 2px 8px rgba(16, 24, 40, 0.09);
   transform: translateY(-0.5px);
@@ -147,16 +260,17 @@ body {
   outline: none;
   box-shadow: var(--ring);
 }
+/* 주 버튼은 테마와 무관하게 같은 브랜드 블루 — 다크의 밝은 --accent가 새지 않게 상수로 */
 .btn.primary {
-  background: linear-gradient(180deg, #3674e6 0%, var(--accent) 100%);
-  border-color: var(--accent-strong);
+  background: linear-gradient(180deg, #3674e6 0%, #2160d8 100%);
+  border-color: #1a51b8;
   color: #fff;
   box-shadow:
     0 1px 2px rgba(16, 24, 40, 0.1),
     0 3px 10px rgba(33, 96, 216, 0.28);
 }
 .btn.primary:hover {
-  background: linear-gradient(180deg, #2f6adc 0%, var(--accent-strong) 100%);
+  background: linear-gradient(180deg, #2f6adc 0%, #1a51b8 100%);
   box-shadow:
     0 2px 4px rgba(16, 24, 40, 0.12),
     0 6px 16px rgba(33, 96, 216, 0.34);
@@ -170,8 +284,8 @@ body {
   color: var(--danger);
 }
 .btn.danger:hover {
-  background: #fef3f2;
-  border-color: #f4c7c3;
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
 }
 
 .app {
@@ -188,7 +302,7 @@ body {
   background: var(--panel-glass);
   backdrop-filter: blur(16px) saturate(1.5);
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
-  border-bottom: 1px solid rgba(16, 24, 40, 0.07);
+  border-bottom: 1px solid var(--hairline);
   position: relative;
   z-index: 10;
 }
@@ -241,7 +355,7 @@ body {
   height: 44px;
 }
 .icon-btn:hover {
-  background: rgba(16, 24, 40, 0.07);
+  background: var(--fill-2);
   color: var(--text);
 }
 .avatar.xs {
@@ -254,7 +368,7 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
-  background: rgba(16, 24, 40, 0.055);
+  background: var(--fill-1);
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 0 12px;
@@ -265,7 +379,7 @@ body {
     box-shadow 0.18s ease;
 }
 .search input::placeholder {
-  color: #98a1b0;
+  color: var(--faint);
   letter-spacing: 0.2px;
 }
 .search:focus-within {
@@ -301,7 +415,7 @@ body {
   transition: background 0.15s ease, color 0.15s ease;
 }
 .clear:hover {
-  background: rgba(16, 24, 40, 0.06);
+  background: var(--fill-2);
   color: var(--text);
 }
 
@@ -309,9 +423,9 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #fdecea;
+  background: var(--danger-bg);
   color: var(--danger);
-  border: 1px solid #f6c9c4;
+  border: 1px solid var(--danger-border);
   padding: 9px 18px;
   cursor: default;
   /* Overlay toast: must stay visible/clickable above modal backdrops
@@ -354,9 +468,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #fff7e6;
-  color: #8a5a00;
-  border-bottom: 1px solid #f3e2b8;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-bottom: 1px solid var(--warn-border);
   padding: 7px 18px;
   font-size: 12.5px;
 }
@@ -429,9 +543,9 @@ body {
   gap: 4px;
   margin: 0 0 10px;
   padding: 4px;
-  border: 1px solid rgba(16, 24, 40, 0.07);
+  border: 1px solid var(--hairline);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--panel-glass-2);
   box-shadow: 0 8px 24px rgba(16, 24, 40, 0.04);
 }
 
@@ -447,7 +561,7 @@ body {
   border: 0;
   border-radius: 12px;
   background: transparent;
-  color: #667085;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 650;
   line-height: 1;
@@ -458,7 +572,7 @@ body {
 
 .workspace-tab:hover {
   color: var(--text);
-  background: rgba(16, 24, 40, 0.045);
+  background: var(--fill-1);
 }
 
 .workspace-tab:active {
@@ -466,8 +580,8 @@ body {
 }
 
 .workspace-tab.active {
-  color: #174ea6;
-  background: #fff;
+  color: var(--accent-strong);
+  background: var(--panel);
   box-shadow: 0 3px 12px rgba(16, 24, 40, 0.1);
 }
 
@@ -477,7 +591,7 @@ body {
   display: grid;
   place-items: center;
   border-radius: 9px;
-  background: rgba(102, 112, 133, 0.09);
+  background: var(--fill-3);
 }
 
 .workspace-tab-icon svg {
@@ -486,12 +600,12 @@ body {
 }
 
 .workspace-tab.active .workspace-tab-icon {
-  color: #2160d8;
-  background: rgba(33, 96, 216, 0.11);
+  color: var(--accent);
+  background: var(--accent-a10);
 }
 
 .workspace-tab:focus-visible {
-  outline: 3px solid rgba(33, 96, 216, 0.32);
+  outline: 3px solid var(--accent-a30);
   outline-offset: 2px;
 }
 
@@ -499,8 +613,8 @@ body {
   margin: 0 0 12px;
   padding: 4px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.46);
-  border: 1px solid rgba(16, 24, 40, 0.055);
+  background: var(--panel-glass-3);
+  border: 1px solid var(--hairline);
 }
 
 .workspace-panel {
@@ -509,7 +623,7 @@ body {
 
 .workspace-panel-title {
   padding: 9px 10px 5px;
-  color: #667085;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.65px;
@@ -521,9 +635,9 @@ body {
   align-items: center;
   gap: 10px;
   padding: 14px 12px;
-  border: 1px solid rgba(16, 24, 40, 0.055);
+  border: 1px solid var(--hairline);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.46);
+  background: var(--panel-glass-3);
   animation: workspace-panel-in 0.18s ease-out;
 }
 
@@ -534,8 +648,8 @@ body {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  color: #2160d8;
-  background: rgba(33, 96, 216, 0.1);
+  color: var(--accent);
+  background: var(--accent-a10);
 }
 
 .workspace-context strong,
@@ -582,7 +696,7 @@ body {
 
 .cal-check-wrap.primary {
   margin-bottom: 4px;
-  background: rgba(33, 96, 216, 0.035);
+  background: var(--accent-a4);
 }
 
 .cal-check {
@@ -600,7 +714,7 @@ body {
 }
 
 .cal-check:hover {
-  background: rgba(16, 24, 40, 0.055);
+  background: var(--fill-1);
 }
 
 .cal-check input[type="checkbox"] {
@@ -636,7 +750,7 @@ body {
 }
 
 .cal-check input:focus-visible + .cal-check-indicator {
-  outline: 3px solid rgba(33, 96, 216, 0.3);
+  outline: 3px solid var(--accent-a30);
   outline-offset: 2px;
 }
 
@@ -659,8 +773,8 @@ body {
   flex: none;
   padding: 2px 7px;
   border-radius: 999px;
-  background: rgba(33, 96, 216, 0.09);
-  color: #2457a7;
+  background: var(--accent-a10);
+  color: var(--accent-strong);
   font-size: 10px;
   font-weight: 700;
 }
@@ -672,7 +786,7 @@ body {
   min-height: 44px;
   margin: -2px 5px 4px 36px;
   padding: 0 4px 0 8px;
-  border-top: 1px solid rgba(16, 24, 40, 0.055);
+  border-top: 1px solid var(--hairline);
 }
 
 .cal-color-tools label {
@@ -699,10 +813,10 @@ body {
   height: 18px;
   flex: none;
   padding: 0;
-  border: 2px solid #fff;
+  border: 2px solid var(--panel);
   border-radius: 999px;
   background: transparent;
-  box-shadow: 0 0 0 1px rgba(16, 24, 40, 0.16);
+  box-shadow: 0 0 0 1px var(--hairline-strong);
   overflow: hidden;
   cursor: pointer;
   /* 실제 색상점은 작게 유지하되 label 전체를 눌러 색상 선택기를 연다. */
@@ -744,13 +858,13 @@ body {
   transition: background 0.15s ease, color 0.15s ease;
 }
 .label-row:hover {
-  background: rgba(16, 24, 40, 0.05);
+  background: var(--fill-1);
 }
 .label-row.active {
   background: var(--accent-bg);
   color: var(--accent);
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px rgba(33, 96, 216, 0.14);
+  box-shadow: inset 0 0 0 1px var(--accent-a18);
 }
 .label-name {
   display: flex;
@@ -826,7 +940,7 @@ body {
 }
 .badge {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-radius: 10px;
   padding: 1px 7px;
   font-size: 11px;
@@ -848,7 +962,7 @@ body {
 .list {
   background: var(--panel);
   overflow-y: auto;
-  border: 1px solid rgba(16, 24, 40, 0.07);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
 }
@@ -856,7 +970,7 @@ body {
   width: 100%;
   text-align: left;
   border: none;
-  border-bottom: 1px solid #f0f2f6;
+  border-bottom: 1px solid var(--border-weak);
   background: transparent;
   padding: 13px 14px;
   cursor: pointer;
@@ -874,7 +988,7 @@ body {
   contain-intrinsic-size: auto 66px;
 }
 .msg-row:hover {
-  background: #f6f8fb;
+  background: var(--surface-1);
 }
 .msg-row.active {
   background: var(--accent-bg);
@@ -903,12 +1017,12 @@ body {
   white-space: nowrap;
 }
 .msg-read-state.unread {
-  color: #1557b0;
-  background: #e8f0fe;
+  color: var(--accent-strong);
+  background: var(--accent-bg);
 }
 .msg-read-state.read {
-  color: #8a93a3;
-  background: #f2f4f7;
+  color: var(--muted);
+  background: var(--surface-2);
 }
 .msg-read-dot {
   width: 6px;
@@ -990,12 +1104,12 @@ body {
   display: inline-block;
   min-width: 18px;
   padding: 1px 5px;
-  border: 1px solid rgba(16, 24, 40, 0.18);
+  border: 1px solid var(--hairline-strong);
   border-bottom-width: 2px;
   border-radius: 5px;
-  background: #fff;
+  background: var(--panel);
   font: 600 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #3c4453;
+  color: var(--text-2);
   text-align: center;
 }
 /* 목록 헤더의 ? 버튼 + 팝오버 */
@@ -1014,7 +1128,7 @@ body {
   font-weight: 700;
 }
 .kbd-help-btn:hover {
-  background: #f0f3f8;
+  background: var(--surface-2);
   color: var(--text);
 }
 .kbd-help-pop {
@@ -1038,7 +1152,7 @@ body {
 .reader {
   overflow-y: auto;
   background: var(--panel);
-  border: 1px solid rgba(16, 24, 40, 0.07);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1);
 }
@@ -1075,10 +1189,10 @@ body {
   box-shadow: none;
   padding: 7px 11px;
   border-radius: var(--radius-s);
-  color: #3c4453;
+  color: var(--text-2);
 }
 .reader-actions .btn:hover {
-  background: rgba(16, 24, 40, 0.06);
+  background: var(--fill-2);
   transform: none;
   box-shadow: none;
   color: var(--text);
@@ -1087,7 +1201,7 @@ body {
   color: var(--danger);
 }
 .reader-actions .btn.danger:hover {
-  background: #fdecea;
+  background: var(--danger-bg);
 }
 .attachments {
   display: flex;
@@ -1115,7 +1229,7 @@ body {
     border-color 0.15s ease;
 }
 .chip:hover {
-  background: #f6f8fb;
+  background: var(--surface-1);
   border-color: var(--border-strong);
   box-shadow: 0 2px 8px rgba(16, 24, 40, 0.09);
 }
@@ -1145,6 +1259,13 @@ body {
   height: 320px; /* JS overrides to fit content; this is the pre-measure fallback */
   border: none;
   display: block;
+  /* 메일 HTML은 자기 색을 들고 온다(대개 흰 바탕 전제). 다크에서도 종이 위에
+     그린다 — 배경을 안 정한 메일의 검은 글자가 어두운 패널에 묻히지 않게. */
+  background: var(--paper);
+  color-scheme: light;
+}
+:root[data-theme="dark"] .html-frame {
+  border-radius: 10px;
 }
 .text-body {
   white-space: pre-wrap;
@@ -1162,7 +1283,7 @@ body {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 19, 28, 0.46);
+  background: var(--scrim);
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
   display: flex;
@@ -1280,7 +1401,7 @@ body {
 }
 .modal input::placeholder,
 .modal textarea::placeholder {
-  color: #9aa3b2;
+  color: var(--faint);
 }
 .modal select.from-select {
   color: var(--muted);
@@ -1346,7 +1467,7 @@ body {
   overflow-y: auto;
   padding: 24px 26px 30px;
   background: var(--panel);
-  border: 1px solid rgba(16, 24, 40, 0.07);
+  border: 1px solid var(--hairline);
   border-radius: 18px;
   box-shadow: 0 12px 38px rgba(16, 24, 40, 0.07);
   scrollbar-gutter: stable;
@@ -1376,7 +1497,7 @@ body {
 
 .cal-head h2 {
   margin: 0;
-  color: #172033;
+  color: var(--text);
   font-size: 25px;
   font-weight: 750;
   letter-spacing: -0.7px;
@@ -1402,9 +1523,9 @@ body {
   align-items: center;
   gap: 2px;
   padding: 3px;
-  border: 1px solid rgba(16, 24, 40, 0.08);
+  border: 1px solid var(--hairline);
   border-radius: 10px;
-  background: #f3f5f8;
+  background: var(--surface-2);
 }
 
 .cal-modes button,
@@ -1424,7 +1545,7 @@ body {
 
 .cal-modes button.active,
 .cal-range-options button.active {
-  background: #fff;
+  background: var(--panel);
   color: var(--text);
   box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
 }
@@ -1470,7 +1591,7 @@ body {
 }
 
 .cal-monthnav strong {
-  color: #202a3c;
+  color: var(--text);
   font-size: 18px;
   font-weight: 750;
   letter-spacing: -0.35px;
@@ -1484,8 +1605,8 @@ body {
   height: clamp(600px, calc(100dvh - 260px), 760px);
   min-height: 600px;
   overflow: hidden;
-  background: #e7eaf0;
-  border: 1px solid #e1e5ec;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow: 0 4px 16px rgba(16, 24, 40, 0.05);
 }
@@ -1504,8 +1625,8 @@ body {
 
 .month-dow {
   padding: 10px 4px;
-  background: #f8f9fb;
-  color: #697386;
+  background: var(--surface-1);
+  color: var(--muted);
   font-size: 11.5px;
   font-weight: 750;
   letter-spacing: 0.04em;
@@ -1513,11 +1634,11 @@ body {
 }
 
 .month-dow.sun {
-  color: #bb443b;
+  color: var(--sun);
 }
 
 .month-dow.sat {
-  color: #3769b2;
+  color: var(--sat);
 }
 
 .month-cell {
@@ -1529,16 +1650,24 @@ body {
   gap: 2px;
   padding: 5px;
   overflow: hidden;
-  background: #fff;
+  background: var(--panel);
   transition: background 0.12s ease, box-shadow 0.12s ease;
 }
 
 .month-cell.other {
-  background: #fbfcfd;
+  background: var(--surface-1);
 }
 
 .month-cell.selected {
-  box-shadow: inset 0 0 0 2px rgba(33, 96, 216, 0.28);
+  box-shadow: inset 0 0 0 2px var(--accent-a50);
+}
+
+/* 오늘: 상황을 바로 알아보게 셀 전체를 강조색 틴트 + 또렷한 테두리로 둠러싼다. 다크에서
+   반투명 링만으로는 눈에 안 들어오므로 실선 색을 쓴다. selected와 겹쳐도 오늘이 이긴다. */
+.month-cell.today,
+.month-cell.today.selected {
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 
@@ -1573,26 +1702,26 @@ button.month-daynum {
 }
 
 button.month-daynum:hover {
-  background: #eaf0fb;
+  background: var(--accent-bg);
 }
 
 .month-cell.other .month-daynum {
-  color: #687386;
+  color: var(--muted);
 }
 
 .month-cell.sun .month-daynum {
-  color: #bb443b;
+  color: var(--sun);
 }
 
 .month-cell.sat .month-daynum {
-  color: #3769b2;
+  color: var(--sat);
 }
 
 .month-cell.today .month-daynum {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 750;
-  box-shadow: 0 2px 7px rgba(33, 96, 216, 0.28);
+  box-shadow: 0 2px 7px var(--accent-a30);
 }
 
 .month-count {
@@ -1604,15 +1733,15 @@ button.month-daynum:hover {
   margin-left: auto;
   padding: 0 5px;
   border-radius: 999px;
-  background: #f0f2f6;
-  color: #657084;
+  background: var(--surface-2);
+  color: var(--muted);
   font-size: 10.5px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
 
 .month-cell.today .month-count {
-  background: var(--accent-bg);
+  background: var(--accent-bg-strong);
   color: var(--accent);
 }
 
@@ -1630,7 +1759,7 @@ button.month-daynum:hover {
   padding: 1px 4px;
   border: 0;
   border-radius: 5px;
-  color: #263044;
+  color: var(--text);
   font-family: inherit;
   font-size: 10.5px;
   font-weight: 600;
@@ -1648,7 +1777,7 @@ button.month-daynum:hover {
 
 .month-ev-time {
   flex: none;
-  color: #667085;
+  color: var(--muted);
   font-size: 9.5px;
   font-weight: 550;
   font-variant-numeric: tabular-nums;
@@ -1691,9 +1820,9 @@ button.month-daynum:hover {
   gap: 18px;
   margin-bottom: 12px;
   padding: 13px 15px;
-  border: 1px solid rgba(16, 24, 40, 0.07);
+  border: 1px solid var(--hairline);
   border-radius: 12px;
-  background: #f8f9fb;
+  background: var(--surface-1);
 }
 
 .cal-range > div:first-child {
@@ -1713,7 +1842,7 @@ button.month-daynum:hover {
 
 .cal-range strong {
   overflow: hidden;
-  color: #283247;
+  color: var(--text);
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1728,17 +1857,17 @@ button.month-daynum:hover {
   min-height: 0;
   padding: 2px 18px 18px;
   overflow: visible;
-  border: 1px solid rgba(16, 24, 40, 0.07);
+  border: 1px solid var(--hairline);
   border-radius: 14px;
-  background: #fff;
+  background: var(--panel);
 }
 .cal-refresh-warning {
   margin: 10px;
   padding: 10px 12px;
-  border: 1px solid #f0cf7a;
+  border: 1px solid var(--warn-border);
   border-radius: 10px;
-  background: #fff8e6;
-  color: #6f4b00;
+  background: var(--warn-bg);
+  color: var(--warn-text);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -1757,9 +1886,9 @@ button.month-daynum:hover {
   align-items: center;
   padding: 10px 2px 7px;
   border: 0;
-  border-bottom: 1px solid #eceff3;
-  background: rgba(255, 255, 255, 0.96);
-  color: #2e5da8;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-glass);
+  color: var(--accent-strong);
   font: inherit;
   font-size: 12.5px;
   font-weight: 750;
@@ -1786,7 +1915,7 @@ button.month-daynum:hover {
 }
 
 .cal-event:hover {
-  background: #f5f7fa;
+  background: var(--surface-1);
 }
 
 .cal-dot {
@@ -1794,7 +1923,7 @@ button.month-daynum:hover {
   height: 10px;
   flex: none;
   border-radius: 999px;
-  box-shadow: 0 0 0 3px rgba(16, 24, 40, 0.035);
+  box-shadow: 0 0 0 3px var(--fill-1);
 }
 
 .cal-time {
@@ -1829,7 +1958,7 @@ button.month-daynum:hover {
   overflow: hidden;
   padding: 3px 8px;
   border-radius: 999px;
-  background: #f1f3f6;
+  background: var(--surface-2);
   color: var(--muted);
   font-size: 10.5px;
   text-overflow: ellipsis;
@@ -1838,7 +1967,7 @@ button.month-daynum:hover {
 
 .calendar :is(button, input, select, textarea, a):focus-visible,
 .cal-check-wrap :is(button, input, label):focus-visible {
-  outline: 3px solid rgba(33, 96, 216, 0.34);
+  outline: 3px solid var(--accent-a30);
   outline-offset: 2px;
 }
 .ev-dialog .modal-head button {
@@ -2121,6 +2250,8 @@ button.month-daynum:hover {
   max-height: 300px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
+  background: var(--paper);
+  color-scheme: light;
 }
 
 /* event editor form */
@@ -2171,7 +2302,7 @@ textarea.ev-input {
   transition: border-color 0.15s ease;
 }
 .ev-title-input::placeholder {
-  color: #aab3c0;
+  color: var(--faint);
   font-weight: 500;
 }
 .ev-title-input:focus {
@@ -2185,7 +2316,7 @@ textarea.ev-input {
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
-  background: #fafbfd;
+  background: var(--surface-1);
   padding: 10px 12px;
 }
 .ev-when-head {
@@ -2284,13 +2415,13 @@ textarea.ev-input {
     color 0.15s ease;
 }
 .ev-chip:hover {
-  background: #f2f5fa;
+  background: var(--surface-1);
   border-color: var(--border-strong);
   color: var(--text);
 }
 .ev-chip.on {
   background: var(--accent-bg);
-  border-color: #bcd3f7;
+  border-color: var(--accent-border);
   color: var(--accent);
   font-weight: 600;
 }
@@ -2325,7 +2456,7 @@ textarea.ev-input {
     color 0.15s ease;
 }
 .ev-more:hover {
-  background: #f2f5fa;
+  background: var(--surface-1);
   color: var(--text);
 }
 .ev-more:focus-visible {
@@ -2371,23 +2502,24 @@ textarea.ev-input {
   /* 답장 깊이만큼 들여쓴 왼쪽 가이드라인 — 어느 갈래인지 눈으로 따라간다 */
   transition: margin-left 0.15s ease;
 }
+/* 깊이가 들어갈수록 가이드가 글자색 쪽으로 진해진다 — 테마에 따라 방향이 바뀜다 */
 .thread-msg[data-depth]:not([data-depth="0"]) {
-  border-left: 3px solid #dbe2ee;
+  border-left: 3px solid var(--border);
   padding-left: 14px;
   border-top-left-radius: 10px;
 }
 .thread-msg[data-depth="2"] {
-  border-left-color: #ccd6e6;
+  border-left-color: var(--border-strong);
 }
 .thread-msg[data-depth="3"] {
-  border-left-color: #bdcade;
+  border-left-color: color-mix(in srgb, var(--border-strong) 65%, var(--muted));
 }
 .thread-msg[data-depth="4"],
 .thread-msg[data-depth="5"],
 .thread-msg[data-depth="6"],
 .thread-msg[data-depth="7"],
 .thread-msg[data-depth="8"] {
-  border-left-color: #adbcd4;
+  border-left-color: color-mix(in srgb, var(--border-strong) 35%, var(--muted));
 }
 .thread-msg:first-of-type {
   border-top: none;
@@ -2426,7 +2558,7 @@ textarea.ev-input {
     border-color 0.15s ease;
 }
 .thread-peek:hover {
-  background: #f6f8fc;
+  background: var(--surface-1);
   border-color: var(--border-strong);
 }
 .thread-peek-n,
@@ -2504,7 +2636,7 @@ textarea.ev-input {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: #eef1f6;
+  background: var(--surface-2);
   color: var(--muted);
 }
 .thread-last {
@@ -2517,7 +2649,7 @@ textarea.ev-input {
   margin: 0 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
-  background: #f8fafd;
+  background: var(--surface-1);
   overflow: hidden;
 }
 .qchain-head {
@@ -2563,10 +2695,10 @@ textarea.ev-input {
 }
 .qchain-step:hover {
   border-color: var(--border-strong);
-  background: #f4f7fc;
+  background: var(--surface-1);
 }
 .qchain-step.on {
-  border-color: #bcd3f7;
+  border-color: var(--accent-border);
   background: var(--accent-bg);
 }
 .qchain-n {
@@ -2578,14 +2710,14 @@ textarea.ev-input {
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: #e7edf9;
+  background: var(--accent-bg);
   color: var(--accent);
   font-size: 11px;
   font-weight: 700;
 }
 .qchain-step.on .qchain-n {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .qchain-who {
   flex: none;
@@ -2656,7 +2788,7 @@ textarea.ev-input {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: linear-gradient(180deg, #f1f3f8 70%, rgba(241, 243, 248, 0));
+  background: linear-gradient(180deg, var(--bg) 70%, transparent);
   font-size: 13px;
   font-weight: 700;
   color: var(--muted);
@@ -2788,7 +2920,7 @@ textarea.ev-input {
   border-radius: var(--radius-m);
 }
 mark {
-  background: #fef0b8;
+  background: var(--mark-bg);
   color: inherit;
   border-radius: 3px;
   padding: 0 1px;
@@ -2915,7 +3047,7 @@ mark {
   cursor: pointer;
 }
 .bulk-all-link:hover {
-  background: #dce8ff;
+  background: var(--accent-bg-strong);
 }
 .bulk-actions {
   grid-column: 1 / -1;
@@ -2949,7 +3081,7 @@ mark {
   border-radius: 6px;
 }
 .bulk-clear:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--fill-2);
   color: var(--text);
 }
 
@@ -2960,7 +3092,7 @@ mark {
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: #f6f8fb;
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-top: 3px solid var(--accent);
   border-radius: 10px;
@@ -2995,7 +3127,7 @@ mark {
   flex: none;
   height: 86px;
   border-radius: var(--radius-m);
-  background: linear-gradient(90deg, #e9edf3 25%, #f5f7fb 40%, #e9edf3 60%);
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-1) 40%, var(--surface-3) 60%);
   background-size: 300% 100%;
   animation: shimmer 1.1s ease-in-out infinite;
 }
@@ -3015,7 +3147,7 @@ mark {
 .reader-popup-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 19, 28, 0.34);
+  background: var(--scrim-weak);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
   z-index: 150;
@@ -3064,7 +3196,7 @@ mark {
 }
 .reader-popup-max:hover {
   opacity: 1;
-  background: #f0f3f8;
+  background: var(--surface-2);
   color: var(--text);
 }
 @keyframes popin {
@@ -3157,8 +3289,8 @@ mark {
   gap: 5px;
   max-width: 100%;
   background: var(--accent-bg);
-  color: #1a3f8a;
-  border: 1px solid rgba(33, 96, 216, 0.18);
+  color: var(--accent-strong);
+  border: 1px solid var(--accent-a18);
   border-radius: 14px;
   padding: 3px 5px 3px 11px;
   font-size: 12.5px;
@@ -3169,7 +3301,7 @@ mark {
 }
 .recip-chip:hover {
   border-color: var(--accent);
-  background: #dde9fd;
+  background: var(--accent-bg-strong);
 }
 .recip-chip-name {
   font-weight: 600;
@@ -3178,7 +3310,7 @@ mark {
   max-width: 160px;
 }
 .recip-chip-mail {
-  color: #4a6aa8;
+  color: var(--accent);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -3191,9 +3323,9 @@ mark {
   color: var(--danger);
 }
 .recip-chip.invalid {
-  background: #fdecea;
+  background: var(--danger-bg);
   color: var(--danger);
-  border-color: #f4c7c3;
+  border-color: var(--danger-border);
 }
 .recip-x {
   flex: none;
@@ -3209,7 +3341,7 @@ mark {
 }
 .recip-x:hover {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--fill-3);
 }
 .recip-box .recip-input {
   flex: 1;
@@ -3258,7 +3390,7 @@ mark {
   align-items: center;
   gap: 2px;
   padding: 5px 8px;
-  background: #f6f8fb;
+  background: var(--surface-1);
   border-bottom: 1px solid var(--border);
 }
 .rich-tool {
@@ -3270,14 +3402,14 @@ mark {
   padding: 0 7px;
   border-radius: 6px;
   font-size: 12.5px;
-  color: #3c4453;
+  color: var(--text-2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: background 0.13s ease;
 }
 .rich-tool:hover {
-  background: rgba(16, 24, 40, 0.08);
+  background: var(--fill-3);
 }
 .rich-sep {
   width: 1px;
@@ -3289,8 +3421,8 @@ mark {
   height: 26px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
-  color: #3c4453;
+  background: var(--panel);
+  color: var(--text-2);
   font-size: 12.5px;
   padding: 0 4px;
   cursor: pointer;
@@ -3302,7 +3434,7 @@ mark {
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--panel);
   cursor: pointer;
 }
 .rich-color::-webkit-color-swatch-wrapper {
@@ -3321,6 +3453,11 @@ mark {
   line-height: 1.65;
   outline: none;
   word-break: break-word;
+  /* 종이 위에 쓴다: 인용·서명·글자색은 인라인 스타일로 발송되므로 다크에서도
+     수신자가 보는 그대로 보여야 한다. 아래 hex들이 그래서 고정값이다. */
+  background: var(--paper);
+  color: var(--paper-text);
+  color-scheme: light;
 }
 .rich-body:empty::before,
 .rich-body[data-empty]::before {
@@ -3478,7 +3615,7 @@ mark {
   margin: 10px 18px;
   padding: 10px 12px;
   border-radius: var(--radius-s);
-  background: #fdecea;
+  background: var(--danger-bg);
   color: var(--danger);
   font-size: 13px;
 }
@@ -3584,7 +3721,7 @@ mark {
   cursor: pointer;
 }
 .rich-select:hover {
-  background: #eef1f6;
+  background: var(--surface-2);
 }
 
 /* ---- 설정 모달: 옵션 행 ---- */
@@ -3612,17 +3749,17 @@ mark {
   display: flex;
   align-items: center;
   gap: 12px;
-  background: #202124;
-  color: #f1f3f4;
+  background: var(--toast-bg);
+  color: var(--toast-text);
   border-radius: 10px;
   padding: 12px 16px;
   font-size: 13.5px;
-  box-shadow: 0 6px 24px rgba(16, 24, 40, 0.35);
+  box-shadow: var(--shadow-3);
 }
 .undo-btn {
   border: none;
   background: transparent;
-  color: #8ab4f8;
+  color: var(--toast-accent);
   font: inherit;
   font-weight: 600;
   cursor: pointer;

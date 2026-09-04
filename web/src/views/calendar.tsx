@@ -534,7 +534,8 @@ export function MonthGrid({
                       title={`${timeLabel} ${e.summary} · ${e.calendarSummary}`}
                       aria-label={`${timeLabel}, ${e.summary}, ${e.calendarSummary}`}
                       style={{
-                        background: `color-mix(in srgb, ${displayColor} 22%, white)`,
+                        // 셀 바탕(--panel)에 섞는다 — 다크에서는 어두운 틴트가 된다
+                        background: `color-mix(in srgb, ${displayColor} 22%, var(--panel))`,
                         borderLeft: `4px solid ${displayColor}`,
                       }}
                     >

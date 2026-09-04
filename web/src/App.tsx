@@ -56,9 +56,11 @@ import {
   EditIcon,
   InboxIcon,
   MailIcon,
+  MoonIcon,
   RestoreIcon,
   SendIcon,
   StarIcon,
+  SunIcon,
   TagIcon,
   TrashIcon,
   VacationIcon,
@@ -70,6 +72,8 @@ import { useCalendarCatalog } from "./hooks/useCalendarCatalog.ts";
 import { shouldRemoveArchivedMessage, useMailList } from "./hooks/useMailList.ts";
 import { useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { useOutbox } from "./hooks/useOutbox.ts";
+import { useTheme } from "./hooks/useTheme.ts";
+import { THEME_OPTIONS, type ThemePref } from "./lib/theme.ts";
 import { PRIMARY_CALENDAR_DEFAULT_COLOR, getCalendarDisplayColor } from "./lib/calendarPresentation.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
@@ -297,6 +301,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const composeOpenRef = useRef(composeOpen);
   composeOpenRef.current = composeOpen;
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { theme, setPref: setThemePref } = useTheme();
   const [composeInit, setComposeInit] = useState<ComposeInit | undefined>();
   // Remount key: a new init must never re-skin a mounted editor mid-edit
   // (overlapping draft opens would save A's content under B's draftId).
@@ -1034,6 +1039,14 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           <span className="email">{email}</span>
           <button
             className="icon-btn"
+            title={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
+            aria-label={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
+            onClick={() => setThemePref(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+          </button>
+          <button
+            className="icon-btn"
             title="설정 (서명)"
             onClick={() => setSettingsOpen(true)}
           >
@@ -1505,6 +1518,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [fontFamily, setFontFamily] = useState(initialFont.family);
   const [fontSize, setFontSize] = useState(initialFont.size);
   const [undoSec, setUndoSec] = useState(String(getUndoSec()));
+  // 테마는 고르는 즉시 적용·저장된다 — 결과를 눈으로 보며 고르는 설정이라 저장 버튼을 기다리지 않는다.
+  const { pref: themePref, setPref: setThemePref } = useTheme();
 
   const importFromGmail = async () => {
     setImportMsg(null);
@@ -1628,6 +1643,21 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             {FONT_SIZES.map((s) => (
               <option key={s.label} value={s.css}>
                 {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="muted settings-label">테마 — 고르면 바로 적용됩니다</div>
+        <div className="settings-row">
+          <select
+            className="ev-input"
+            aria-label="테마"
+            value={themePref}
+            onChange={(e) => setThemePref(e.target.value as ThemePref)}
+          >
+            {THEME_OPTIONS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
               </option>
             ))}
           </select>

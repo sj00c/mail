@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mail</title>
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      // 첫 페인트 전에 테마를 적용한다 — src/lib/theme.ts와 같은 규칙.
+      (function () {
+        try {
+          var p = localStorage.getItem("mail.theme");
+          var dark =
+            p === "dark" ||
+            (p !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
