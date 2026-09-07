@@ -3,7 +3,9 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -25,7 +27,7 @@ import {
   dateKey,
   dayDiff,
   durationLabel,
-  endOfWeek,
+
   evTimeLabel,
   formatDayHeader,
   formatEventWhen,
@@ -159,7 +161,7 @@ export function CalendarView({
   }, []);
 
   return (
-    <div className="calendar">
+    <div className={`calendar${mode === "month" ? " month-continuous-mode" : ""}`}>
       <header className="cal-head">
         <div className="cal-titleblock">
           <span className="cal-kicker">일정 관리</span>
@@ -206,6 +208,7 @@ export function CalendarView({
           refreshKey={refreshKey}
           dateAnchor={dateAnchor}
           onDateAnchorChange={setDateAnchor}
+          interactionLocked={Boolean(dayModal || detailEv || editor)}
         />
       ) : (
         <AgendaList
@@ -288,43 +291,106 @@ export type CalRange = { days?: number; from?: string; to?: string };
 export const calCache = new Map<string, { events: CalEvent[]; ts: number }>();
 
 export const CAL_FRESH_MS = 30_000;
+export const CAL_CACHE_MAX_ENTRIES = 8;
+const VIRTUAL_WEEK_COUNT = 13;
+const RECYCLE_WEEK_COUNT = 3;
+const EDGE_THRESHOLD_WEEKS = 2;
+const PREFETCH_WEEK_COUNT = 3;
 
 export const rangeKey = (r: CalRange) => `${r.days ?? ""}|${r.from ?? ""}|${r.to ?? ""}`;
+
+function readCalCache(key: string) {
+  const entry = calCache.get(key);
+  if (!entry) return undefined;
+  calCache.delete(key);
+  calCache.set(key, entry);
+  return entry;
+}
+
+function writeCalCache(key: string, entry: { events: CalEvent[]; ts: number }) {
+  calCache.delete(key);
+  calCache.set(key, entry);
+  while (calCache.size > CAL_CACHE_MAX_ENTRIES) calCache.delete(calCache.keys().next().value!);
+}
+
+type CalendarRangeSnapshot = { range: Required<Pick<CalRange, "from" | "to">>; events: CalEvent[] };
+type CalendarRequestState =
+  | { status: "idle" }
+  | { status: "loading"; generation: number; rangeKey: string }
+  | { status: "failed"; generation: number; rangeKey: string; message: string };
+type DateCoverage = "covered" | "loading" | "unavailable";
 
 export function useCalendarEvents(
   range: CalRange,
   deps: unknown[],
   onLogout: () => void,
+  options: { retainPrevious?: boolean } = {},
 ) {
   const [events, setEvents] = useState<CalEvent[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loadedSnapshot, setLoadedSnapshot] = useState<CalendarRangeSnapshot | null>(null);
+  const [priorSnapshot, setPriorSnapshot] = useState<CalendarRangeSnapshot | null>(null);
+  const [requestState, setRequestState] = useState<CalendarRequestState>({ status: "idle" });
+  const [retryNonce, setRetryNonce] = useState(0);
+  const forceRefreshRef = useRef(false);
+  const ownedControllerRef = useRef<AbortController | null>(null);
+  const requestGenerationRef = useRef(0);
   useEffect(() => {
     const key = rangeKey(range);
-    let cancelled = false;
-    let requestSeq = 0;
-    const cached = calCache.get(key);
+    const snapshotRange = range.from && range.to ? { from: range.from, to: range.to } : null;
+    let active = true;
+    const cached = readCalCache(key);
+    const forceRefresh = forceRefreshRef.current;
+    forceRefreshRef.current = false;
     setEvents(cached?.events ?? null);
     setErr(null);
+    if (cached && snapshotRange) {
+      setLoadedSnapshot({ range: snapshotRange, events: cached.events });
+      setRequestState({ status: "idle" });
+    }
 
     const refresh = () => {
-      const seq = ++requestSeq;
+      ownedControllerRef.current?.abort();
+      const controller = new AbortController();
+      ownedControllerRef.current = controller;
+      const generation = ++requestGenerationRef.current;
+      setRequestState({ status: "loading", generation, rangeKey: key });
       api
-        .calendarEvents(range)
+        .calendarEvents(range, controller.signal)
         .then((evs) => {
-          if (cancelled || seq !== requestSeq) return;
-          calCache.set(key, { events: evs, ts: Date.now() });
+          if (!active || ownedControllerRef.current !== controller || generation !== requestGenerationRef.current) return;
+          writeCalCache(key, { events: evs, ts: Date.now() });
           setEvents(evs);
+          if (snapshotRange) {
+            setLoadedSnapshot((current) => {
+              if (options.retainPrevious && current && rangeKey(current.range) !== key) setPriorSnapshot(current);
+              else setPriorSnapshot(null);
+              return { range: snapshotRange, events: evs };
+            });
+          }
           setErr(null);
+          setRequestState({ status: "idle" });
+          ownedControllerRef.current = null;
         })
         .catch((e) => {
-          if (cancelled || seq !== requestSeq) return;
-          if (e instanceof AuthError) onLogout();
-          else setErr((e as Error).message);
+          if (!active || ownedControllerRef.current !== controller || generation !== requestGenerationRef.current) return;
+          if ((e as Error).name === "AbortError") return;
+          if (e instanceof AuthError) {
+            ownedControllerRef.current = null;
+            setRequestState({ status: "idle" });
+            onLogout();
+          }
+          else {
+            const message = (e as Error).message;
+            setErr(message);
+            setRequestState({ status: "failed", generation, rangeKey: key, message });
+            ownedControllerRef.current = null;
+          }
         });
     };
 
     // Use cache if fresh; otherwise revalidate immediately.
-    if (!cached || Date.now() - cached.ts > CAL_FRESH_MS) refresh();
+    if (forceRefresh || !cached || Date.now() - cached.ts > CAL_FRESH_MS) refresh();
 
     const iv = setInterval(() => {
       if (document.visibilityState === "visible") refresh();
@@ -335,14 +401,20 @@ export function useCalendarEvents(
     document.addEventListener("visibilitychange", onFocus);
     window.addEventListener("focus", onFocus);
     return () => {
-      cancelled = true;
+      active = false;
+      ownedControllerRef.current?.abort();
+      ownedControllerRef.current = null;
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onFocus);
       window.removeEventListener("focus", onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return { events, err };
+  }, [...deps, retryNonce]);
+  return { events, err, loadedSnapshot, priorSnapshot, requestState, requestGeneration: requestGenerationRef.current,
+    retry: () => {
+      forceRefreshRef.current = true;
+      setRetryNonce((value) => value + 1);
+    } };
 }
 
 export function CalReauth({ err }: { err: string }) {
@@ -368,6 +440,7 @@ export function MonthGrid({
   refreshKey,
   dateAnchor,
   onDateAnchorChange,
+  interactionLocked,
 }: {
   onLogout: () => void;
   hiddenCals: Set<string>;
@@ -379,146 +452,586 @@ export function MonthGrid({
   refreshKey: number;
   dateAnchor: string;
   onDateAnchorChange: (dayKey: string) => void;
+  interactionLocked: boolean;
 }) {
-  const [cursor, setCursor] = useState(() => {
-    const d = new Date(`${dateAnchor}T00:00:00`);
-    return new Date(d.getFullYear(), d.getMonth(), 1);
-  });
-  const moveToMonth = useCallback(
-    (next: Date, nextAnchor?: string) => {
-      const first = new Date(next.getFullYear(), next.getMonth(), 1);
-      setCursor(first);
-      onDateAnchorChange(nextAnchor ?? dateKey(first));
-    },
-    [onDateAnchorChange],
-  );
-  const start = startOfWeek(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
-  const end = endOfWeek(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0));
-  const { events, err } = useCalendarEvents(
-    {
-      from: start.toISOString(),
-      to: new Date(`${addDays(dateKey(end), 1)}T00:00:00`).toISOString(),
-    },
-    [cursor.getTime(), refreshKey, onLogout],
-    onLogout,
-  );
-
-  const startMs = start.getTime();
-  const endMs = end.getTime();
+  const [windowStartKey, setWindowStartKey] = useState(() =>
+    dateKey(startOfWeek(new Date(`${addDays(dateAnchor, -42)}T00:00:00`))));
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(`${dateAnchor}T00:00:00`));
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  const [capacity, setCapacity] = useState(1);
+  const [measured, setMeasured] = useState(false);
+  const [alignmentGutter, setAlignmentGutter] = useState(0);
+  const [navigationToken, setNavigationToken] = useState(0);
+  const [navigationPhase, setNavigationPhase] = useState<"idle" | "rebase" | "align" | "settling" | "settled">("idle");
+  const [adjustmentGeneration, setAdjustmentGeneration] = useState(0);
+  const adjustmentRef = useRef<{
+    generation: number;
+    kind: "recycle" | "resize";
+    key: string;
+    top: number;
+    pitch: number;
+  } | null>(null);
+  const adjustmentGenerationRef = useRef(0);
+  const adjustmentRafRef = useRef<number | null>(null);
+  const correctingScrollRef = useRef(false);
+  const correctionTargetRef = useRef<number | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const stableAnchorRef = useRef<{ key: string; top: number; pitch: number } | null>(null);
+  const navigationRef = useRef<{
+    token: number;
+    target: string;
+    mode: "center" | "start";
+    phase: "rebase" | "align" | "settling" | "settled";
+  } | null>(null);
+  const navigationFrameRef = useRef<number | null>(null);
+  const navigationGenerationRef = useRef(0);
+  const capacityRef = useRef<{ element: HTMLDivElement; value: number; windowStart: string; layout: string } | null>(null);
+  const programmaticRef = useRef(true);
+  const markCorrectingScroll = useCallback(() => {
+    correctingScrollRef.current = true;
+    correctionTargetRef.current = null;
+  }, []);
+  const weeks = useMemo(() => Array.from({ length: VIRTUAL_WEEK_COUNT }, (_, i) =>
+    addDays(windowStartKey, i * 7)), [windowStartKey]);
+  const fetchRange = useMemo(() => ({
+    from: new Date(`${addDays(windowStartKey, -PREFETCH_WEEK_COUNT * 7)}T00:00:00`).toISOString(),
+    to: new Date(`${addDays(windowStartKey, (VIRTUAL_WEEK_COUNT + PREFETCH_WEEK_COUNT) * 7)}T00:00:00`).toISOString(),
+  }), [windowStartKey]);
+  const { events, err, loadedSnapshot, priorSnapshot, requestState, requestGeneration, retry } = useCalendarEvents(
+    fetchRange, [fetchRange.from, fetchRange.to, refreshKey, onLogout], onLogout, { retainPrevious: true });
+  const eventsBySnapshot = useMemo(() => {
+    const indexSnapshot = (snapshotEvents: readonly CalEvent[]) => {
+      const map = new Map<string, CalEvent[]>();
+      const unique = new Map<string, CalEvent>();
+      for (const event of snapshotEvents) unique.set(`${event.calendarId}|${event.id}`, event);
+      for (const event of unique.values()) {
+        if (hiddenCals.has(event.calendarId)) continue;
+        for (const key of occupiedDayKeys(event)) {
+          const bucket = map.get(key);
+          if (bucket) bucket.push(event);
+          else map.set(key, [event]);
+        }
+      }
+      return map;
+    };
+    return {
+      loaded: indexSnapshot(loadedSnapshot?.events ?? []),
+      prior: indexSnapshot(priorSnapshot?.events ?? []),
+      fallback: indexSnapshot(events ?? []),
+    };
+  }, [events, hiddenCals, loadedSnapshot, priorSnapshot]);
+  const snapshotCovers = useCallback((snapshot: CalendarRangeSnapshot | null, key: string) =>
+    Boolean(snapshot &&
+      key >= dateKey(new Date(snapshot.range.from)) &&
+      key < dateKey(new Date(snapshot.range.to))), []);
+  const eventsForDay = useCallback((key: string) => {
+    if (snapshotCovers(loadedSnapshot, key)) return eventsBySnapshot.loaded.get(key) ?? [];
+    if (snapshotCovers(priorSnapshot, key)) return eventsBySnapshot.prior.get(key) ?? [];
+    return eventsBySnapshot.fallback.get(key) ?? [];
+  }, [eventsBySnapshot, loadedSnapshot, priorSnapshot, snapshotCovers]);
+  /*
+   * A newer exact-range snapshot is authoritative for every date it covers:
+   * absence there means deletion, not permission to resurrect a prior event.
+   */
   const byDay = useMemo(() => {
     const map = new Map<string, CalEvent[]>();
-    for (const e of events ?? []) {
-      if (hiddenCals.has(e.calendarId)) continue;
-      // Multi-day events occupy every day they span, not just the start day.
-      for (const key of occupiedDayKeys(e)) {
-        const bucket = map.get(key);
-        if (bucket) bucket.push(e);
-        else map.set(key, [e]);
+    for (const week of weeks) {
+      for (let index = 0; index < 7; index += 1) {
+        const key = addDays(week, index);
+        const dayEvents = eventsForDay(key);
+        if (dayEvents.length > 0) map.set(key, dayEvents);
       }
     }
     return map;
-  }, [events, hiddenCals]);
-
-  const cells = useMemo(() => {
-    const out: Date[] = [];
-    for (const d = new Date(startMs); d.getTime() <= endMs; d.setDate(d.getDate() + 1)) {
-      out.push(new Date(d));
-    }
-    return out;
-  }, [startMs, endMs]);
+  }, [eventsForDay, weeks]);
   const todayKey = dateKey(new Date());
+  const coverage = useCallback((key: string): DateCoverage => {
+    if (snapshotCovers(loadedSnapshot, key) || snapshotCovers(priorSnapshot, key)) return "covered";
+    const inRequestedRange = key >= dateKey(new Date(fetchRange.from)) &&
+      key < dateKey(new Date(fetchRange.to));
+    const ownsCurrentRange = requestState.status !== "idle" &&
+      requestState.rangeKey === rangeKey(fetchRange);
+    return requestState.status === "failed" && ownsCurrentRange && inRequestedRange
+      ? "unavailable"
+      : "loading";
+  }, [fetchRange, loadedSnapshot, priorSnapshot, requestState, snapshotCovers]);
+  const setRegion = useCallback((element: HTMLDivElement | null) => setScrollElement(element), []);
+  const measure = useCallback((element: HTMLDivElement) => {
+    if (interactionLocked) return;
+    const cell = element.querySelector<HTMLElement>(".month-cell");
+    const head = element.querySelector<HTMLElement>(".month-cellhead");
+    if (!cell || !head) return;
+    const style = getComputedStyle(cell);
+    const rowHeight = Number.parseFloat(style.getPropertyValue("--month-event-row-height")) || 24;
+    const available = cell.clientHeight - Number.parseFloat(style.paddingTop) -
+      Number.parseFloat(style.paddingBottom) - head.offsetHeight;
+    const value = Math.max(1, Math.floor(available / (rowHeight + (Number.parseFloat(style.gap) || 0))));
+    const week = element.querySelector<HTMLElement>(".month-week");
+    setAlignmentGutter(Math.max(0, element.clientHeight - (week?.offsetHeight ?? 0)));
+    capacityRef.current = {
+      element,
+      value,
+      windowStart: windowStartKey,
+      layout: `${element.clientWidth}|${element.clientHeight}|${week?.offsetHeight ?? 0}|${rowHeight}`,
+    };
+    setCapacity(value);
+    setMeasured(true);
+  }, [interactionLocked, windowStartKey]);
+  useLayoutEffect(() => {
+    if (!scrollElement) return;
+    measure(scrollElement);
+    const observer = new ResizeObserver(() => {
+      if (interactionLocked) return;
+      const row = scrollElement.querySelector<HTMLElement>(".month-week");
+      const stable = stableAnchorRef.current;
+      if (row && stable && row.offsetHeight !== stable.pitch && !adjustmentRef.current) {
+        const generation = ++adjustmentGenerationRef.current;
+        setAdjustmentGeneration(generation);
+        adjustmentRef.current = { ...stable, generation, kind: "resize" };
+        if (adjustmentRafRef.current !== null) cancelAnimationFrame(adjustmentRafRef.current);
+        adjustmentRafRef.current = requestAnimationFrame(() => {
+          adjustmentRafRef.current = null;
+          const pending = adjustmentRef.current;
+          if (!pending || pending.generation !== generation || pending.kind !== "resize") return;
+          const retained = scrollElement.querySelector<HTMLElement>(`[data-week-start="${stable.key}"]`);
+          if (retained) {
+            markCorrectingScroll();
+            scrollElement.scrollTop += retained.getBoundingClientRect().top -
+              scrollElement.getBoundingClientRect().top - stable.top;
+            correctionTargetRef.current = scrollElement.scrollTop;
+          }
+          adjustmentRef.current = null;
+          if (retained) {
+            stableAnchorRef.current = {
+              key: stable.key,
+              top: retained.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top,
+              pitch: retained.offsetHeight,
+            };
+          }
+        });
+      }
+      measure(scrollElement);
+    });
+    observer.observe(scrollElement);
+    return () => observer.disconnect();
+  }, [scrollElement, measure, windowStartKey, interactionLocked, markCorrectingScroll]);
+  useLayoutEffect(() => {
+    const pending = adjustmentRef.current;
+    if (!pending || pending.kind !== "recycle" || !scrollElement) return;
+    const row = scrollElement.querySelector<HTMLElement>(`[data-week-start="${pending.key}"]`);
+    if (row) {
+      markCorrectingScroll();
+      scrollElement.scrollTop += row.getBoundingClientRect().top -
+        scrollElement.getBoundingClientRect().top - pending.top;
+      correctionTargetRef.current = scrollElement.scrollTop;
+    }
+    if (adjustmentRef.current?.generation === pending.generation) adjustmentRef.current = null;
+    if (row) {
+      stableAnchorRef.current = {
+        key: pending.key,
+        top: row.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top,
+        pitch: row.offsetHeight,
+      };
+    }
+  }, [markCorrectingScroll, scrollElement, windowStartKey]);
+  const align = useCallback((target: string, mode: "center" | "start") => {
+    const week = dateKey(startOfWeek(new Date(`${target}T00:00:00`)));
+    const row = scrollElement?.querySelector<HTMLElement>(`[data-week-start="${week}"]`);
+    if (!row || !scrollElement) return;
+    const regionRect = scrollElement.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const delta = mode === "center"
+      ? rowRect.top + rowRect.height / 2 - (regionRect.top + regionRect.height / 2)
+      : rowRect.top - regionRect.top;
+    scrollElement.scrollTop += delta;
+  }, [scrollElement]);
+  const navigate = useCallback((target: string, mode: "center" | "start") => {
+    programmaticRef.current = true;
+    const token = ++navigationGenerationRef.current;
+    const week = dateKey(startOfWeek(new Date(`${target}T00:00:00`)));
+    const needsRebase = !weeks.includes(week);
+    const desiredWindowStart = addDays(week, -42);
+    navigationRef.current = {
+      token,
+      target,
+      mode,
+      phase: needsRebase ? "rebase" : "align",
+    };
+    setNavigationPhase(needsRebase ? "rebase" : "align");
+    setNavigationToken(token);
+    setVisibleMonth(new Date(`${target}T00:00:00`));
+    onDateAnchorChange(target);
+    if (needsRebase) {
+      setMeasured(false);
+      setWindowStartKey(desiredWindowStart);
+    }
+  }, [onDateAnchorChange, weeks]);
+  useLayoutEffect(() => {
+    const navigation = navigationRef.current;
+    if (navigation) {
+      if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
+      const token = navigation.token;
+      navigation.phase = "align";
+      setNavigationPhase("align");
+      navigationFrameRef.current = requestAnimationFrame(() => {
+        if (navigationRef.current?.token !== token) return;
+        align(navigation.target, navigation.mode);
+        navigation.phase = "settling";
+        setNavigationPhase("settling");
+        let stableFrames = 0;
+        let previous = scrollElement?.scrollTop ?? 0;
+        const settle = () => {
+          navigationFrameRef.current = requestAnimationFrame(() => {
+            const current = navigationRef.current;
+            if (!current || current.token !== token || !scrollElement) return;
+            const next = scrollElement.scrollTop;
+            const targetWeek = dateKey(startOfWeek(new Date(`${current.target}T00:00:00`)));
+            const targetRow = scrollElement.querySelector<HTMLElement>(
+              `[data-week-start="${targetWeek}"]`,
+            );
+            const regionRect = scrollElement.getBoundingClientRect();
+            const rowRect = targetRow?.getBoundingClientRect();
+            const alignmentError = rowRect
+              ? current.mode === "center"
+                ? Math.abs(rowRect.top + rowRect.height / 2 - (regionRect.top + regionRect.height / 2))
+                : Math.abs(rowRect.top - regionRect.top)
+              : Number.POSITIVE_INFINITY;
+            stableFrames = Math.abs(next - previous) <= 1 && alignmentError <= 1
+              ? stableFrames + 1
+              : 0;
+            previous = next;
+            if (stableFrames >= 2) {
+              current.phase = "settled";
+              setNavigationPhase("settled");
+              if (targetRow) {
+                stableAnchorRef.current = {
+                  key: targetWeek,
+                  top: targetRow.getBoundingClientRect().top - regionRect.top,
+                  pitch: targetRow.offsetHeight,
+                };
+              }
+              navigationFrameRef.current = null;
+              return;
+            }
+            settle();
+          });
+        };
+        settle();
+      });
+    } else if (programmaticRef.current) align(dateAnchor, "center");
+    return () => {
+      if (navigationFrameRef.current !== null) {
+        cancelAnimationFrame(navigationFrameRef.current);
+        navigationFrameRef.current = null;
+      }
+    };
+  }, [align, dateAnchor, navigationToken, scrollElement, windowStartKey]);
+  const releaseProgrammaticNavigation = useCallback(() => {
+    programmaticRef.current = false;
+    navigationRef.current = null;
+    correctingScrollRef.current = false;
+    correctionTargetRef.current = null;
+    setNavigationPhase("idle");
+    if (navigationFrameRef.current !== null) {
+      cancelAnimationFrame(navigationFrameRef.current);
+      navigationFrameRef.current = null;
+    }
+  }, []);
+  const onScroll = useCallback(() => {
+    if (!scrollElement) return;
+    if (correctingScrollRef.current) {
+      const target = correctionTargetRef.current;
+      if (target === null || Math.abs(scrollElement.scrollTop - target) <= 1) return;
+      correctingScrollRef.current = false;
+      correctionTargetRef.current = null;
+    }
+    if (interactionLocked ||
+      adjustmentRef.current || navigationRef.current || scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      if (interactionLocked || adjustmentRef.current || navigationRef.current) return;
+      const rows = [...scrollElement.querySelectorAll<HTMLElement>(".month-week")];
+      const rect = scrollElement.getBoundingClientRect();
+      const firstVisible = rows.find((row) => row.getBoundingClientRect().bottom > rect.top);
+      if (!firstVisible) return;
+      const stableRow = rows.find((row) => {
+        const box = row.getBoundingClientRect();
+        return box.top >= rect.top && box.bottom <= rect.bottom;
+      }) ?? firstVisible;
+      stableAnchorRef.current = {
+        key: stableRow.dataset.weekStart!,
+        top: stableRow.getBoundingClientRect().top - rect.top,
+        pitch: stableRow.offsetHeight,
+      };
+      if (!programmaticRef.current) {
+        const visibleCells = [...scrollElement.querySelectorAll<HTMLElement>(".month-cell")]
+          .filter((cell) => {
+            const box = cell.getBoundingClientRect();
+            return box.bottom > rect.top && box.top < rect.bottom;
+          });
+        const viewportCenter = {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+        };
+        const anchorCell = visibleCells.reduce<HTMLElement | null>((best, cell) => {
+          if (!best) return cell;
+          const cellBox = cell.getBoundingClientRect();
+          const bestBox = best.getBoundingClientRect();
+          const cellDistance =
+            Math.abs(cellBox.left + cellBox.width / 2 - viewportCenter.x) +
+            Math.abs(cellBox.top + cellBox.height / 2 - viewportCenter.y);
+          const bestDistance =
+            Math.abs(bestBox.left + bestBox.width / 2 - viewportCenter.x) +
+            Math.abs(bestBox.top + bestBox.height / 2 - viewportCenter.y);
+          return cellDistance < bestDistance ? cell : best;
+        }, null);
+        const centerMonth = anchorCell?.dataset.date?.slice(0, 7);
+        const monthAreas = new Map<string, number>();
+        for (const cell of visibleCells) {
+          const box = cell.getBoundingClientRect();
+          const month = cell.dataset.date!.slice(0, 7);
+          const height = Math.max(0, Math.min(box.bottom, rect.bottom) - Math.max(box.top, rect.top));
+          monthAreas.set(month, (monthAreas.get(month) ?? 0) + height * box.width);
+        }
+        const dominantMonth = [...monthAreas].sort((left, right) => {
+          const areaDifference = right[1] - left[1];
+          if (Math.abs(areaDifference) > 0.5) return areaDifference;
+          if (left[0] === centerMonth) return -1;
+          if (right[0] === centerMonth) return 1;
+          return left[0].localeCompare(right[0]);
+        })[0]?.[0];
+        if (dominantMonth) setVisibleMonth(new Date(`${dominantMonth}-01T00:00:00`));
+        if (anchorCell?.dataset.date) onDateAnchorChange(anchorCell.dataset.date);
+      }
+      const rowHeight = rows[0].getBoundingClientRect().height;
+      const edgeThreshold = rowHeight * EDGE_THRESHOLD_WEEKS;
+      const firstRect = rows[0].getBoundingClientRect();
+      const lastRect = rows[rows.length - 1].getBoundingClientRect();
+      const direction = firstRect.top >= rect.top - edgeThreshold
+        ? -1
+        : lastRect.bottom <= rect.bottom + edgeThreshold
+          ? 1
+          : 0;
+      if (!direction || programmaticRef.current) return;
+      const retained = rows[
+        direction > 0
+          ? RECYCLE_WEEK_COUNT
+          : VIRTUAL_WEEK_COUNT - RECYCLE_WEEK_COUNT - 1
+      ];
+      const retainedRect = retained.getBoundingClientRect();
+      const adjustmentGeneration = ++adjustmentGenerationRef.current;
+      setAdjustmentGeneration(adjustmentGeneration);
+      adjustmentRef.current = {
+        generation: adjustmentGeneration,
+        kind: "recycle",
+        key: retained.dataset.weekStart!,
+        top: retainedRect.top - rect.top,
+        pitch: retained.offsetHeight,
+      };
+      const removed = rows.slice(direction > 0 ? 0 : VIRTUAL_WEEK_COUNT - RECYCLE_WEEK_COUNT,
+        direction > 0 ? RECYCLE_WEEK_COUNT : VIRTUAL_WEEK_COUNT);
+      if (removed.some((row) => row.contains(document.activeElement))) scrollElement.focus();
+      setMeasured(false);
+      const cachedCapacity = capacityRef.current;
+      const currentWeek = rows[0];
+      const currentCell = scrollElement.querySelector<HTMLElement>(".month-cell");
+      const currentRowHeight = currentCell
+        ? Number.parseFloat(getComputedStyle(currentCell).getPropertyValue("--month-event-row-height")) || 24
+        : 24;
+      const currentLayout = `${scrollElement.clientWidth}|${scrollElement.clientHeight}|${currentWeek?.offsetHeight ?? 0}|${currentRowHeight}`;
+      if (cachedCapacity?.element === scrollElement && cachedCapacity.layout === currentLayout) {
+        setCapacity(cachedCapacity.value);
+      }
+      setWindowStartKey((current) => addDays(current, direction * RECYCLE_WEEK_COUNT * 7));
+    });
+  }, [interactionLocked, onDateAnchorChange, scrollElement]);
+  useEffect(() => () => {
+    if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    if (adjustmentRafRef.current !== null) cancelAnimationFrame(adjustmentRafRef.current);
+    if (navigationFrameRef.current !== null) cancelAnimationFrame(navigationFrameRef.current);
+  }, []);
+  useLayoutEffect(() => {
+    if (!interactionLocked) return;
+    navigationRef.current = null;
+    setNavigationPhase("idle");
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = null;
+    }
+    if (navigationFrameRef.current !== null) {
+      cancelAnimationFrame(navigationFrameRef.current);
+      navigationFrameRef.current = null;
+    }
+    if (adjustmentRafRef.current !== null) {
+      cancelAnimationFrame(adjustmentRafRef.current);
+      adjustmentRafRef.current = null;
+    }
+    correctingScrollRef.current = false;
+    correctionTargetRef.current = null;
+    adjustmentRef.current = null;
+  }, [interactionLocked]);
+  const hasVisibleCoverage = weeks.some((week) =>
+    Array.from({ length: 7 }, (_, index) => coverage(addDays(week, index))).includes("covered"));
+  const capacityMeasurement = capacityRef.current;
+  const currentCell = scrollElement?.querySelector<HTMLElement>(".month-cell") ?? null;
+  const currentWeek = scrollElement?.querySelector<HTMLElement>(".month-week") ?? null;
+  const currentRowHeight = currentCell
+    ? Number.parseFloat(getComputedStyle(currentCell).getPropertyValue("--month-event-row-height")) || 24
+    : 0;
+  const currentLayout = scrollElement
+    ? `${scrollElement.clientWidth}|${scrollElement.clientHeight}|${currentWeek?.offsetHeight ?? 0}|${currentRowHeight}`
+    : "";
+  const capacityReady = Boolean(
+    measured &&
+    capacityMeasurement?.element === scrollElement &&
+    capacityMeasurement?.windowStart === windowStartKey &&
+    capacityMeasurement?.layout === currentLayout,
+  );
+  const capacitySource = capacityReady
+    ? "measured"
+    : capacityMeasurement?.element === scrollElement && capacityMeasurement?.layout === currentLayout
+      ? "carried"
+      : "fallback";
+  const renderCapacity = capacitySource === "fallback" ? 1 : capacity;
 
   return (
-    <>
+    <section className={`month-continuous${interactionLocked ? " month-interaction-locked" : ""}`}
+      data-window-start={windowStartKey}
+      data-week-count={VIRTUAL_WEEK_COUNT}
+      data-cache-size={calCache.size}
+      data-cache-order={[...calCache.keys()].join(",")}
+      data-request-state={requestState.status}
+      data-request-generation={requestGeneration}
+      data-navigation-phase={navigationPhase}
+      data-adjustment-generation={adjustmentGeneration}
+      data-loaded-range={loadedSnapshot ? rangeKey(loadedSnapshot.range) : ""}
+      data-prior-range={priorSnapshot ? rangeKey(priorSnapshot.range) : ""}
+      data-event-row-capacity={renderCapacity}
+      data-event-capacity-measured={capacityReady}
+      data-event-capacity-source={capacitySource}>
       <div className="cal-monthnav" aria-label="월 탐색">
         <div className="cal-monthnav-group">
           <button
             className="btn cal-navbtn"
             aria-label="이전 달"
-            onClick={() => moveToMonth(addMonths(cursor, -1))}
+            onClick={() => {
+              const month = addMonths(visibleMonth, -1);
+              navigate(dateKey(new Date(month.getFullYear(), month.getMonth(), 1)), "start");
+            }}
           >
             ‹
           </button>
           <button
             className="btn cal-navbtn"
             aria-label="다음 달"
-            onClick={() => moveToMonth(addMonths(cursor, 1))}
+            onClick={() => {
+              const month = addMonths(visibleMonth, 1);
+              navigate(dateKey(new Date(month.getFullYear(), month.getMonth(), 1)), "start");
+            }}
           >
             ›
           </button>
         </div>
         <strong aria-live="polite">
-          {cursor.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
+          {visibleMonth.toLocaleDateString("ko-KR", { year: "numeric", month: "long" })}
         </strong>
         <button
           className="btn cal-today"
           onClick={() => {
-            const d = new Date();
-            moveToMonth(d, dateKey(d));
+            navigate(todayKey, "center");
           }}
         >
           오늘
         </button>
       </div>
-      {err && events && (
+      {err && (
         <div className="cal-refresh-warning" role="status">
-          최신 일정을 가져오지 못해 저장된 일정을 표시합니다. {err}
+          {hasVisibleCoverage
+            ? "최신 일정을 가져오지 못해 저장된 일정을 표시합니다. "
+            : "일정을 불러오지 못했습니다. "}
+          {err}
+          <button type="button" onClick={retry}>다시 시도</button>
         </div>
       )}
-      {err && !events ? (
-        <CalReauth err={err} />
-      ) : !events ? (
-        <div className="empty">불러오는 중…</div>
-      ) : (
-        <div className={`month-grid weeks-${cells.length / 7}`}>
-          {["일", "월", "화", "수", "목", "금", "토"].map((w, i) => (
-            <div
-              key={w}
-              className={`month-dow${i === 0 ? " sun" : i === 6 ? " sat" : ""}`}
-            >
-              {w}
-            </div>
-          ))}
-          {cells.map((d) => {
-            const key = dateKey(d);
+      <div className="month-dow-row">
+        {["일", "월", "화", "수", "목", "금", "토"].map((w, i) => (
+          <div key={w} className={`month-dow${i === 0 ? " sun" : i === 6 ? " sat" : ""}`}>{w}</div>
+        ))}
+      </div>
+      <div
+          ref={setRegion}
+          className="month-virtual-scroll"
+          role="region"
+          aria-label="연속 월간 캘린더"
+          tabIndex={0}
+          aria-busy={requestState.status === "loading"}
+          onScroll={onScroll}
+          onWheel={releaseProgrammaticNavigation}
+          onTouchStart={releaseProgrammaticNavigation}
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) releaseProgrammaticNavigation();
+          }}
+          onKeyDown={(event) => {
+            if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+              releaseProgrammaticNavigation();
+            }
+          }}
+        >
+        <div className="month-week-list">
+          {weeks.map((weekStart) => (
+            <div className="month-week" key={weekStart} data-week-start={weekStart}>
+              {Array.from({ length: 7 }, (_, index) => {
+                const key = addDays(weekStart, index);
+                const d = new Date(`${key}T00:00:00`);
             const evs = byDay.get(key) ?? [];
-            const other = d.getMonth() !== cursor.getMonth();
+            const other = d.getMonth() !== visibleMonth.getMonth();
             const dow = d.getDay();
+            const state = coverage(key);
+            const visibleEvents = evs.length > renderCapacity
+              ? evs.slice(0, Math.max(0, renderCapacity - 1))
+              : evs;
             return (
               <div
                 key={key}
                 data-date={key}
-                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${key === dateAnchor ? " selected" : ""}${dow === 0 ? " sun" : dow === 6 ? " sat" : ""}`}
+                data-coverage={state}
+                className={`month-cell${other ? " other" : ""}${key === todayKey ? " today" : ""}${key === dateAnchor ? " selected" : ""}${dow === 0 ? " sun" : dow === 6 ? " sat" : ""}${state === "unavailable" ? " unavailable" : ""}`}
               >
+                {onCreate && <button
+                  type="button"
+                  className="month-create-hitarea"
+                  tabIndex={key === dateAnchor ? 0 : -1}
+                  aria-label={`${d.toLocaleDateString("ko-KR")}에 일정 추가`}
+                  onClick={() => {
+                    onDateAnchorChange(key);
+                    onCreate(key);
+                  }}
+                  onKeyDown={(event) => {
+                    const move = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 :
+                      event.key === "ArrowUp" ? -7 : event.key === "ArrowDown" ? 7 : 0;
+                    if (!move) return;
+                    event.preventDefault();
+                    const target = addDays(key, move);
+                    if (!weeks.some((week) => target >= week && target <= addDays(week, 6))) return;
+                    onDateAnchorChange(target);
+                    requestAnimationFrame(() =>
+                      scrollElement?.querySelector<HTMLElement>(`.month-cell[data-date="${target}"] .month-create-hitarea`)?.focus());
+                  }}
+                />}
                 <div className="month-cellhead">
-                  {onCreate ? (
-                    <button
-                      type="button"
-                      className="month-daynum"
-                      aria-label={`${d.toLocaleDateString("ko-KR")}에 일정 추가`}
-                      aria-current={key === todayKey ? "date" : undefined}
-                      onClick={() => {
-                        onDateAnchorChange(key);
-                        onCreate(key);
-                      }}
-                    >
-                      {d.getDate()}
-                    </button>
-                  ) : (
-                    <span
-                      className="month-daynum"
-                      aria-current={key === todayKey ? "date" : undefined}
-                    >
-                      {d.getDate()}
-                    </span>
-                  )}
+                  <span
+                    className="month-daynum"
+                    aria-current={key === todayKey ? "date" : undefined}
+                  >
+                    {d.getDate()}
+                  </span>
                   {evs.length > 0 && (
                     <span className="month-count" title={`${evs.length}개 일정`}>
                       {evs.length}
                     </span>
                   )}
                 </div>
-                {evs.slice(0, 3).map((e) => {
+                {state === "loading" && evs.length === 0 ? <span className="month-loading" aria-hidden="true" /> : visibleEvents.map((e) => {
                   const displayColor = getEventDisplayColor(
                     e,
                     calendars,
@@ -534,7 +1047,7 @@ export function MonthGrid({
                       title={`${timeLabel} ${e.summary} · ${e.calendarSummary}`}
                       aria-label={`${timeLabel}, ${e.summary}, ${e.calendarSummary}`}
                       style={{
-                        // 셀 바탕(--panel)에 섞는다 — 다크에서는 어두운 틴트가 된다
+                        // 셀 바탕(--panel)에 섮는다 — 다크에서는 어두운 틴트가 된다
                         background: `color-mix(in srgb, ${displayColor} 22%, var(--panel))`,
                         borderLeft: `4px solid ${displayColor}`,
                       }}
@@ -546,22 +1059,25 @@ export function MonthGrid({
                     </button>
                   );
                 })}
-                {evs.length > 3 && (
+                {evs.length > renderCapacity && (
                   <button
                     type="button"
                     className="month-more"
-                    aria-label={`${formatDayHeader(key)} 일정 ${evs.length - 3}개 더보기`}
+                    aria-label={`${formatDayHeader(key)} 일정 ${evs.length - visibleEvents.length}개 더보기`}
                     onClick={() => onDay(key, evs)}
                   >
-                    +{evs.length - 3}개 더보기
+                    +{evs.length - visibleEvents.length}개 더보기
                   </button>
                 )}
               </div>
             );
-          })}
+              })}
+            </div>
+          ))}
         </div>
-      )}
-    </>
+        <div className="month-alignment-gutter" aria-hidden="true" style={{ height: alignmentGutter }} />
+      </div>
+    </section>
   );
 }
 

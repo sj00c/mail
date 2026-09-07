@@ -75,42 +75,61 @@ if [ "$PORT_VALUE" != "8787" ]; then
 fi
 
 # 포트를 누가 쓰고 있는지. 우리 자동 실행 항목은 아래에서 종료하므로, 그 뒤에도 남아 있으면
-# 다른 프로그램(또는 터미널에서 직접 띄운 이전 Mail 서버)이다. 그 상태로 등록하면
-# 서버가 계속 죽었다 살아나며 "열리지 않았습니다"로만 보이므로 여기서 이름을 짚어 준다.
+# 다른 프로그램이 사용하는 것이다. 그 상태로 등록하면 서버가 계속 죽었다 살아나므로
+# 여기서 점유 프로세스를 알려 주되, 프로세스 이름만으로 앱을 추측하거나 종료하지 않는다.
 port_listener() {
-  /usr/sbin/lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN -Fpc 2>/dev/null | awk '
+  local listeners status
+  if listeners="$(/usr/sbin/lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN -Fpc 2>&1)"; then
+    printf '%s\n' "$listeners" | awk '
     /^p/ { pid = substr($0, 2) }
     /^c/ { print substr($0, 2) " (PID " pid ")"; exit }'
+  else
+    status=$?
+    # lsof returns 1 with no output for a free port; that is not an install error.
+    if [ "$status" -eq 1 ] && [ -z "$listeners" ]; then return 0; fi
+    fail "포트 점유 상태를 확인하지 못했습니다 (종료 코드 $status): $listeners"
+  fi
 }
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:/usr/bin:/bin:$PATH"
 
 echo "[1/4] 실행 프로그램 확인"
 if ! command -v bun >/dev/null 2>&1; then
-  echo "Bun이 없어 공식 설치 프로그램으로 설치합니다."
+  PACKAGE_MANAGER="$(/usr/bin/plutil -extract packageManager raw -o - "$DIR/package.json")" ||
+    fail "package.json의 packageManager를 읽지 못했습니다."
+  [[ "$PACKAGE_MANAGER" =~ ^bun@([0-9]+\.[0-9]+\.[0-9]+)$ ]] ||
+    fail "packageManager에는 bun@버전 형식의 고정 버전이 필요합니다."
+  BUN_VERSION="${BASH_REMATCH[1]}"
+  echo "Bun $BUN_VERSION을 공식 설치 프로그램으로 설치합니다."
   command -v curl >/dev/null 2>&1 || fail "Bun 설치에 필요한 curl을 찾을 수 없습니다."
-  curl -fsSL https://bun.com/install | bash
+  curl -fsSL https://bun.com/install | bash -s -- "bun-v$BUN_VERSION"
   export PATH="$HOME/.bun/bin:$PATH"
 fi
-command -v bun >/dev/null 2>&1 || fail "Bun 설치 후에도 실행 파일을 찾지 못했습니다. 터미널을 다시 연 뒤 재실행하세요."
+BUN="$(command -v bun)" || fail "Bun 설치 후에도 실행 파일을 찾지 못했습니다. 터미널을 다시 연 뒤 재실행하세요."
+BUN_DIR="$(cd "$(dirname "$BUN")" && pwd -P)" || fail "Bun 실행 파일 경로를 확인하지 못했습니다: $BUN"
+BUN="$BUN_DIR/$(basename "$BUN")"
+[ -x "$BUN" ] || fail "Bun 실행 파일을 찾을 수 없거나 실행할 수 없습니다: $BUN"
+echo "Bun 실행 파일: $BUN"
 
 echo "[2/4] 앱에 필요한 파일 설치"
 (
   cd "$DIR"
-  bun install --frozen-lockfile
+  "$BUN" install --frozen-lockfile
 )
 
 echo "[3/4] 앱 빌드"
 (
   cd "$DIR"
-  bun run build
+  "$BUN" run build
 )
+[ -f "$DIR/dist/index.html" ] || fail "빌드 결과 dist/index.html이 없습니다."
 
 echo "[4/4] 로그인 시 자동 실행 등록"
 chmod +x "$RUN"
 mkdir -p "$HOME/Library/LaunchAgents" "$(dirname "$LOG")"
 cp "$DIR/deploy/$LABEL.plist" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $RUN" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :ProgramArguments:1 $BUN" "$PLIST"
 /usr/bin/plutil -replace WorkingDirectory -string "$DIR" "$PLIST"
 /usr/bin/plutil -replace StandardOutPath -string "$LOG" "$PLIST"
 /usr/bin/plutil -replace StandardErrorPath -string "$LOG" "$PLIST"
@@ -129,8 +148,8 @@ fi
 OCCUPANT="$(port_listener)"
 if [ -n "$OCCUPANT" ]; then
   fail "$PORT_VALUE 포트를 다른 프로그램이 쓰고 있습니다: $OCCUPANT
-  - 이름이 bun이면 이전에 직접 켠 Mail 서버입니다. 그 터미널 창을 닫거나 kill <PID> 로 끝내고 다시 실행하세요.
-  - 다른 프로그램이라면 .env의 PORT를 비어 있는 번호(예: 8788)로 바꾸고, OAUTH_REDIRECT도
+  - 해당 프로그램을 확인하거나 종료한 뒤 다시 실행하세요. 프로세스 이름만으로 Mail이라고 판단하지 않습니다.
+  - 종료할 수 없는 다른 프로그램이라면 .env의 PORT를 비어 있는 번호(예: 8788)로 바꾸고, OAUTH_REDIRECT도
     http://localhost:그번호/auth/callback 으로 바꾼 뒤 같은 주소를 Google Cloud 콘솔의
     승인된 리디렉션 URI에 추가하고 다시 실행하세요."
 fi

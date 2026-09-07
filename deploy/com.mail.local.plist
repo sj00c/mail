@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- 경로(__RUN__/__DIR__/__LOG__)는 deploy/install.sh 가 설치 시점에 치환한다. -->
+<!-- 경로(__RUN__/__BUN__/__DIR__/__LOG__)는 deploy/install.sh가 설치 시점에 치환한다. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -9,6 +9,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>__RUN__</string>
+    <string>__BUN__</string>
   </array>
 
   <key>WorkingDirectory</key>

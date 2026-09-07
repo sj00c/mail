@@ -4,14 +4,26 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   test: {
-    environment: "jsdom",
-    setupFiles: ["./web/src/test/setup.ts"],
-    environmentOptions: {
-      jsdom: {
-        url: "http://localhost/",
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "server",
+          environment: "node",
+          include: ["server/**/*.test.ts"],
+        },
       },
-    },
-    include: ["web/src/**/*.test.{ts,tsx}", "server/**/*.test.ts"],
+      {
+        extends: true,
+        test: {
+          name: "web",
+          environment: "jsdom",
+          setupFiles: ["./web/src/test/setup.ts"],
+          environmentOptions: { jsdom: { url: "http://localhost/" } },
+          include: ["web/src/**/*.test.{ts,tsx}"],
+        },
+      },
+    ],
     clearMocks: true,
     restoreMocks: true,
   },

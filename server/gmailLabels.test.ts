@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { listLabelsWithTransport } from "./gmail.ts";
 
 describe("listLabelsWithTransport", () => {
-  it("bounds unread-count requests to five concurrent calls and preserves order", async () => {
+  it("bounds label-count requests to five concurrent calls and preserves order", async () => {
     const labels = Array.from({ length: 12 }, (_, index) => ({
       id: `label-${index}`,
       name: `Label ${index}`,
@@ -15,12 +15,16 @@ describe("listLabelsWithTransport", () => {
       peak = Math.max(peak, active);
       await Promise.resolve();
       active--;
-      return Number(id.slice("label-".length));
+      const count = Number(id.slice("label-".length));
+      return { unread: count, total: count * 10 };
     });
 
     expect(peak).toBeLessThanOrEqual(5);
     expect(result.map((label) => label.id)).toEqual(labels.map((label) => label.id));
     expect(result.map((label) => label.unread)).toEqual(Array.from({ length: 12 }, (_, i) => i));
+    expect(result.map((label) => label.total)).toEqual(
+      Array.from({ length: 12 }, (_, i) => i * 10),
+    );
   });
 
   it("ignores only missing labels and propagates quota failures", async () => {
@@ -29,7 +33,9 @@ describe("listLabelsWithTransport", () => {
       async () => {
         throw Object.assign(new Error("gone"), { status: 404 });
       },
-    )).resolves.toEqual([{ id: "gone", name: "Gone", type: "user", unread: 0 }]);
+    )).resolves.toEqual([
+      { id: "gone", name: "Gone", type: "user", unread: 0, total: 0 },
+    ]);
 
     await expect(listLabelsWithTransport(
       [{ id: "limited", name: "Limited", type: "user" }],

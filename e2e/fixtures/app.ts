@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import type { Label, MailProfile } from "../../web/src/api.ts";
 
 export const primaryCalendar = {
   id: "primary",
@@ -21,7 +22,8 @@ export const secondaryCalendar = {
 export async function installAppMocks(
   page: Page,
   options: {
-    labels?: { id: string; name: string; type: string; unread: number }[];
+    labels?: Label[];
+    profile?: MailProfile;
     messages?: unknown[];
   } = {},
 ) {
@@ -40,12 +42,16 @@ export async function installAppMocks(
     calls.push({ method: request.method(), path: url.pathname, body });
     const json = (body: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
 
-    if (url.pathname === "/api/profile") return json({ email: "test@example.com" });
+    if (url.pathname === "/api/profile") return json(options.profile ?? {
+      email: "test@example.com",
+      historyId: "1",
+      messagesTotal: (options.messages ?? []).length,
+    });
     if (url.pathname === "/api/labels") {
       return json(
         options.labels ?? [
-          { id: "INBOX", name: "받은편지함", type: "system", unread: 0 },
-          { id: "STARRED", name: "별표편지함", type: "system", unread: 0 },
+          { id: "INBOX", name: "받은편지함", type: "system", unread: 0, total: 0 },
+          { id: "STARRED", name: "별표편지함", type: "system", unread: 0, total: 0 },
         ],
       );
     }

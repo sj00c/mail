@@ -436,13 +436,14 @@ const DISPLAYED_SYSTEM = new Set([
 
 export async function listLabelsWithTransport(
   labels: Array<{ id?: string | null; name?: string | null; type?: string | null }>,
-  getUnread: (id: string) => Promise<number>,
-): Promise<{ id: string; name: string; type: string; unread: number }[]> {
+  getCounts: (id: string) => Promise<{ unread: number; total: number }>,
+): Promise<{ id: string; name: string; type: string; unread: number; total: number }[]> {
   const result = labels.map((label) => ({
     id: label.id ?? "",
     name: label.name ?? "",
     type: label.type ?? "user",
     unread: 0,
+    total: 0,
   }));
   const pending = result
     .map((label, index) => ({ label, index }))
@@ -452,7 +453,7 @@ export async function listLabelsWithTransport(
     while (next < pending.length) {
       const item = pending[next++];
       try {
-        result[item.index] = { ...item.label, unread: await getUnread(item.label.id) };
+        result[item.index] = { ...item.label, ...await getCounts(item.label.id) };
       } catch (error) {
         if (httpStatusOf(error) !== 404) throw error;
       }
@@ -463,7 +464,7 @@ export async function listLabelsWithTransport(
 }
 
 export async function listLabels(): Promise<
-  { id: string; name: string; type: string; unread: number }[]
+  { id: string; name: string; type: string; unread: number; total: number }[]
 > {
   const g = await api();
   const res = await g.users.labels.list({ userId: "me" });
@@ -473,9 +474,12 @@ export async function listLabels(): Promise<
       const detail = await g.users.labels.get({
         userId: "me",
         id,
-        fields: "messagesUnread",
+        fields: "messagesUnread,messagesTotal",
       });
-      return detail.data.messagesUnread ?? 0;
+      return {
+        unread: detail.data.messagesUnread ?? 0,
+        total: detail.data.messagesTotal ?? 0,
+      };
     },
   );
 }
@@ -940,6 +944,17 @@ export async function batchModifyMessages(
 ): Promise<void> {
   if (ids.length === 0) return;
   const g = await api();
+  if (ids.length === 1) {
+    await g.users.messages.modify({
+      userId: "me",
+      id: ids[0],
+      requestBody: {
+        addLabelIds: changes.add,
+        removeLabelIds: changes.remove,
+      },
+    });
+    return;
+  }
   await g.users.messages.batchModify({
     userId: "me",
     requestBody: {
@@ -1070,8 +1085,16 @@ export async function confirmBulkAllMessages(
   return { matched: op.ids.length, succeeded, failed };
 }
 
-export async function getProfile(): Promise<{ email: string }> {
+export async function getProfile(): Promise<{
+  email: string;
+  historyId: string;
+  messagesTotal: number;
+}> {
   const g = await api();
   const res = await g.users.getProfile({ userId: "me" });
-  return { email: res.data.emailAddress ?? "" };
+  return {
+    email: res.data.emailAddress ?? "",
+    historyId: res.data.historyId ?? "",
+    messagesTotal: res.data.messagesTotal ?? 0,
+  };
 }

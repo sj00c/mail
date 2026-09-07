@@ -249,22 +249,41 @@ export function Reader({
           </button>
           <button
             className="btn"
+            title="이 대화의 모든 메시지를 최신순으로 묶어 전달"
             onClick={() =>
               guard(async () => {
-                // Forward carries everything: file attachments AND inline cid:
-                // images (re-related on send) so the original renders intact.
-                const attachments = await Promise.all(
-                  msg.attachments.map((a) => downloadAttachment(msg.id, a)),
+                // The thread endpoint is oldest-first. Copy before reversing so
+                // forwarding can never mutate the rendered/stateful array.
+                const loadedThread = thread;
+                if (!loadedThread) return;
+                const source = [...loadedThread].reverse();
+                // Content-IDs are scoped to one source message. Namespace and
+                // rewrite each message before combining, or equal CIDs from two
+                // replies can display the wrong inline image.
+                const forwarded = await Promise.all(
+                  source.map(async (tm, index) => {
+                    const downloaded = await Promise.all(
+                      tm.attachments.map((a) => downloadAttachment(tm.id, a)),
+                    );
+                    const cidMap = new Map<string, string>();
+                    const attachments = downloaded.map((a) => {
+                      if (!a.contentId) return a;
+                      const next = `fwd-${index}-${crypto.randomUUID()}@mail.local`;
+                      cidMap.set(a.contentId, next);
+                      return { ...a, contentId: next };
+                    });
+                    return {
+                      message: tm,
+                      bodyHtml: rewriteCidRefs(directMessageHtml(tm), cidMap),
+                      attachments,
+                    };
+                  }),
                 );
                 onReply({
                   subject: fwdSubject(msg.subject),
                   forward: true,
-                  quoteHtml: directMessageHtml(msg),
-                  quoteFrom: msg.from,
-                  quoteDate: msg.date,
-                  quoteTo: msg.to,
-                  quoteSubject: msg.subject,
-                  attachments,
+                  quoteHtml: threadQuoteHtml(forwarded),
+                  attachments: forwarded.flatMap((f) => f.attachments),
                 });
               })
             }
@@ -278,47 +297,6 @@ export function Reader({
           >
             <CalendarIcon />일정
           </button>
-          {thread && thread.length > 1 && (
-            <button
-              className="btn"
-              title="이 대화의 모든 메시지를 시간순으로 묶어 전달"
-              onClick={() =>
-                guard(async () => {
-                  // Content-IDs are scoped to one source message. Namespace and
-                  // rewrite each message before combining, or equal CIDs from two
-                  // replies can display the wrong inline image.
-                  const forwarded = await Promise.all(
-                    thread.map(async (tm, index) => {
-                      const downloaded = await Promise.all(
-                        tm.attachments.map((a) => downloadAttachment(tm.id, a)),
-                      );
-                      const cidMap = new Map<string, string>();
-                      const attachments = downloaded.map((a) => {
-                        if (!a.contentId) return a;
-                        const next = `fwd-${index}-${crypto.randomUUID()}@mail.local`;
-                        cidMap.set(a.contentId, next);
-                        return { ...a, contentId: next };
-                      });
-                      return {
-                        message: tm,
-                        bodyHtml: rewriteCidRefs(directMessageHtml(tm), cidMap),
-                        attachments,
-                      };
-                    }),
-                  );
-                  onReply({
-                    subject: fwdSubject(msg.subject),
-                    forwardThread: true,
-                    quoteHtml: threadQuoteHtml(forwarded),
-                    quoteSubject: msg.subject,
-                    attachments: forwarded.flatMap((f) => f.attachments),
-                  });
-                })
-              }
-            >
-              ↪↪ 전체 전달
-            </button>
-          )}
           <button
             className="btn"
             onClick={() =>
@@ -475,6 +453,8 @@ export function Reader({
 
 // 전체 전달: 각 메일의 직접 작성한 본문만 독립 카드로 조립한다.
 // 각 메일에 내장된 과거 인용까지 다시 합치면 같은 대화가 N번씩 중첩된다.
+// 카드는 평면으로 유지하고 각 카드에 같은 왼쪽 들여쓰기만 적용해, 전달을
+// 거듭해도 인용이 기하급수적으로 좁아지지 않게 한다.
 export function threadQuoteHtml(
   msgs: { message: MessageFull; bodyHtml: string }[],
 ): string {
@@ -489,7 +469,7 @@ export function threadQuoteHtml(
         const when = DATETIME_FMT.format(new Date(m.date));
         const body = bodyHtml;
         return (
-          `<section style="border:1px solid #dfe3eb;border-radius:10px;overflow:hidden;margin:0 0 12px;background:#fff">` +
+          `<section style="border:1px solid #dfe3eb;border-left:3px solid #aeb8ca;border-radius:10px;overflow:hidden;margin:0 0 12px 16px;background:#fff">` +
           `<div style="background:#f6f8fb;border-bottom:1px solid #e3e7ee;padding:10px 12px;font-size:12.5px;line-height:1.65;color:#5f6368">` +
           `<div style="font-weight:700;color:#202124">${index + 1}. ${esc(addr.name || addr.email)} &lt;${esc(addr.email)}&gt;</div>` +
           `<div>${esc(when)}</div>` +

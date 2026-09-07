@@ -16,6 +16,8 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
   const queryRef = useRef(query);
   const nextTokenRef = useRef(nextToken);
   const loadSeq = useRef(0);
+  const appendInFlight = useRef(new Map<string, number>());
+  const resetInFlight = useRef<number | null>(null);
 
   messagesRef.current = messages;
   labelRef.current = activeLabel;
@@ -26,25 +28,43 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
 
   const load = useCallback(
     (reset: boolean) => {
+      const label = labelRef.current;
+      const query = queryRef.current;
+      const pageToken = reset ? undefined : nextTokenRef.current;
+      if (!reset && resetInFlight.current !== null) return;
+      if (!reset && pageToken === undefined) return;
+      const appendKey = reset ? null : `${label}\u0000${query}\u0000${pageToken}`;
+      if (appendKey !== null && appendInFlight.current.has(appendKey)) return;
+
       const seq = ++loadSeq.current;
+      if (reset) {
+        resetInFlight.current = seq;
+        appendInFlight.current.clear();
+      } else {
+        appendInFlight.current.set(appendKey!, seq);
+      }
       guard(async () => {
         setLoading(true);
         try {
           try {
             const res = await api.messages({
-              label:
-                queryRef.current || labelRef.current === "ALL"
-                  ? undefined
-                  : labelRef.current,
-              q: queryRef.current || undefined,
-              pageToken: reset ? undefined : nextTokenRef.current,
+              label: query || label === "ALL" ? undefined : label,
+              q: query || undefined,
+              pageToken,
             });
             if (seq !== loadSeq.current) return;
-            setMessages((prev) => {
-              if (reset) return res.messages;
-              const seen = new Set(prev.map((message) => message.id));
-              return [...prev, ...res.messages.filter((message) => !seen.has(message.id))];
-            });
+            const nextMessages = reset
+              ? res.messages
+              : (() => {
+                  const seen = new Set(messagesRef.current.map((message) => message.id));
+                  return [
+                    ...messagesRef.current,
+                    ...res.messages.filter((message) => !seen.has(message.id)),
+                  ];
+                })();
+            messagesRef.current = nextMessages;
+            nextTokenRef.current = res.nextPageToken;
+            setMessages(nextMessages);
             setNextToken(res.nextPageToken);
             setTotalEstimate(res.resultSizeEstimate);
           } catch (error) {
@@ -54,6 +74,10 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
             throw error;
           }
         } finally {
+          if (reset && resetInFlight.current === seq) resetInFlight.current = null;
+          if (appendKey !== null && appendInFlight.current.get(appendKey) === seq) {
+            appendInFlight.current.delete(appendKey);
+          }
           if (seq === loadSeq.current) setLoading(false);
         }
       });
@@ -62,6 +86,11 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
   );
 
   const reset = useCallback(() => {
+    ++loadSeq.current;
+    resetInFlight.current = null;
+    appendInFlight.current.clear();
+    messagesRef.current = [];
+    nextTokenRef.current = undefined;
     setMessages([]);
     setNextToken(undefined);
   }, []);

@@ -29,7 +29,8 @@ export type MessageFull = MessageSummary & {
   }[];
 };
 
-export type Label = { id: string; name: string; type: string; unread: number };
+export type Label = { id: string; name: string; type: string; unread: number; total: number };
+export type MailProfile = { email: string; historyId: string; messagesTotal: number };
 
 export type CalEvent = {
   id: string;
@@ -149,15 +150,19 @@ export type Contact = { name: string; email: string };
 export const api = {
   authStatus: () => req<{ authed: boolean }>("/auth/status"),
   logout: () => req<{ ok: boolean }>("/auth/logout", { method: "POST" }),
-  profile: () => req<{ email: string }>("/api/profile"),
+  profile: () => req<MailProfile>("/api/profile"),
   labels: () => req<Label[]>("/api/labels"),
   contacts: () => req<Contact[]>("/api/contacts"),
-  calendarEvents: (opts: { days?: number; from?: string; to?: string } = {}) => {
+  calendarEvents: (
+    opts: { days?: number; from?: string; to?: string } = {},
+    // This aborts only the browser request owned by the caller.
+    signal?: AbortSignal,
+  ) => {
     const u = new URLSearchParams();
     if (opts.days) u.set("days", String(opts.days));
     if (opts.from) u.set("from", opts.from);
     if (opts.to) u.set("to", opts.to);
-    return req<CalEvent[]>(`/api/calendar/events?${u.toString()}`);
+    return req<CalEvent[]>(`/api/calendar/events?${u.toString()}`, { signal });
   },
   calendars: () => req<Calendar[]>("/api/calendar/calendars"),
   calendarSearch: (q: string) =>

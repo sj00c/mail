@@ -1694,7 +1694,39 @@ body::after {
   border-radius: 18px;
   box-shadow: 0 12px 38px rgba(16, 24, 40, 0.07), var(--edge-highlight);
   scrollbar-gutter: stable;
+  /* 페이드만 — 월간 리사이클러가 마운트 직후 셀 좌표를 재므로 transform으로 기하를 흔들면 안 된다 */
+  animation: fadein 0.24s var(--ease-out) both;
 }
+
+.calendar.month-continuous-mode {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.calendar.month-continuous-mode > .cal-head { flex: none; }
+.month-continuous {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.month-continuous > .cal-monthnav,
+.month-continuous > .month-dow-row { flex: none; }
+.month-virtual-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+  outline: none;
+}
+.month-week-list,
+.month-week { overflow-anchor: none; }
 
 .cal-head {
   display: flex;
@@ -1821,31 +1853,6 @@ body::after {
   text-align: center;
 }
 
-.month-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 1px;
-  height: clamp(600px, calc(100dvh - 260px), 760px);
-  min-height: 600px;
-  overflow: hidden;
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.05);
-}
-
-.month-grid.weeks-4 {
-  grid-template-rows: auto repeat(4, minmax(0, 1fr));
-}
-
-.month-grid.weeks-5 {
-  grid-template-rows: auto repeat(5, minmax(0, 1fr));
-}
-
-.month-grid.weeks-6 {
-  grid-template-rows: auto repeat(6, minmax(0, 1fr));
-}
-
 .month-dow {
   padding: 10px 4px;
   background: var(--surface-1);
@@ -1918,14 +1925,6 @@ body::after {
   font-size: 13px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-}
-
-button.month-daynum {
-  cursor: pointer;
-}
-
-button.month-daynum:hover {
-  background: var(--accent-bg);
 }
 
 .month-cell.other .month-daynum {
@@ -2017,7 +2016,10 @@ button.month-daynum:hover {
 
 .month-more {
   width: 100%;
+  height: var(--month-event-row-height, 24px);
   min-height: 24px;
+  max-height: var(--month-event-row-height, 24px);
+  flex: none;
   padding: 1px 4px;
   border: 0;
   border-radius: 5px;
@@ -2030,6 +2032,91 @@ button.month-daynum:hover {
   text-align: left;
   cursor: pointer;
 }
+
+.month-dow-row,
+.month-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+}
+
+.month-dow-row {
+  flex: none;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+}
+
+.month-week-list {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+}
+
+.month-alignment-gutter {
+  min-height: 0;
+  pointer-events: none;
+}
+
+.month-week {
+  height: clamp(104px, calc((100dvh - 300px) / 5), 144px);
+  overflow: hidden;
+}
+
+.month-virtual-scroll .month-cell {
+  height: auto;
+}
+
+.month-cell.unavailable {
+  background: var(--danger-bg-weak);
+}
+
+.month-virtual-scroll:focus-visible {
+  box-shadow: inset 0 0 0 3px var(--accent-a50);
+}
+
+.month-cell {
+  position: relative;
+  isolation: isolate;
+  --month-event-row-height: 24px;
+}
+
+.month-create-hitarea {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.month-create-hitarea:focus-visible {
+  outline: 3px solid var(--accent-a50);
+  outline-offset: -3px;
+}
+
+.month-cellhead,
+.month-ev,
+.month-more {
+  position: relative;
+  z-index: 1;
+}
+
+.month-cellhead { pointer-events: none; }
+.month-ev,
+.month-more { pointer-events: auto; }
+.month-loading {
+  display: block;
+  height: var(--month-event-row-height);
+  flex: none;
+  border-radius: 5px;
+  background: var(--surface-2);
+}
+
+.month-interaction-locked .month-virtual-scroll { overflow: hidden; }
 
 .month-more:hover,
 .month-more:focus-visible {

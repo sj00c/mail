@@ -20,32 +20,16 @@ import {
   type Label,
   type MessageFull,
 } from "./api.ts";
-import { downloadAttachment, fileToBase64 } from "./lib/attachments.ts";
+import { downloadAttachment } from "./lib/attachments.ts";
 import { avatarColor, DATETIME_FMT } from "./lib/format.tsx";
-import { htmlToText, sanitizeMailHtml, textToHtml } from "./lib/mailHtml.ts";
+import { htmlToText, textToHtml } from "./lib/mailHtml.ts";
 import {
   ACCOUNT_KEY,
-  FONT_FAMILIES,
-  FONT_FAMILY_KEY,
-  FONT_SIZE_KEY,
-  FONT_SIZES,
-  getDefaultFont,
-  getSignature,
-  getSignatureHtml,
-  getUndoSec,
   SIGNATURE_HTML_KEY,
   SIGNATURE_KEY,
   SIGNATURE_SYNC_KEY,
-  UNDO_KEY,
 } from "./lib/settings.ts";
-import {
-  DialogGrip,
-  DialogTools,
-  MoreSentinel,
-  ReaderPopup,
-  TriCheck,
-  useResizableDialog,
-} from "./ui/dialog.tsx";
+import { MoreSentinel, ReaderPopup, TriCheck } from "./ui/dialog.tsx";
 import {
   AlertIcon,
   ArchiveIcon,
@@ -61,29 +45,48 @@ import {
   SendIcon,
   StarIcon,
   SunIcon,
+  SlidersIcon,
+  LogoutIcon,
+  SidebarIcon,
   TagIcon,
   TrashIcon,
   VacationIcon,
 } from "./ui/icons.tsx";
 import { EmptyArt } from "./ui/illustrations.tsx";
-import { Compose, RichEditor, type ComposeInit } from "./views/compose.tsx";
+import { Compose, type ComposeInit } from "./views/compose.tsx";
 import { MessageRow, Reader } from "./views/reader.tsx";
+import { SettingsModal } from "./views/settings.tsx";
 import { useInboxPoll } from "./hooks/useInboxPoll.ts";
+import { useMailboxCounts } from "./hooks/useMailboxCounts.ts";
 import { useCalendarCatalog } from "./hooks/useCalendarCatalog.ts";
-import { shouldRemoveArchivedMessage, useMailList } from "./hooks/useMailList.ts";
+import {
+  shouldRemoveArchivedMessage,
+  useMailList,
+} from "./hooks/useMailList.ts";
 import { useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { useOutbox } from "./hooks/useOutbox.ts";
 import { useTheme } from "./hooks/useTheme.ts";
-import { THEME_OPTIONS, type ThemePref } from "./lib/theme.ts";
-import { PRIMARY_CALENDAR_DEFAULT_COLOR, getCalendarDisplayColor } from "./lib/calendarPresentation.ts";
+import {
+  PRIMARY_CALENDAR_DEFAULT_COLOR,
+  getCalendarDisplayColor,
+} from "./lib/calendarPresentation.ts";
 
 const SYSTEM_ORDER = ["INBOX", "STARRED", "SENT", "DRAFT", "SPAM", "TRASH"];
 let calendarModule: Promise<typeof import("./views/calendar.tsx")> | undefined;
-const loadCalendarModule = () => (calendarModule ??= import("./views/calendar.tsx"));
-const CalendarView = lazy(async () => ({ default: (await loadCalendarModule()).CalendarView }));
-const EventEditModal = lazy(async () => ({ default: (await loadCalendarModule()).EventEditModal }));
-const DriveView = lazy(async () => ({ default: (await import("./views/drive.tsx")).DriveView }));
-const SearchResults = lazy(async () => ({ default: (await import("./views/search.tsx")).SearchResults }));
+const loadCalendarModule = () =>
+  (calendarModule ??= import("./views/calendar.tsx"));
+const CalendarView = lazy(async () => ({
+  default: (await loadCalendarModule()).CalendarView,
+}));
+const EventEditModal = lazy(async () => ({
+  default: (await loadCalendarModule()).EventEditModal,
+}));
+const DriveView = lazy(async () => ({
+  default: (await import("./views/drive.tsx")).DriveView,
+}));
+const SearchResults = lazy(async () => ({
+  default: (await import("./views/search.tsx")).SearchResults,
+}));
 
 type DeferredViewBoundaryProps = {
   children: ReactNode;
@@ -117,7 +120,9 @@ export class DeferredViewBoundary extends Component<
         this.props.fallback ?? (
           <div className="center" role="alert">
             <p>화면을 불러오지 못했습니다.</p>
-            {this.state.errorKind && <p className="muted">오류 유형: {this.state.errorKind}</p>}
+            {this.state.errorKind && (
+              <p className="muted">오류 유형: {this.state.errorKind}</p>
+            )}
             <button className="btn" onClick={() => window.location.reload()}>
               다시 시도
             </button>
@@ -140,7 +145,16 @@ function DeferredView({
 }) {
   return (
     <DeferredViewBoundary resetKey={resetKey} fallback={fallback}>
-      <Suspense fallback={<div className="center"><span className="spinner" aria-hidden="true" />불러오는 중…</div>}>{children}</Suspense>
+      <Suspense
+        fallback={
+          <div className="center">
+            <span className="spinner" aria-hidden="true" />
+            불러오는 중…
+          </div>
+        }
+      >
+        {children}
+      </Suspense>
     </DeferredViewBoundary>
   );
 }
@@ -181,54 +195,6 @@ export function userFacingError(message: string): string {
   return message;
 }
 
-// 상단바 아이콘: 이모지 대신 인라인 SVG (외부 에셋 없이 선형 아이콘)
-function SvgIcon({ children }: { children: ReactNode }) {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
-}
-
-const IconSliders = () => (
-  <SvgIcon>
-    <line x1="4" y1="21" x2="4" y2="14" />
-    <line x1="4" y1="10" x2="4" y2="3" />
-    <line x1="12" y1="21" x2="12" y2="12" />
-    <line x1="12" y1="8" x2="12" y2="3" />
-    <line x1="20" y1="21" x2="20" y2="16" />
-    <line x1="20" y1="12" x2="20" y2="3" />
-    <line x1="1" y1="14" x2="7" y2="14" />
-    <line x1="9" y1="8" x2="15" y2="8" />
-    <line x1="17" y1="16" x2="23" y2="16" />
-  </SvgIcon>
-);
-
-const IconLogout = () => (
-  <SvgIcon>
-    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-    <polyline points="16 17 21 12 16 7" />
-    <line x1="21" y1="12" x2="9" y2="12" />
-  </SvgIcon>
-);
-
-const IconSidebar = () => (
-  <SvgIcon>
-    <rect x="3" y="4" width="18" height="16" rx="2.5" />
-    <path d="M9.5 4v16" />
-  </SvgIcon>
-);
-
 export function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   // A failed status check is "server unreachable", not "logged out" —
@@ -257,7 +223,12 @@ export function App() {
     );
   }
   if (authed === null) {
-    return <div className="center"><span className="spinner" aria-hidden="true" />로딩 중…</div>;
+    return (
+      <div className="center">
+        <span className="spinner" aria-hidden="true" />
+        로딩 중…
+      </div>
+    );
   }
   if (!authed) return <Login />;
   return <Mailbox onLogout={() => setAuthed(false)} />;
@@ -288,7 +259,12 @@ function Login() {
 
 function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [email, setEmail] = useState("");
-  const [labels, setLabels] = useState<Label[]>([]);
+  const {
+    labels,
+    messagesTotal,
+    applyProfile,
+    refresh: refreshCounts,
+  } = useMailboxCounts();
   const [activeLabel, setActiveLabel] = useState("INBOX");
   // ?view=calendar / ?q=검색어 deep link: 화면을 URL로 바로 열 수 있다.
   const initialQuery = (() => {
@@ -310,7 +286,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   });
   const [query, setQuery] = useState(initialQuery);
   const [searchInput, setSearchInput] = useState(initialQuery);
-  const [selected, setSelected] = useState<{ id: string; threadId: string } | null>(null);
+  const [selected, setSelected] = useState<{
+    id: string;
+    threadId: string;
+  } | null>(null);
   const [kbdHelpOpen, setKbdHelpOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const composeOpenRef = useRef(composeOpen);
@@ -323,7 +302,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const [composeKey, setComposeKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // Gmail 계정 설정(별칭/답장주소/휴가응답) — 로그인 시 자동으로 딸려온다.
-  const [acctSettings, setAcctSettings] = useState<AccountSettings | null>(null);
+  const [acctSettings, setAcctSettings] = useState<AccountSettings | null>(
+    null,
+  );
   // 목록 체크박스로 고른 메일 id (일괄 처리용). shift-범위선택용 마지막 인덱스.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const lastCheckedIdx = useRef<number | null>(null);
@@ -407,11 +388,14 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     // Account settings ride along with login — non-fatal if unavailable.
-    api.accountSettings().then(setAcctSettings).catch(() => {});
+    api
+      .accountSettings()
+      .then(setAcctSettings)
+      .catch(() => {});
     void guard(async () => {
-      const [p, ls] = await Promise.all([api.profile(), api.labels()]);
+      const [p] = await Promise.all([api.profile(), refreshCounts(false)]);
       setEmail(p.email);
-      setLabels(ls);
+      applyProfile(p);
       // Signature is account-scoped: when a different account logs in on
       // this browser, the previous owner's signature must not ride along
       // on outgoing mail. Same-account re-login keeps it.
@@ -479,7 +463,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     initialHiddenIds: initialHiddenCalendarIds,
     onAuthError: bgLogout,
   });
-  const primaryCalendar = useMemo(() => calendars.find((calendar) => calendar.primary), [calendars]);
+  const primaryCalendar = useMemo(
+    () => calendars.find((calendar) => calendar.primary),
+    [calendars],
+  );
   useEffect(() => {
     if (view === "calendar" || query) void ensureCalendars().catch(() => {});
   }, [view, query, ensureCalendars]);
@@ -554,7 +541,6 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     [openDraft],
   );
 
-
   // ---- 목록 체크박스 선택 + 일괄 처리 ----
   // 체크박스 토글. shift-클릭이면 직전 클릭 행과의 사이를 한꺼번에 켜고/끈다.
   const onToggleCheck = useCallback((id: string, shiftKey: boolean) => {
@@ -596,7 +582,6 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     lastCheckedIdx.current = null;
   }, []);
 
-
   // Selection requested by a notification click — the label-change effect
   // below would otherwise wipe it (it resets selection on label switch).
   const pendingSelect = useRef<{
@@ -623,8 +608,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   }, [activeLabel, query, load]);
 
   const refreshLabels = useCallback(
-    () => guard(async () => setLabels(await api.labels())),
-    [guard],
+    () => guard(() => refreshCounts()),
+    [guard, refreshCounts],
   );
 
   useInboxPoll({
@@ -633,7 +618,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     composeOpen,
     onLogout: bgLogout,
     getCurrentMessages: getMessages,
-    onRefreshLabels: refreshLabels,
+    onProfile: applyProfile,
+    onRefreshLabels: () => refreshCounts(false),
     onPrependInboxMessages: prependInboxMessages,
     onActivate: (message) => {
       setView("mail");
@@ -662,10 +648,13 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const allStarred = useMemo(
     () =>
       checkedIds.length > 0 &&
-      messages.every((m) => !checkedSet.has(m.id) || m.labelIds.includes("STARRED")),
+      messages.every(
+        (m) => !checkedSet.has(m.id) || m.labelIds.includes("STARRED"),
+      ),
     [messages, checkedSet, checkedIds],
   );
-  const allChecked = messages.length > 0 && checkedIds.length === messages.length;
+  const allChecked =
+    messages.length > 0 && checkedIds.length === messages.length;
   const activeLabelName =
     SYSTEM_LABEL_NAMES[activeLabel] ||
     labels.find((l) => l.id === activeLabel)?.name ||
@@ -695,8 +684,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         // confirmation is exact (resultSizeEstimate above is only approximate).
         const prepared = await api.prepareBulkAll({
           q: query || undefined,
-          label:
-            query || activeLabel === "ALL" ? undefined : activeLabel,
+          label: query || activeLabel === "ALL" ? undefined : activeLabel,
           action,
         });
         const prompt =
@@ -706,7 +694,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         if (!confirm(prompt)) return;
 
         const res = await api.confirmBulkAll(prepared.operationId);
-        const failed = res.failed ? ` · 실패 ${res.failed.toLocaleString()}개` : "";
+        const failed = res.failed
+          ? ` · 실패 ${res.failed.toLocaleString()}개`
+          : "";
         setError(
           `${bulkScope}: ${res.succeeded.toLocaleString()}개 메일 ${verb} 완료${failed}`,
         );
@@ -725,14 +715,20 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       return;
     }
     runBulk(async (ids, set) => {
-      await api.batchModify(ids, read ? { remove: ["UNREAD"] } : { add: ["UNREAD"] });
+      await api.batchModify(
+        ids,
+        read ? { remove: ["UNREAD"] } : { add: ["UNREAD"] },
+      );
       patchMany(set, { unread: !read });
     });
   };
   const bulkStar = () =>
     runBulk(async (ids, set) => {
       const add = !allStarred;
-      await api.batchModify(ids, add ? { add: ["STARRED"] } : { remove: ["STARRED"] });
+      await api.batchModify(
+        ids,
+        add ? { add: ["STARRED"] } : { remove: ["STARRED"] },
+      );
       if (!add && isStarredView) removeMany(set);
       else toggleLabelMany(set, "STARRED", add);
     });
@@ -765,7 +761,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     }
   };
 
-  const { outbox, queueSend, cancelSend: cancelQueuedSend, sendNow } = useOutbox({
+  const {
+    outbox,
+    queueSend,
+    cancelSend: cancelQueuedSend,
+    sendNow,
+  } = useOutbox({
     onSent: () => {
       load(true);
       refreshLabels();
@@ -791,24 +792,25 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         references: payload.references,
         draftId: item.draftId,
         bodyHtml: payload.bodyHtml ?? textToHtml(payload.body),
-        attachments: [...(payload.attachments ?? []), ...(payload.driveAttachments ?? [])].map(
-          (attachment) => ({
-            filename: attachment.filename,
-            mimeType: attachment.mimeType,
-            data: attachment.data,
-            contentId: (attachment as { contentId?: string }).contentId,
-            size: Math.floor((attachment.data.length * 3) / 4),
-          }),
-        ),
+        attachments: [
+          ...(payload.attachments ?? []),
+          ...(payload.driveAttachments ?? []),
+        ].map((attachment) => ({
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          data: attachment.data,
+          contentId: (attachment as { contentId?: string }).contentId,
+          size: Math.floor((attachment.data.length * 3) / 4),
+        })),
       });
     },
     [cancelQueuedSend, openCompose],
   );
 
   // ---- 메일 → 일정 만들기 ----
-  const [evEditor, setEvEditor] = useState<{ initial: Partial<EventInput> } | null>(
-    null,
-  );
+  const [evEditor, setEvEditor] = useState<{
+    initial: Partial<EventInput>;
+  } | null>(null);
   const createEventFromMail = useCallback(
     (m: MessageFull) => {
       void guard(async () => {
@@ -871,12 +873,17 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         }
         case "e": {
           // 보관 — Reader의 보관 버튼과 동일한 스코프(받은편지함에서만 행 제거).
-          if (!curMsg || curMsg.labelIds.includes("DRAFT") || curMsg.labelIds.includes("TRASH"))
+          if (
+            !curMsg ||
+            curMsg.labelIds.includes("DRAFT") ||
+            curMsg.labelIds.includes("TRASH")
+          )
             return;
           e.preventDefault();
           void guard(async () => {
             await api.modify(curMsg.id, { remove: ["INBOX"] });
-            if (shouldRemoveArchivedMessage(getActiveLabel(), getQuery())) removeMessage(curMsg.id);
+            if (shouldRemoveArchivedMessage(getActiveLabel(), getQuery()))
+              removeMessage(curMsg.id);
             setSelected(null);
             void refreshLabels();
           });
@@ -884,7 +891,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         }
         case "#": {
           // 휴지통 (복구 가능). 휴지통 안에서는 영구삭제가 되므로 아무것도 안 한다.
-          if (!curMsg || curMsg.labelIds.includes("DRAFT") || curMsg.labelIds.includes("TRASH"))
+          if (
+            !curMsg ||
+            curMsg.labelIds.includes("DRAFT") ||
+            curMsg.labelIds.includes("TRASH")
+          )
             return;
           e.preventDefault();
           void guard(async () => {
@@ -915,7 +926,17 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [getActiveLabel, getMessages, getNextToken, getQuery, guard, load, openCompose, refreshLabels, removeMessage]);
+  }, [
+    getActiveLabel,
+    getMessages,
+    getNextToken,
+    getQuery,
+    guard,
+    load,
+    openCompose,
+    refreshLabels,
+    removeMessage,
+  ]);
 
   // j/k로 옮긴 선택이 화면 밖이면 목록을 따라 스크롤한다 (클릭 선택엔 no-op).
   useEffect(() => {
@@ -996,7 +1017,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           aria-controls="app-sidebar"
           onClick={toggleNav}
         >
-          <IconSidebar />
+          <SidebarIcon />
         </button>
         <div className="brand">
           <span className="brand-mark">
@@ -1055,7 +1076,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           <button
             className="icon-btn theme-toggle"
             title={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
-            aria-label={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
+            aria-label={
+              theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"
+            }
             onClick={() => setThemePref(theme === "dark" ? "light" : "dark")}
           >
             {theme === "dark" ? <SunIcon key="sun" /> : <MoonIcon key="moon" />}
@@ -1065,7 +1088,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             title="설정 (서명)"
             onClick={() => setSettingsOpen(true)}
           >
-            <IconSliders />
+            <SlidersIcon />
           </button>
           <button
             className="icon-btn"
@@ -1077,14 +1100,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               })
             }
           >
-            <IconLogout />
+            <LogoutIcon />
           </button>
         </div>
       </header>
 
       {error && (
         <div className="error" role="alert">
-          <span className="notice-icon"><AlertIcon /></span>
+          <span className="notice-icon">
+            <AlertIcon />
+          </span>
           <span>{userFacingError(error)}</span>
           <button
             type="button"
@@ -1099,16 +1124,25 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
       {acctSettings?.vacation.enabled && (
         <div className="vacation-note">
-          <span className="notice-icon"><VacationIcon /></span>
+          <span className="notice-icon">
+            <VacationIcon />
+          </span>
           Gmail 휴가 자동응답이 켜져 있습니다
-          {acctSettings.vacation.subject && ` — “${acctSettings.vacation.subject}”`}
+          {acctSettings.vacation.subject &&
+            ` — “${acctSettings.vacation.subject}”`}
           {acctSettings.vacation.endTime &&
             ` (${new Date(acctSettings.vacation.endTime).toLocaleDateString("ko-KR", { month: "long", day: "numeric" })}까지)`}
         </div>
       )}
 
-      <div className={`body ${navEffectivelyOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""} ${narrow ? "reader-overlay" : ""}`}>
-        <nav className="sidebar" id="app-sidebar" aria-hidden={!navEffectivelyOpen}>
+      <div
+        className={`body ${navEffectivelyOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""} ${narrow ? "reader-overlay" : ""}`}
+      >
+        <nav
+          className="sidebar"
+          id="app-sidebar"
+          aria-hidden={!navEffectivelyOpen}
+        >
           <div className="sidebar-inner">
             <div className="workspace-switcher" aria-label="서비스 전환">
               <button
@@ -1120,7 +1154,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                   setSearchInput("");
                 }}
               >
-                <span className="workspace-tab-icon"><MailIcon /></span>
+                <span className="workspace-tab-icon">
+                  <MailIcon />
+                </span>
                 <span>메일</span>
               </button>
               <button
@@ -1132,7 +1168,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                   setSearchInput("");
                 }}
               >
-                <span className="workspace-tab-icon"><DriveIcon /></span>
+                <span className="workspace-tab-icon">
+                  <DriveIcon />
+                </span>
                 <span>드라이브</span>
               </button>
               <button
@@ -1140,7 +1178,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                 aria-pressed={view === "calendar"}
                 onClick={() => setView("calendar")}
               >
-                <span className="workspace-tab-icon"><CalendarIcon /></span>
+                <span className="workspace-tab-icon">
+                  <CalendarIcon />
+                </span>
                 <span>캘린더</span>
               </button>
             </div>
@@ -1148,8 +1188,18 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             {view === "mail" && (
               <div className="nav-sub workspace-panel">
                 <div className="workspace-panel-title">편지함</div>
+                {messagesTotal !== null && (
+                  <div
+                    className="nav-note"
+                    title="Google이 제공하는 계정 메시지 수입니다. 전체메일 보기의 검색 결과 개수와는 다를 수 있습니다."
+                  >
+                    계정 메시지 {messagesTotal.toLocaleString("ko-KR")}개
+                    <br />
+                    <small>Google 제공 계정 기준</small>
+                  </div>
+                )}
                 <LabelRow
-                  label={{ id: "ALL", name: "전체메일", type: "system", unread: 0 }}
+                  label={{ id: "ALL", name: "전체메일", type: "system" }}
                   active={!query && activeLabel === "ALL"}
                   onClick={() => {
                     setQuery("");
@@ -1169,7 +1219,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                     }}
                   />
                 ))}
-                {userLabels.length > 0 && <div className="sidebar-sep">라벨</div>}
+                {userLabels.length > 0 && (
+                  <div className="sidebar-sep">라벨</div>
+                )}
                 {userLabels.map((l) => (
                   <LabelRow
                     key={l.id}
@@ -1192,17 +1244,22 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                 <CalendarMetadataDiagnostic anomaly={primaryAnomaly} />
                 <CalendarChecklist
                   title="내 캘린더"
-                  items={calendars.filter((c) => c.primary || c.accessRole === "owner")}
+                  items={calendars.filter(
+                    (c) => c.primary || c.accessRole === "owner",
+                  )}
                   hidden={hiddenCals}
                   onToggle={toggleCal}
                   primaryColorOverride={primaryColorOverride}
                   onPrimaryColorChange={(color) => {
-                    if (primaryCalendar) setPrimaryColor(primaryCalendar.id, color);
+                    if (primaryCalendar)
+                      setPrimaryColor(primaryCalendar.id, color);
                   }}
                 />
                 <CalendarChecklist
                   title="다른 캘린더"
-                  items={calendars.filter((c) => !(c.primary || c.accessRole === "owner"))}
+                  items={calendars.filter(
+                    (c) => !(c.primary || c.accessRole === "owner"),
+                  )}
                   hidden={hiddenCals}
                   onToggle={toggleCal}
                 />
@@ -1211,7 +1268,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
 
             {view === "drive" && (
               <div className="workspace-context">
-                <span className="workspace-context-mark"><DriveIcon /></span>
+                <span className="workspace-context-mark">
+                  <DriveIcon />
+                </span>
                 <div>
                   <strong>내 드라이브</strong>
                   <span>파일과 폴더를 한눈에 관리하세요</span>
@@ -1283,7 +1342,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                       <span className="bulk-actions">
                         {inTrashView ? (
                           <button className="btn sm" onClick={bulkRestore}>
-                            <RestoreIcon />복원
+                            <RestoreIcon />
+                            복원
                           </button>
                         ) : (
                           <>
@@ -1292,14 +1352,16 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                               disabled={bulkAllBusy}
                               onClick={() => bulkRead(true)}
                             >
-                              <MailIcon />읽음
+                              <MailIcon />
+                              읽음
                             </button>
                             <button
                               className="btn sm"
                               disabled={bulkAllBusy}
                               onClick={() => bulkRead(false)}
                             >
-                              <MailIcon />안읽음
+                              <MailIcon />
+                              안읽음
                             </button>
                             {!allResultsSelected && (
                               <>
@@ -1307,8 +1369,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                                   {allStarred ? "★ 별표 해제" : "☆ 별표"}
                                 </button>
                                 {isInboxView && (
-                                  <button className="btn sm" onClick={bulkArchive}>
-                                    <ArchiveIcon />보관
+                                  <button
+                                    className="btn sm"
+                                    onClick={bulkArchive}
+                                  >
+                                    <ArchiveIcon />
+                                    보관
                                   </button>
                                 )}
                               </>
@@ -1318,7 +1384,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                               disabled={bulkAllBusy}
                               onClick={bulkTrash}
                             >
-                              <TrashIcon />휴지통
+                              <TrashIcon />
+                              휴지통
                             </button>
                           </>
                         )}
@@ -1355,7 +1422,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                       ?
                     </button>
                     {kbdHelpOpen && (
-                      <div className="kbd-help-pop" onClick={(e) => e.stopPropagation()}>
+                      <div
+                        className="kbd-help-pop"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div className="kbd-hints">
                           <span>
                             <kbd>j</kbd>/<kbd>k</kbd> 이전·다음
@@ -1458,7 +1528,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                   <button className="btn" onClick={() => setEvEditor(null)}>
                     닫기
                   </button>
-                  <button className="btn primary" onClick={() => window.location.reload()}>
+                  <button
+                    className="btn primary"
+                    onClick={() => window.location.reload()}
+                  >
                     다시 불러오기
                   </button>
                 </div>
@@ -1468,7 +1541,9 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         >
           <EventEditModal
             calendars={calendars.filter(
-              (calendar) => calendar.accessRole === "owner" || calendar.accessRole === "writer",
+              (calendar) =>
+                calendar.accessRole === "owner" ||
+                calendar.accessRole === "writer",
             )}
             primaryColorOverride={primaryColorOverride}
             initial={evEditor.initial}
@@ -1484,229 +1559,19 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           {outbox.map((o) => (
             <div key={o.key} className="undo-toast">
               <span>메일을 곧 보냅니다…</span>
-              <button
-                className="undo-btn"
-                onClick={() => sendNow(o.key)}
-              >
+              <button className="undo-btn" onClick={() => sendNow(o.key)}>
                 지금 보내기
               </button>
-              <button className="undo-btn primary" onClick={() => cancelSend(o.key)}>
+              <button
+                className="undo-btn primary"
+                onClick={() => cancelSend(o.key)}
+              >
                 실행취소
               </button>
             </div>
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function SettingsModal({ onClose }: { onClose: () => void }) {
-  const sigEditorRef = useRef<HTMLDivElement>(null);
-  const dlg = useResizableDialog("settings", 520, 380);
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => dlg.ref.current?.focus());
-    return () => {
-      cancelAnimationFrame(frame);
-      previous?.focus();
-    };
-  }, [dlg.ref]);
-  const [importMsg, setImportMsg] = useState<string | null>(null);
-  // 저장된 HTML 서명(없으면 평문을 HTML로). 에디터는 uncontrolled라 1회만 읽는다.
-  const initialSig = useMemo(() => {
-    const html = getSignatureHtml();
-    const text = getSignature();
-    return html || (text ? textToHtml(text) : "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 붙여넣기/드롭한 이미지는 서명 본문에 인라인으로 박는다 (data: URI → 발송 시 cid).
-  const insertImages = (files: File[]) => {
-    const imgs = files.filter((f) => f.type.startsWith("image/"));
-    if (imgs.length === 0) return;
-    void Promise.all(imgs.map(fileToBase64)).then((list) => {
-      sigEditorRef.current?.focus();
-      for (const im of list) {
-        document.execCommand("insertImage", false, `data:${im.mimeType};base64,${im.data}`);
-      }
-    });
-  };
-  const initialFont = useMemo(getDefaultFont, []);
-  const [fontFamily, setFontFamily] = useState(initialFont.family);
-  const [fontSize, setFontSize] = useState(initialFont.size);
-  const [undoSec, setUndoSec] = useState(String(getUndoSec()));
-  // 테마는 고르는 즉시 적용·저장된다 — 결과를 눈으로 보며 고르는 설정이라 저장 버튼을 기다리지 않는다.
-  const { pref: themePref, setPref: setThemePref } = useTheme();
-
-  const importFromGmail = async () => {
-    setImportMsg(null);
-    try {
-      const { html } = await api.signature();
-      if (!html) {
-        setImportMsg("Gmail에 저장된 서명이 없습니다.");
-        return;
-      }
-      if (sigEditorRef.current) sigEditorRef.current.innerHTML = sanitizeMailHtml(html);
-      setImportMsg("가져왔습니다 — 자유롭게 편집한 뒤 저장하세요.");
-    } catch (e) {
-      if (e instanceof AuthError) {
-        setImportMsg("로그인이 만료되었습니다. 새로고침 후 다시 로그인하세요.");
-      } else {
-        setImportMsg(`가져오기 실패: ${(e as Error).message}`);
-      }
-    }
-  };
-
-  const save = () => {
-    try {
-      const html = sanitizeMailHtml(sigEditorRef.current?.innerHTML ?? "");
-      const text = htmlToText(html).trim();
-      // 이미지만 있는 서명은 text가 비므로 <img> 유무도 함께 본다.
-      if (text !== "" || /<img\b/i.test(html)) {
-        localStorage.setItem(SIGNATURE_HTML_KEY, html);
-        localStorage.setItem(SIGNATURE_KEY, text);
-      } else {
-        localStorage.removeItem(SIGNATURE_HTML_KEY);
-        localStorage.removeItem(SIGNATURE_KEY);
-      }
-      if (fontFamily) localStorage.setItem(FONT_FAMILY_KEY, fontFamily);
-      else localStorage.removeItem(FONT_FAMILY_KEY);
-      if (fontSize) localStorage.setItem(FONT_SIZE_KEY, fontSize);
-      else localStorage.removeItem(FONT_SIZE_KEY);
-      localStorage.setItem(UNDO_KEY, undoSec);
-    } catch {
-      // private mode 등: 저장 대상 없음
-    }
-    onClose();
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal"
-        ref={dlg.ref}
-        style={dlg.style}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onClose();
-            return;
-          }
-          if (event.key !== "Tab") return;
-          const controls = Array.from(
-            event.currentTarget.querySelectorAll<HTMLElement>(
-              'button:not([disabled]), select:not([disabled]), input:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
-            ),
-          );
-          if (controls.length === 0) return;
-          const first = controls[0];
-          const last = controls[controls.length - 1];
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-          }
-        }}
-      >
-        <div className="modal-head">
-          <strong id="settings-title">설정</strong>
-          <DialogTools maximized={dlg.maximized} onToggleMax={dlg.toggleMax} />
-          <button className="clear" aria-label="설정 닫기" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-        <div className="muted settings-label">
-          서명 — 글꼴·크기·색·이미지까지. 발송 시 본문 끝에 자동 추가 (비우면 사용 안 함)
-        </div>
-        <div className="signature-editor">
-          <RichEditor
-            editorRef={sigEditorRef}
-            initialHtml={initialSig}
-            onFiles={insertImages}
-            rich
-            placeholder={"예) 홍길동 드림 · 010-0000-0000 · 로고 이미지 삽입 가능"}
-          />
-        </div>
-        {importMsg && <div className="muted settings-label">{importMsg}</div>}
-        <div className="muted settings-label">
-          기본 글꼴 — 새로 쓰는 메일 본문에 적용 (수신자에게도 이 글꼴로 보입니다)
-        </div>
-        <div className="settings-row">
-          <select
-            className="ev-input"
-            aria-label="기본 글꼴"
-            value={fontFamily}
-            onChange={(e) => setFontFamily(e.target.value)}
-          >
-            {FONT_FAMILIES.map((f) => (
-              <option key={f.label} value={f.css}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-          <select
-            className="ev-input"
-            aria-label="기본 글자 크기"
-            value={fontSize}
-            onChange={(e) => setFontSize(e.target.value)}
-          >
-            {FONT_SIZES.map((s) => (
-              <option key={s.label} value={s.css}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="muted settings-label">테마 — 고르면 바로 적용됩니다</div>
-        <div className="settings-row">
-          <select
-            className="ev-input"
-            aria-label="테마"
-            value={themePref}
-            onChange={(e) => setThemePref(e.target.value as ThemePref)}
-          >
-            {THEME_OPTIONS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="muted settings-label">
-          보내기 취소 — 발송을 잠시 붙잡아 두고 실행취소 버튼을 제공
-        </div>
-        <div className="settings-row">
-          <select
-            className="ev-input"
-            aria-label="보내기 취소 시간"
-            value={undoSec}
-            onChange={(e) => setUndoSec(e.target.value)}
-          >
-            <option value="0">사용 안 함 (즉시 발송)</option>
-            <option value="5">5초</option>
-            <option value="10">10초</option>
-            <option value="20">20초</option>
-          </select>
-        </div>
-        <div className="modal-foot">
-          <button className="btn" onClick={() => void importFromGmail()}>
-            Gmail 서명 가져오기
-          </button>
-          <span className="modal-spacer" />
-          <button className="btn primary" onClick={save}>
-            저장
-          </button>
-        </div>
-        <DialogGrip onPointerDown={dlg.onGripDown} onReset={dlg.reset} />
-      </div>
     </div>
   );
 }
@@ -1726,7 +1591,8 @@ function LabelRow({
   active,
   onClick,
 }: {
-  label: Label;
+  label: Pick<Label, "id" | "name" | "type"> &
+    Partial<Pick<Label, "unread" | "total">>;
   active: boolean;
   onClick: () => void;
 }) {
@@ -1735,10 +1601,32 @@ function LabelRow({
   return (
     <button className={`label-row ${active ? "active" : ""}`} onClick={onClick}>
       <span className="label-name">
-        <span className="label-ic"><LabelIcon /></span>
+        <span className="label-ic">
+          <LabelIcon />
+        </span>
         {name}
       </span>
-      {label.unread > 0 && <span className="badge">{label.unread}</span>}
+      {(label.total !== undefined || (label.unread ?? 0) > 0) && (
+        <span
+          style={{
+            display: "grid",
+            justifyItems: "end",
+            gap: 2,
+            flexShrink: 0,
+          }}
+        >
+          {label.total !== undefined && (
+            <small title="해당 편지함의 전체 메시지 수">
+              전체 {label.total.toLocaleString("ko-KR")}
+            </small>
+          )}
+          {(label.unread ?? 0) > 0 && (
+            <span className="badge" title="안 읽은 메시지 수">
+              안 읽음 {label.unread!.toLocaleString("ko-KR")}
+            </span>
+          )}
+        </span>
+      )}
     </button>
   );
 }
@@ -1770,7 +1658,10 @@ function CalendarChecklist({
         );
         const visible = !hidden.has(calendar.id);
         return (
-          <div key={calendar.id} className={`cal-check-wrap${primary ? " primary" : ""}`}>
+          <div
+            key={calendar.id}
+            className={`cal-check-wrap${primary ? " primary" : ""}`}
+          >
             <label className="cal-check" title={calendar.summary}>
               <input
                 id={`calendar-${calendar.id}`}
@@ -1799,7 +1690,9 @@ function CalendarChecklist({
                     type="color"
                     aria-label="기본 캘린더 색상"
                     value={color || PRIMARY_CALENDAR_DEFAULT_COLOR}
-                    onChange={(event) => onPrimaryColorChange(event.target.value)}
+                    onChange={(event) =>
+                      onPrimaryColorChange(event.target.value)
+                    }
                   />
                 </label>
                 <button

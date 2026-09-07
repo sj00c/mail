@@ -154,7 +154,7 @@ try {
   # Windows Task Scheduler requires a restart interval of at least one minute.
   $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
   $existing = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue

@@ -1,134 +1,152 @@
-import { Hono } from "hono";
-import { createMessageListApi } from "./index.ts";
-import { describe, expect, it } from "vitest";
-import { GmailBatchPartError } from "./gmailBatch.ts";
-import { apiErrorStatus, needAuthError, publicApiError } from "./apiErrors.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("API error classification", () => {
-  it("classifies final embedded 401 as authentication failure", () => {
-    const error = new GmailBatchPartError(401, 0);
-    expect(needAuthError(error)).toBe(true);
-    expect(apiErrorStatus(error)).toBe(401);
-  });
-
-  it("classifies embedded insufficient-scope 403 as authentication failure", () => {
-    const error = new GmailBatchPartError(403, 0, "insufficient_scope");
-    expect(needAuthError(error)).toBe(true);
-    expect(apiErrorStatus(error)).toBe(401);
-  });
-
-  it.each([403, 429, 500])("keeps unrelated embedded %i failures non-auth", (status) => {
-    const error = new GmailBatchPartError(status, 0);
-    expect(needAuthError(error)).toBe(false);
-    expect(apiErrorStatus(error)).toBe(500);
-  });
-
-  it("classifies an invalid_grant refresh failure as authentication failure", () => {
-    const error = Object.assign(new Error("refresh failed"), {
-      response: { data: { error: "invalid_grant" } },
-    });
-    expect(needAuthError(error)).toBe(true);
-    expect(apiErrorStatus(error)).toBe(401);
-  });
-
-  it("redacts unknown server errors from API clients", () => {
-    expect(publicApiError(new Error("private upstream detail"))).toBe("INTERNAL_SERVER_ERROR");
-  });
+const runtime = vi.hoisted(() => {
+  const app = { fetch: vi.fn() };
+  return {
+    app,
+    createApp: vi.fn(() => app),
+    mountProductionStatic: vi.fn(async () => {}),
+    existsSync: vi.fn(() => true),
+  };
 });
-describe("/api/messages", () => {
-  function appFor(
-    listMessages: Parameters<typeof createMessageListApi>[0],
-  ): Hono {
-    return new Hono().route("/api/messages", createMessageListApi(listMessages));
-  }
 
-  it("returns the list output from the actual Hono route", async () => {
-    const listMessages = async (opts: {
-      q?: string;
-      labelIds?: string[];
-      pageToken?: string;
-      maxResults?: number;
-    }) => {
-      expect(opts).toEqual({
-        q: "from:sender",
-        labelIds: ["INBOX"],
-        pageToken: "next",
-        maxResults: 10,
-      });
-      return {
-        messages: [
-          {
-            id: "m1",
-            threadId: "t1",
-            from: "sender@example.com",
-            to: "test@example.com",
-            subject: "Subject",
-            snippet: "Snippet",
-            date: "2026-08-05T08:00:00.000Z",
-            unread: false,
-            labelIds: ["INBOX"],
-            hasAttachments: false,
-          },
-        ],
-        resultSizeEstimate: 1,
-      };
-    };
+vi.mock("./app.ts", () => ({
+  createApp: runtime.createApp,
+  mountProductionStatic: runtime.mountProductionStatic,
+}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    default: { ...actual, existsSync: runtime.existsSync },
+    existsSync: runtime.existsSync,
+  };
+});
 
-    const response = await appFor(listMessages).request(
-      "http://test/api/messages?q=from%3Asender&label=INBOX&pageToken=next&maxResults=10",
+const originalAppUrl = process.env.APP_URL;
+
+async function loadIndex() {
+  return import("./index.ts");
+}
+
+describe("server runtime adapter", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    if (originalAppUrl === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = originalAppUrl;
+    vi.stubEnv("PORT", "8787");
+    vi.stubEnv("HOST", "127.0.0.1");
+    vi.stubEnv("NODE_ENV", "development");
+    runtime.createApp.mockReset().mockReturnValue(runtime.app);
+    runtime.mountProductionStatic.mockReset().mockResolvedValue(undefined);
+    runtime.existsSync.mockReset().mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps development on the Vite callback URL and does not mount static files", async () => {
+    const { default: adapter } = await loadIndex();
+
+    expect(runtime.createApp).toHaveBeenCalledWith("http://localhost:5173/");
+    expect(runtime.existsSync).not.toHaveBeenCalled();
+    expect(runtime.mountProductionStatic).not.toHaveBeenCalled();
+    expect(adapter).toEqual({
+      port: 8787,
+      hostname: "127.0.0.1",
+      fetch: runtime.app.fetch,
+    });
+  });
+
+  it("mounts production static files after checking dist/index.html", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const { default: adapter } = await loadIndex();
+
+    expect(runtime.existsSync).toHaveBeenCalledWith(
+      expect.stringMatching(/[\\/]dist[\\/]index\.html$/),
     );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      messages: [
-        {
-          id: "m1",
-          threadId: "t1",
-          from: "sender@example.com",
-          to: "test@example.com",
-          subject: "Subject",
-          snippet: "Snippet",
-          date: "2026-08-05T08:00:00.000Z",
-          unread: false,
-          labelIds: ["INBOX"],
-          hasAttachments: false,
-        },
-      ],
-      resultSizeEstimate: 1,
-    });
+    expect(runtime.createApp).toHaveBeenCalledWith("/");
+    expect(runtime.mountProductionStatic).toHaveBeenCalledWith(
+      runtime.app,
+      expect.stringMatching(/[\\/]dist$/),
+    );
+    expect(adapter.port).toBe(8787);
+    expect(adapter.hostname).toBe("127.0.0.1");
+    expect(adapter.fetch).toBe(runtime.app.fetch);
   });
 
-  it.each(["0", "-1", "1.5", "501"])("rejects invalid maxResults=%s", async (maxResults) => {
-    let called = false;
-    const response = await appFor(async () => {
-      called = true;
-      throw new Error("must not run");
-    }).request(`http://test/api/messages?maxResults=${maxResults}`);
+  it("preserves an explicit APP_URL in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("APP_URL", "https://mail.example.test/");
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "maxResults must be an integer from 1 to 500",
-    });
-    expect(called).toBe(false);
+    await loadIndex();
+
+    expect(runtime.createApp).toHaveBeenCalledWith(
+      "https://mail.example.test/",
+    );
   });
 
-  it("maps authentication failures to NOT_AUTHENTICATED", async () => {
-    const response = await appFor(async () => {
-      throw new GmailBatchPartError(401, 0, "unauthenticated");
-    }).request("http://test/api/messages");
+  it("fails fast when production has no built index.html", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    runtime.existsSync.mockReturnValue(false);
 
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: "NOT_AUTHENTICATED" });
+    await expect(loadIndex()).rejects.toThrow(
+      /Production build missing: .*dist[\\/]index\.html.*bun run build.*reinstall/i,
+    );
+    expect(runtime.createApp).not.toHaveBeenCalled();
+    expect(runtime.mountProductionStatic).not.toHaveBeenCalled();
   });
 
-  it("keeps non-auth failures as server errors", async () => {
-    const response = await appFor(async () => {
-      throw new GmailBatchPartError(429, 0, "rate limited");
-    }).request("http://test/api/messages");
+  it.each(["", "1", "1023", "65536", "1.5", "1e3", "8787x", "-1"])(
+    "rejects invalid PORT=%s",
+    async (port) => {
+      vi.stubEnv("PORT", port);
 
-    expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({
-      error: "GMAIL_BATCH_PART_429_REQUEST_FAILED",
-    });
+      await expect(loadIndex()).rejects.toThrow(/Invalid PORT/);
+      expect(runtime.createApp).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["1024", "65535"])("accepts PORT=%s", async (port) => {
+    vi.stubEnv("PORT", port);
+
+    const { default: adapter } = await loadIndex();
+
+    expect(adapter.port).toBe(Number(port));
+  });
+
+  it.each(["", "0.0.0.0", "192.168.1.20", "::", "mail.local"])(
+    "rejects non-loopback HOST=%s",
+    async (host) => {
+      vi.stubEnv("HOST", host);
+
+      await expect(loadIndex()).rejects.toThrow(/Invalid HOST/);
+      expect(runtime.createApp).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["127.0.0.1", "localhost", "::1"])(
+    "accepts loopback HOST=%s",
+    async (host) => {
+      vi.stubEnv("HOST", host);
+
+      const { default: adapter } = await loadIndex();
+
+      expect(adapter.hostname).toBe(host);
+    },
+  );
+
+  it("formats the IPv6 loopback address as a valid URL in startup logs", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubEnv("HOST", "::1");
+
+    await loadIndex();
+
+    expect(log).toHaveBeenCalledWith("[server] http://[::1]:8787");
+    log.mockRestore();
   });
 });

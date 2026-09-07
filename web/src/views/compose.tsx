@@ -73,10 +73,7 @@ export type ComposeInit = {
   quoteHtml?: string;
   quoteFrom?: string;
   quoteDate?: string;
-  quoteTo?: string;
-  quoteSubject?: string;
-  forward?: boolean; // 전달이면 인용을 "전달된 메일" 헤더 형식으로
-  forwardThread?: boolean; // 전체 대화 전달 — 독립 카드 HTML을 그대로 사용
+  forward?: boolean; // 전달이면 카드화된 전체 대화 인용
   from?: string; // 드래프트 이어쓰기 시 원래 보내는 주소(별칭) 복원용
   attachments?: ComposeAttachment[];
   bodyHtml?: string; // 드래프트 이어쓰기 — 저장된 HTML 그대로
@@ -92,34 +89,16 @@ export function buildQuotedHtml(init?: ComposeInit): string {
   if (!init?.quoteHtml) return "";
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const when = init.quoteDate ? QUOTE_FMT.format(new Date(init.quoteDate)) : "";
   // 위생 처리 필수 — 받은 메일의 원본 HTML이 에디터(메인 문서)에 innerHTML로
   // 들어가므로 <img onerror> 류가 마운트 즉시 실행되는 걸 막는다. 전달은 인라인
   // 이미지를 재첨부하므로 cid: 유지, 답장은 재첨부 안 하므로 cid: 이미지 제거.
-  if (init.forwardThread) {
+  if (init.forward) {
+    // Reader already builds one independently sanitized-at-insertion boundary
+    // per message. Keep that flat card structure intact; adding another
+    // per-message wrapper here would compound indentation on every forward.
     return `<br>${sanitizeMailHtml(init.quoteHtml)}`;
   }
-  if (init.forward) {
-    const safe = sanitizeMailHtml(init.quoteHtml);
-    const rows = [
-      ["보낸사람", init.quoteFrom],
-      ["날짜", when],
-      ["제목", init.quoteSubject],
-      ["받는사람", init.quoteTo],
-    ]
-      .filter(([, v]) => v)
-      .map(([k, v]) => `${k}: ${esc(String(v))}`)
-      .join("<br>");
-    // 전달 블록: 상단 구분선 + "전달된 메일" 라벨, 메타와 본문을 왼쪽 강조선으로
-    // 들여써 원문과 명확히 구분 (인라인 스타일 — 수신자 클라이언트에도 적용).
-    return (
-      `<br><div class="mail-fwd" style="margin-top:14px;border-top:1px solid #e3e7ee;padding-top:12px">` +
-      `<div style="font-size:12px;font-weight:600;letter-spacing:.3px;color:#8a93a3;text-transform:uppercase;margin-bottom:10px">전달된 메일</div>` +
-      `<div style="border-left:3px solid #c8d0dd;padding-left:14px">` +
-      `<div style="font-size:12.5px;line-height:1.7;color:#5f6368;margin-bottom:10px">${rows}</div>` +
-      `${safe}</div></div>`
-    );
-  }
+  const when = init.quoteDate ? QUOTE_FMT.format(new Date(init.quoteDate)) : "";
   const safe = sanitizeMailHtml(init.quoteHtml, { dropCidImages: true });
   const attr = `${when ? when + ", " : ""}${esc(init.quoteFrom ?? "")} 님이 작성:`;
   return (
