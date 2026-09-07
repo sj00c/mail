@@ -19,6 +19,22 @@ function Wait-MailServer {
   $reason = "timeout"
   try {
     while ($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+      # Inspect the task before HTTP: Windows can spend the full probe timeout
+      # connecting to a closed port even when the process has already exited.
+      $scheduled = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+      $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction Stop
+      $state = [string]$scheduled.State
+      $result = $info.LastTaskResult
+      # Queued is not dead. Ready may describe an old run, so require evidence
+      # that THIS launch ran (Task Scheduler stores times at second precision).
+      if ($state -eq "Disabled" -or (
+        $state -eq "Ready" -and $info.LastRunTime -ge $StartedAt.AddSeconds(-1) -and
+        $result -ne 267009 -and $result -ne 267011
+      )) {
+        $reason = "exited"
+        break
+      }
+      if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
       $remainingMs = [Math]::Max(1, [Math]::Ceiling(($TimeoutSeconds - $clock.Elapsed.TotalSeconds) * 1000))
       $cancel = New-Object System.Threading.CancellationTokenSource
       $cancel.CancelAfter([int][Math]::Min(2000, $remainingMs))
@@ -44,19 +60,6 @@ function Wait-MailServer {
         $cancel.Dispose()
       }
 
-      $scheduled = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-      $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction Stop
-      $state = [string]$scheduled.State
-      $result = $info.LastTaskResult
-      # Queued is not dead. Ready may describe an old run, so require evidence
-      # that THIS launch ran (Task Scheduler stores times at second precision).
-      if ($state -eq "Disabled" -or (
-        $state -eq "Ready" -and $info.LastRunTime -ge $StartedAt.AddSeconds(-1) -and
-        $result -ne 267009 -and $result -ne 267011
-      )) {
-        $reason = "exited"
-        break
-      }
       $remainingMs = [Math]::Floor(($TimeoutSeconds - $clock.Elapsed.TotalSeconds) * 1000)
       if ($remainingMs -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Min(250, $remainingMs)) }
     }
