@@ -19,7 +19,7 @@ const message = {
   labelIds: ["INBOX"],
   rfc822MsgId: "<message-1@example.com>",
   bodyText: null,
-  // 배경을 지정하지 않은 메일 — 다크에서도 종이 위에 검은 글자로 읽혀야 한다.
+  // 배경을 지정하지 않은 메일도 앱 테마를 따라 읽을 수 있어야 한다.
   bodyHtml: "<p>Hello from an html mail without any background.</p>",
   hasAttachments: false,
   attachments: [] as unknown[],
@@ -51,7 +51,7 @@ test("follows the OS scheme until the user picks one, then persists the pick acr
   await expect(page.getByRole("button", { name: "다크 모드로 전환" })).toBeVisible();
 });
 
-test("dark theme repaints the shell but keeps mail bodies on paper", async ({ page }) => {
+test("dark mail follows the theme and offers reversible original colors", async ({ page }) => {
   await installAppMocks(page, { messages: [message] });
   await openMailbox(page);
   const lightList = await bg(page, ".list");
@@ -67,10 +67,58 @@ test("dark theme repaints the shell but keeps mail bodies on paper", async ({ pa
   await page.locator(".msg-row").first().click();
   const frame = page.locator(".html-frame");
   await expect(frame).toBeVisible();
+  await expect(frame).toHaveCSS("background-color", "rgb(23, 27, 35)");
+  await expect(frame).toHaveCSS("color-scheme", "dark");
+  const body = frame.contentFrame().locator("body");
+  await expect(body).toHaveCSS("color", "rgb(230, 233, 239)");
+  await expect(body).toHaveCSS("background-color", "rgb(23, 27, 35)");
+  // Switching presentation must not reload the document or lose quote state.
+  await body.evaluate((b) => b.setAttribute("data-document-marker", "same"));
+  await page.getByRole("button", { name: "원본 색상으로 보기", exact: true }).click();
   await expect(frame).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await expect(frame).toHaveCSS("color-scheme", "light");
-  const bodyColor = await frame.contentFrame().locator("body").evaluate((b) => getComputedStyle(b).color);
-  expect(bodyColor).toBe("rgb(0, 0, 0)");
+  await expect(body).toHaveCSS("color", "rgb(0, 0, 0)");
+  await expect(body).toHaveAttribute("data-document-marker", "same");
+  await page.getByRole("button", { name: "다크 본문으로 보기", exact: true }).click();
+  await expect(body).toHaveCSS("color", "rgb(230, 233, 239)");
+  await page.getByRole("button", { name: "라이트 모드로 전환" }).click();
+  await expect(body).toHaveCSS("color", "rgb(0, 0, 0)");
+  await expect(page.getByRole("button", { name: "원본 색상으로 보기", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "다크 모드로 전환" }).click();
+  await expect(body).toHaveCSS("color", "rgb(230, 233, 239)");
+});
+
+test("nested newsletter colors change but images and SVG logos keep their original colors", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("mail.theme", "dark"));
+  const image = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='8' height='8' fill='red'/%3E%3C/svg%3E";
+  const bodyHtml = `<body style="background:white!important;color:black">
+    <table bgcolor="#ffffff" style="background-color:white!important;width:100%"><tr>
+    <td style="color:black!important"><p>Newsletter text</p>
+    <a href="https://example.com"><span>Read more</span></a>
+    <img src="${image}" alt="Original logo">
+    <svg width="20" height="20"><path fill="currentColor" d="M0 0h20v20H0z"/></svg>
+    <details><summary>History</summary><p>Older text</p></details>
+    </td></tr></table></body>`;
+  await installAppMocks(page, { messages: [{ ...message, bodyHtml }] });
+  await openMailbox(page);
+  await page.locator(".msg-row").first().click();
+  const frame = page.locator(".html-frame");
+  const mail = frame.contentFrame();
+  await expect(mail.locator("table")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(mail.locator("p").first()).toHaveCSS("color", "rgb(230, 233, 239)");
+  await expect(mail.locator("a span")).toHaveCSS("color", "rgb(138, 180, 248)");
+  await expect(mail.locator("img")).toHaveAttribute("src", image);
+  await expect(mail.locator("img")).toHaveCSS("filter", "none");
+  await expect(mail.locator("path")).toHaveCSS("fill", "rgb(0, 0, 0)");
+  await expect(mail.locator("svg")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await page.screenshot({ path: test.info().outputPath("dark-newsletter.png") });
+  await mail.locator("summary").click();
+  await page.getByRole("button", { name: "원본 색상으로 보기", exact: true }).click();
+  await expect(mail.locator("table")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(mail.locator("p").first()).toHaveCSS("color", "rgb(0, 0, 0)");
+  await expect(mail.locator("details")).toHaveAttribute("open", "");
+  await expect(frame).toHaveAttribute("sandbox", "allow-same-origin allow-popups allow-popups-to-escape-sandbox");
+  await page.getByRole("button", { name: "다크 본문으로 보기", exact: true }).click();
+  await expect(mail.locator("details")).toHaveAttribute("open", "");
 });
 
 test("today's month cell is unmistakable in dark mode", async ({ page }) => {

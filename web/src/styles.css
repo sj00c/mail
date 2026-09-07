@@ -1,7 +1,7 @@
 /* 색 토큰. 라이트가 기본이고, <html data-theme="dark">가 아래 블록에서
    같은 이름을 덮어쓴다 — 규칙 본문에는 hex를 직접 쓰지 않는다.
-   예외: 메일 본문(iframe)·서식 편집기는 수신자가 보는 그대로 "종이"(--paper)
-   위에 그리므로 그 안쪽 색은 테마와 무관하게 고정이다. */
+   서식 편집기와 메일 원본 보기는 "종이"(--paper) 위에 그린다.
+   다크 본문 읽기는 reader.css와 mailDark.ts에서 별도로 적용한다. */
 :root {
   color-scheme: light;
   --bg: #eef1f6;
@@ -1482,8 +1482,8 @@ body::after {
   height: 320px; /* JS overrides to fit content; this is the pre-measure fallback */
   border: none;
   display: block;
-  /* 메일 HTML은 자기 색을 들고 온다(대개 흰 바탕 전제). 다크에서도 종이 위에
-     그린다 — 배경을 안 정한 메일의 검은 글자가 어두운 패널에 묻히지 않게. */
+  /* 라이트 및 원본 색상 보기의 기본 종이 배경.
+     다크 읽기는 reader.css의 data-mail-dark 규칙이 덮어쓴다. */
   background: var(--paper);
   color-scheme: light;
 }

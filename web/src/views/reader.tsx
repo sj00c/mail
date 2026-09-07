@@ -9,6 +9,9 @@ import {
   type MessageSummary,
 } from "../api.ts";
 import { downloadAttachment, saveAttachment } from "../lib/attachments.ts";
+import { useTheme } from "../hooks/useTheme.ts";
+import { applyMailDarkMode } from "../lib/mailDark.ts";
+import "./reader.css";
 import { avatarColor, DATETIME_FMT, listDateLabel } from "../lib/format.tsx";
 import {
   directMessageHtml,
@@ -777,6 +780,24 @@ export function HtmlBody({
   onComposeTo: (email: string) => void;
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
+  const { theme } = useTheme();
+  const [originalFor, setOriginalFor] = useState<string | null>(null);
+  const originalColors = originalFor === id;
+  const dark = theme === "dark" && !originalColors;
+  const restoreColors = useRef<(() => void) | undefined>(undefined);
+  const syncColors = useCallback(() => {
+    restoreColors.current?.();
+    restoreColors.current = undefined;
+    const doc = ref.current?.contentDocument;
+    if (dark && doc?.body) restoreColors.current = applyMailDarkMode(doc);
+  }, [dark]);
+  useEffect(() => {
+    syncColors();
+    return () => {
+      restoreColors.current?.();
+      restoreColors.current = undefined;
+    };
+  }, [syncColors]);
   // 부모가 onLoad에서 iframe 문서에 click 리스너를 단다 — 최신 콜백을 ref로
   // 잡아 stale 클로저를 피한다.
   const composeRef = useRef(onComposeTo);
@@ -843,6 +864,7 @@ export function HtmlBody({
   );
 
   const onLoad = useCallback(() => {
+    syncColors();
     resize();
     const doc = ref.current?.contentDocument;
     if (!doc) return;
@@ -901,7 +923,7 @@ export function HtmlBody({
         el?.scrollIntoView({ block: "start" });
       }
     });
-  }, [resize, syncOpen]);
+  }, [resize, syncOpen, syncColors]);
 
   return (
     <>
@@ -940,12 +962,26 @@ export function HtmlBody({
           </div>
         </div>
       )}
+      {theme === "dark" && (
+        <div className="mail-color-controls">
+          <button
+            type="button"
+            className="btn sm"
+            aria-pressed={originalColors}
+            onClick={() => setOriginalFor(originalColors ? null : id)}
+            title="이미지와 로고는 원래 색상을 유지합니다. 메일 디자인이 읽기 어려우면 원본 색상으로 보세요."
+          >
+            {originalColors ? "다크 본문으로 보기" : "원본 색상으로 보기"}
+          </button>
+        </div>
+      )}
       <iframe
         ref={ref}
         title={`message-${id}`}
         sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         srcDoc={prepared.html}
         className="html-frame"
+        data-mail-dark={dark}
         onLoad={onLoad}
       />
     </>

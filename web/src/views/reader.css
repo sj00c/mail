@@ -1,0 +1,10 @@
+.html-frame[data-mail-dark="true"] {
+  background: var(--panel);
+  color-scheme: dark;
+}
+
+.mail-color-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px;
+}
