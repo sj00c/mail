@@ -321,9 +321,11 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1
 2. Bun이 없으면 공식 설치 프로그램으로 자동 설치
 3. 앱에 필요한 파일 설치 및 프로덕션 빌드
 4. 로그인할 때마다 앱이 자동으로 켜지도록 등록
-5. `localhost:8787`이 실제로 열리는지 확인(최대 60초)한 뒤 브라우저 실행
+5. `localhost:8787`이 실제로 열리는지 확인(Windows는 실제 경과시간 기준 60초)한 뒤 브라우저 실행
 
 중간에 잘못된 Client ID, 빈 Client Secret, 포트와 리디렉션 주소의 불일치, 이미 다른 프로그램이 쓰고 있는 포트가 발견되면 무엇을 고쳐야 하는지 표시하고 설치를 멈춥니다. 서버가 떠다 죽으면 로그의 마지막 부분을 바로 보여줍니다. 연결 정보의 실제 값은 화면이나 로그에 출력하지 않습니다.
+
+Windows에서는 단계별 소요시간, Bun 경로·버전, 명령 출력과 실패 단계를 `%LOCALAPPDATA%\MailLocal\install.log`에 저장합니다(재설치하면 최근 시도 내용으로 교체). 서버 출력은 같은 폴더의 `mail.local.log`에 남습니다. 로그인 시에는 설치 때 확인한 Bun으로 이미 빌드한 앱만 실행하며, 다시 빌드하지 않습니다. 소스를 업데이트하거나 폴더를 옮겼다면 설치 명령을 다시 실행하세요.
 
 `설치가 끝났습니다.`가 표시되면 명령 창을 닫아도 됩니다. 브라우저가 자동으로 열리지 않았다면 [http://localhost:8787](http://localhost:8787)을 직접 여세요.
 
@@ -438,13 +440,17 @@ Google이 로그인 권한을 만료하거나 사용자가 권한을 회수한 �
 </details>
 
 <details>
-<summary><b>설치 마지막에 "서버가 60초 안에 열리지 않았습니다" 또는 "시작 직후 종료됐습니다"가 떠요</b></summary>
+<summary><b>설치 중 Timeout / 응답 확인 시간 초과 / 서버 종료가 떠요</b></summary>
 
-설치 자체는 끝났고, 마지막 "서버가 진짜 열렸나" 확인만 실패한 겁니다. 화면에 함께 찍힌 **로그 마지막 부분**에 이유가 있어요.
+Timeout이라는 말만으로 느린 PC나 다운로드 문제라고 판단할 수 없습니다. 마지막 서버 응답 확인 단계의 시간 초과라면 다운로드·빌드는 이미 끝났지만, 앱이 정상 실행됐다는 뜻은 아닙니다.
 
-- **느린 PC / 처음 켜는 PC**: 보안 검사나 느린 디스크 때문에 첫 시작이 1분을 넘기도 해요. 잠시 후 [http://localhost:8787](http://localhost:8787)을 그냥 열어 보세요 — 자동 실행은 이미 등록돼 있어서 뒤늦게 떠 있는 경우가 대부분입니다.
-- **포트를 다른 프로그램이 쓰는 경우**: 설치 스크립트가 그 프로그램 이름과 PID를 알려 주고 멈춥니다. 이름이 `bun`이면 예전에 터미널에서 직접 켠 Mail 서버예요 — 그 창을 닫고 다시 설치하세요. 다른 프로그램이면 아래 "포트 바꾸기"를 보세요.
-- **로그에 오류가 찍혀 있는 경우**: 대개 `.env` 값 문제예요. 고친 뒤 설치 명령을 다시 실행하세요. 로그 위치: macOS `~/Library/Logs/mail.local.log`, Windows `%LOCALAPPDATA%\MailLocal\mail.local.log`
+- **Windows**: 화면의 **실패 단계**와 `%LOCALAPPDATA%\MailLocal\install.log` 마지막 부분을 확인하세요. 파일 탐색기 주소창에 `%LOCALAPPDATA%\MailLocal`을 입력하면 로그 폴더가 열립니다. 실행 확인에서 실패했다면 작업 상태·종료 코드와 서버 로그 마지막 25줄도 설치 로그에 기록됩니다.
+- **macOS**: 화면에 나온 로그 마지막 부분과 `~/Library/Logs/mail.local.log`를 확인하세요.
+- **작업이 종료된 경우**: 기다리는 시간을 늘리는 대신 기록된 오류를 먼저 해결해야 합니다. Windows 예약 작업은 실패 후 1분 간격으로 재시도합니다.
+- **작업이 실행 중이거나 대기 중인 경우**: 늦은 시작일 수도 있지만 확정할 수는 없습니다. 로그를 확인하고 주소를 직접 열어 보세요.
+- **포트 점유**: 표시된 프로그램과 PID를 확인하세요. `bun`은 다른 앱도 사용하는 실행 프로그램이므로 이름만 보고 종료하지 마세요. 다른 앱의 포트라면 아래 "포트 바꾸기"를 따르세요.
+
+오류를 전달할 때는 실패 단계와 마지막 오류 부분을 보내고, `.env`나 `server/.data/token.json`은 보내지 마세요. 로그에도 개인 경로나 오류에 포함된 개인정보가 있을 수 있으니 공유 전 확인하세요.
 </details>
 
 <details>
@@ -543,9 +549,14 @@ docs/
   PRD.md           점검 리포트 · 릴리스 노트 · 백로그
 deploy/
   install.sh / install.ps1     자동 시작 등록 (launchd / 작업 스케줄러)
-  run.sh / run.cmd             빌드 후 서버 기동 진입점
+  run.sh                      macOS 빌드 확인 후 서버 기동
+  run.ps1                     Windows 빌드된 서버만 기동
+  windows-readiness.ps1        Windows 응답 기한·작업 상태 확인
+  windows-install.test.ps1     PowerShell 회귀 및 Windows 설치 통합 테스트
 ```
 
 CI(`.github/workflows/ci.yml`)는 push/PR마다 모의 API만 사용해 `test:unit` → `typecheck` → `build` → 프로덕션 `dist` Chromium `test:e2e` 순서로 검증합니다. 개발자는 push 전에 `bun run check` 한 번으로 같은 핵심 검증을 실행할 수 있습니다.
+
+별도 Windows 작업은 PowerShell 5.1에서 `deploy/windows-install.test.ps1 -Integration`을 실행해 실제 작업 스케줄러 등록과 서버 응답을 확인하고 설치 로그를 보관합니다. 통합 테스트는 실제 `.env`나 `MailLocal` 작업이 있으면 중단하므로 깨끗한 테스트 환경에서만 실행하세요. `-Integration` 없이 실행하면 임시 파일·로컬 HTTP 서버와 모의 작업 상태로 회귀 테스트만 수행합니다.
 
 </details>

@@ -14,7 +14,8 @@ This repository is a local-only Gmail, Google Calendar, Google Drive, and Google
 6. Do not invent API keys. This app uses a Web application OAuth Client ID and Client Secret.
 7. Keep the default port 8787 unless the installer reports that another program owns it. Then set `PORT` and `OAUTH_REDIRECT` in `.env` to the same free port and have the user add that redirect URI in Google Cloud Console before re-running. Never expose the server to the LAN.
 8. Run the installer only after `.env` exists and the user confirms they saved both credential values.
-9. Verify the build and `http://127.0.0.1:<PORT>/auth/status` (default 8787). Report the exact failing step when installation does not complete. When the installer prints a log tail ("서버가 60초 안에 열리지 않았습니다" / "시작 직후 종료됐습니다"), read that tail for the real cause instead of retrying blindly.
+9. Verify the build and `http://127.0.0.1:<PORT>/auth/status` (default 8787). Report the exact failing step when installation does not complete. On Windows, inspect `%LOCALAPPDATA%\MailLocal\install.log` for stage timings, Bun path/version, task result and the server log tail; server output is in `mail.local.log` in the same directory. Do not infer slow hardware, Defender, or invalid credentials from a timeout alone. A `bun` port owner is not necessarily this app.
+10. Windows login starts the already-built app using `deploy/run.ps1` and the absolute Bun path registered by the installer. Re-run the installer after source updates or moving the app; do not reintroduce builds at login or rely on the scheduler's PATH. Windows Task Scheduler restart intervals must be at least one minute.
 
 ## Google Cloud values the user must obtain
 
