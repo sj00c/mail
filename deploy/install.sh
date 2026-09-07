@@ -8,8 +8,9 @@ RUN="$DIR/deploy/run.sh"
 LOG="$HOME/Library/Logs/mail.local.log"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 UID_NUM="$(id -u)"
-APP_URL="http://localhost:8787"
-EXPECTED_REDIRECT="$APP_URL/auth/callback"
+# 서버가 열릴 때까지 기다리는 시간(초). 처음 켜는 PC는 느린 디스크·보안 검사 때문에
+# 시작이 수십 초 걸릴 수 있다. 도중에 서버가 죽으면 기다리지 않고 바로 끝낸다.
+READY_TIMEOUT=60
 
 fail() {
   echo
@@ -41,8 +42,19 @@ CLIENT_ID="$(env_value GOOGLE_CLIENT_ID)"
 CLIENT_SECRET="$(env_value GOOGLE_CLIENT_SECRET)"
 REDIRECT="$(env_value OAUTH_REDIRECT)"
 PORT_VALUE="$(env_value PORT)"
-REDIRECT="${REDIRECT:-$EXPECTED_REDIRECT}"
 PORT_VALUE="${PORT_VALUE:-8787}"
+
+# 포트는 기본 8787이지만 바꿀 수 있다 — 단, 리디렉션 URI도 같은 포트여야 하고
+# 그 URI가 Google Cloud 콘솔에 등록돼 있어야 한다(아래에서 안내).
+case "$PORT_VALUE" in
+  ''|*[!0-9]*) fail "PORT는 숫자여야 합니다 (기본 8787)." ;;
+esac
+if [ "$PORT_VALUE" -lt 1024 ] || [ "$PORT_VALUE" -gt 65535 ]; then
+  fail "PORT는 1024~65535 사이여야 합니다 (기본 8787)."
+fi
+APP_URL="http://localhost:$PORT_VALUE"
+EXPECTED_REDIRECT="$APP_URL/auth/callback"
+REDIRECT="${REDIRECT:-$EXPECTED_REDIRECT}"
 
 [ -n "$CLIENT_ID" ] || fail ".env의 GOOGLE_CLIENT_ID가 비어 있습니다."
 [ -n "$CLIENT_SECRET" ] || fail ".env의 GOOGLE_CLIENT_SECRET이 비어 있습니다."
@@ -57,8 +69,19 @@ esac
 case "$CLIENT_ID$CLIENT_SECRET" in
   *\"*|*\'*|*" "*) fail "Client ID와 Client Secret에는 따옴표나 공백을 넣지 마세요." ;;
 esac
-[ "$REDIRECT" = "$EXPECTED_REDIRECT" ] || fail "OAUTH_REDIRECT는 $EXPECTED_REDIRECT 이어야 합니다."
-[ "$PORT_VALUE" = "8787" ] || fail "PORT는 8787이어야 합니다."
+[ "$REDIRECT" = "$EXPECTED_REDIRECT" ] || fail "OAUTH_REDIRECT는 $EXPECTED_REDIRECT 이어야 합니다 (PORT=$PORT_VALUE 기준)."
+if [ "$PORT_VALUE" != "8787" ]; then
+  echo "참고: PORT=$PORT_VALUE — Google Cloud 콘솔의 승인된 리디렉션 URI에 $EXPECTED_REDIRECT 가 등록돼 있어야 로그인이 됩니다."
+fi
+
+# 포트를 누가 쓰고 있는지. 우리 자동 실행 항목은 아래에서 종료하므로, 그 뒤에도 남아 있으면
+# 다른 프로그램(또는 터미널에서 직접 띄운 이전 Mail 서버)이다. 그 상태로 등록하면
+# 서버가 계속 죽었다 살아나며 "열리지 않았습니다"로만 보이므로 여기서 이름을 짚어 준다.
+port_listener() {
+  /usr/sbin/lsof -nP -iTCP:"$PORT_VALUE" -sTCP:LISTEN -Fpc 2>/dev/null | awk '
+    /^p/ { pid = substr($0, 2) }
+    /^c/ { print substr($0, 2) " (PID " pid ")"; exit }'
+}
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:/usr/bin:/bin:$PATH"
 
@@ -103,21 +126,56 @@ sleep 1
 if launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; then
   fail "기존 자동 실행을 종료하지 못했습니다. 잠시 후 설치 스크립트를 다시 실행하세요."
 fi
+OCCUPANT="$(port_listener)"
+if [ -n "$OCCUPANT" ]; then
+  fail "$PORT_VALUE 포트를 다른 프로그램이 쓰고 있습니다: $OCCUPANT
+  - 이름이 bun이면 이전에 직접 켠 Mail 서버입니다. 그 터미널 창을 닫거나 kill <PID> 로 끝내고 다시 실행하세요.
+  - 다른 프로그램이라면 .env의 PORT를 비어 있는 번호(예: 8788)로 바꾸고, OAUTH_REDIRECT도
+    http://localhost:그번호/auth/callback 으로 바꾼 뒤 같은 주소를 Google Cloud 콘솔의
+    승인된 리디렉션 URI에 추가하고 다시 실행하세요."
+fi
 launchctl bootstrap "gui/$UID_NUM" "$PLIST"
 launchctl enable "gui/$UID_NUM/$LABEL"
 launchctl kickstart -k "gui/$UID_NUM/$LABEL"
 
+# 서버가 살아 있는지(launchd가 PID를 보고 있는지). 처음 죽고 나면 KeepAlive가 10초 뒤 다시 켜보므로
+# "죽었다"가 한 번이라도 보이면 설정 문제다 — 기다리지 말고 로그를 보여준다.
+server_alive() {
+  launchctl print "gui/$UID_NUM/$LABEL" 2>/dev/null | grep -qE '^\s*pid = [0-9]+'
+}
+
+show_log_tail() {
+  if [ -s "$LOG" ]; then
+    echo
+    echo "---- 로그 마지막 부분 ($LOG) ----" >&2
+    tail -n 25 "$LOG" >&2
+    echo "-------------------------------------------" >&2
+  fi
+}
+
 READY=0
-for _ in {1..30}; do
-  if /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:8787/auth/status" >/dev/null 2>&1; then
+DIED=0
+sleep 1
+for i in $(seq 1 "$READY_TIMEOUT"); do
+  if /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:$PORT_VALUE/auth/status" >/dev/null 2>&1; then
     READY=1
+    break
+  fi
+  # 철 직후 몇 초는 launchd가 PID를 아직 안 준 수 있어 3초부터 본다
+  if [ "$i" -ge 3 ] && ! server_alive; then
+    DIED=1
     break
   fi
   sleep 1
 done
 
+if [ "$DIED" -eq 1 ]; then
+  show_log_tail
+  fail "서버가 시작 직후 종료됐습니다. 위 로그의 마지막 오류를 확인하세요: $LOG"
+fi
 if [ "$READY" -ne 1 ]; then
-  fail "서버가 30초 안에 열리지 않았습니다. 로그를 확인하세요: $LOG"
+  show_log_tail
+  fail "서버가 ${READY_TIMEOUT}초 안에 열리지 않았습니다. PC가 느리면 잠시 후 $APP_URL 을 열어 보고, 그래도 안 열리면 로그를 확인하세요: $LOG"
 fi
 
 echo

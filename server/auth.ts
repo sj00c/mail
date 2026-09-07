@@ -22,8 +22,11 @@ const TOKEN_PATH = join(dirname(fileURLToPath(import.meta.url)), ".data", "token
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+// 리디렉션 URI는 서버 포트를 따라간다 — PORT만 바꿨도 자기 포트로 돌아온다.
+// (Google Cloud 콘솔에도 같은 URI가 등록돼 있어야 한다.)
 const REDIRECT =
-  process.env.OAUTH_REDIRECT ?? "http://localhost:8787/auth/callback";
+  process.env.OAUTH_REDIRECT ??
+  `http://localhost:${process.env.PORT || 8787}/auth/callback`;
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.warn(

@@ -321,9 +321,9 @@ powershell -ExecutionPolicy Bypass -File deploy\install.ps1
 2. Bun이 없으면 공식 설치 프로그램으로 자동 설치
 3. 앱에 필요한 파일 설치 및 프로덕션 빌드
 4. 로그인할 때마다 앱이 자동으로 켜지도록 등록
-5. `localhost:8787`이 실제로 열리는지 확인한 뒤 브라우저 실행
+5. `localhost:8787`이 실제로 열리는지 확인(최대 60초)한 뒤 브라우저 실행
 
-중간에 잘못된 Client ID, 빈 Client Secret, 다른 포트가 발견되면 무엇을 고쳐야 하는지 표시하고 설치를 멈춥니다. 연결 정보의 실제 값은 화면이나 로그에 출력하지 않습니다.
+중간에 잘못된 Client ID, 빈 Client Secret, 포트와 리디렉션 주소의 불일치, 이미 다른 프로그램이 쓰고 있는 포트가 발견되면 무엇을 고쳐야 하는지 표시하고 설치를 멈춥니다. 서버가 떠다 죽으면 로그의 마지막 부분을 바로 보여줍니다. 연결 정보의 실제 값은 화면이나 로그에 출력하지 않습니다.
 
 `설치가 끝났습니다.`가 표시되면 명령 창을 닫아도 됩니다. 브라우저가 자동으로 열리지 않았다면 [http://localhost:8787](http://localhost:8787)을 직접 여세요.
 
@@ -438,6 +438,28 @@ Google이 로그인 권한을 만료하거나 사용자가 권한을 회수한 �
 </details>
 
 <details>
+<summary><b>설치 마지막에 "서버가 60초 안에 열리지 않았습니다" 또는 "시작 직후 종료됐습니다"가 떠요</b></summary>
+
+설치 자체는 끝났고, 마지막 "서버가 진짜 열렸나" 확인만 실패한 겁니다. 화면에 함께 찍힌 **로그 마지막 부분**에 이유가 있어요.
+
+- **느린 PC / 처음 켜는 PC**: 보안 검사나 느린 디스크 때문에 첫 시작이 1분을 넘기도 해요. 잠시 후 [http://localhost:8787](http://localhost:8787)을 그냥 열어 보세요 — 자동 실행은 이미 등록돼 있어서 뒤늦게 떠 있는 경우가 대부분입니다.
+- **포트를 다른 프로그램이 쓰는 경우**: 설치 스크립트가 그 프로그램 이름과 PID를 알려 주고 멈춥니다. 이름이 `bun`이면 예전에 터미널에서 직접 켠 Mail 서버예요 — 그 창을 닫고 다시 설치하세요. 다른 프로그램이면 아래 "포트 바꾸기"를 보세요.
+- **로그에 오류가 찍혀 있는 경우**: 대개 `.env` 값 문제예요. 고친 뒤 설치 명령을 다시 실행하세요. 로그 위치: macOS `~/Library/Logs/mail.local.log`, Windows `%LOCALAPPDATA%\MailLocal\mail.local.log`
+</details>
+
+<details>
+<summary><b>8787 포트를 다른 프로그램이 쓰고 있어요 — 포트 바꾸기</b></summary>
+
+세 곳을 같은 번호로 맞추면 됩니다 (예: 8788).
+
+1. `.env`에서 `PORT=8788`, `OAUTH_REDIRECT=http://localhost:8788/auth/callback`
+2. [Google Cloud 콘솔 → OAuth 클라이언트](https://console.cloud.google.com/apis/credentials)의 **승인된 리디렉션 URI**에 `http://localhost:8788/auth/callback` 추가 (기존 8787은 두어도 됨)
+3. 설치 명령을 다시 실행. 앞으로는 [http://localhost:8788](http://localhost:8788)로 엽니다.
+
+리디렉션 URI를 콘솔에 추가하지 않으면 로그인할 때 `redirect_uri_mismatch`가 납니다.
+</details>
+
+<details>
 <summary><b>다른 기기(폰 등)에서도 접속할 수 있나요?</b></summary>
 
 기본적으로 안 됩니다 — 이 앱에는 별도의 비밀번호가 없어서, 일부러 내 컴퓨터 안에서만 열리게 잠가뒀어요. 그게 안전합니다.
@@ -483,8 +505,8 @@ Gmail 메일 목록은 최대 50개씩 multipart batch로 조회합니다. 배�
 |---|---|---|
 | `GOOGLE_CLIENT_ID` | *(필수)* | OAuth 클라이언트 ID |
 | `GOOGLE_CLIENT_SECRET` | *(필수)* | OAuth 클라이언트 시크릿 |
-| `OAUTH_REDIRECT` | `http://localhost:8787/auth/callback` | 콘솔 등록값과 정확히 일치해야 함 |
-| `PORT` | `8787` | 자동 설치 모드에서는 고정. 수동 개발 실행에서만 리디렉션 URI와 함께 변경 |
+| `OAUTH_REDIRECT` | `http://localhost:<PORT>/auth/callback` | 콘솔 등록값과 정확히 일치해야 함. 비우면 PORT에서 유도 |
+| `PORT` | `8787` | 1024~65535. 바꾸면 리디렉션 URI도 같은 포트로 바꾸고 콘솔에 등록해야 함 (설치 스크립트가 둘의 일치를 검사) |
 | `HOST` | `127.0.0.1` | 바인드 주소. 요청 인증이 없으므로 LAN 노출 금지 |
 
 ### 권한 범위 (scope)
