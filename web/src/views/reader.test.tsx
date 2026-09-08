@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageFull } from "../api.ts";
 
@@ -26,13 +33,20 @@ vi.mock("../lib/attachments.ts", async () => {
   const actual = await vi.importActual<typeof import("../lib/attachments.ts")>(
     "../lib/attachments.ts",
   );
-  return { ...actual, downloadAttachment: downloadAttachmentMock, saveAttachment: vi.fn() };
+  return {
+    ...actual,
+    downloadAttachment: downloadAttachmentMock,
+    saveAttachment: vi.fn(),
+  };
 });
 
 import { buildQuotedHtml, type ComposeInit } from "./compose.tsx";
 import { Reader } from "./reader.tsx";
 
-const makeMessage = (id: string, overrides: Partial<MessageFull> = {}): MessageFull => ({
+const makeMessage = (
+  id: string,
+  overrides: Partial<MessageFull> = {},
+): MessageFull => ({
   id,
   threadId: "thread-1",
   from: `${id} Sender <${id}@example.com>`,
@@ -144,17 +158,20 @@ describe("Reader forwarding", () => {
     const quote = init.quoteHtml ?? "";
     expect(init.forward).toBe(true);
     expect(init.subject).toBe("Fwd: Thread subject");
-    expect(quote.indexOf("new direct")).toBeLessThan(quote.indexOf("old direct"));
+    expect(quote.indexOf("new direct")).toBeLessThan(
+      quote.indexOf("old direct"),
+    );
     expect((quote.match(/new direct/g) ?? []).length).toBe(1);
     expect((quote.match(/old direct/g) ?? []).length).toBe(1);
-    expect((quote.match(/<section\b/g) ?? []).length).toBe(2);
-    expect(quote).toContain("margin:0 0 12px 16px");
-    expect(quote).toContain("border-left:3px solid");
+    expect((quote.match(/class="mail-fwd-message"/g) ?? []).length).toBe(2);
+    expect(quote).toContain("margin:16px 0 24px 12px");
+    expect(quote).toContain("border-left:2px solid");
+    expect(quote).toContain("Forwarded message");
+    expect(quote).not.toMatch(/background:|border-radius:|;color:/);
 
-    expect(downloadAttachmentMock.mock.calls.map(([messageId]) => messageId)).toEqual([
-      "new",
-      "old",
-    ]);
+    expect(
+      downloadAttachmentMock.mock.calls.map(([messageId]) => messageId),
+    ).toEqual(["new", "old"]);
     expect(init.attachments).toHaveLength(2);
     const cids = init.attachments?.map((a) => a.contentId ?? "") ?? [];
     expect(new Set(cids).size).toBe(2);
@@ -172,10 +189,15 @@ describe("Reader forwarding", () => {
     fireEvent.click(screen.getByRole("button", { name: "↪ 전달" }));
     await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1));
 
-    const init = onReply.mock.calls[0][0] as { quoteHtml?: string; forward?: boolean };
+    const init = onReply.mock.calls[0][0] as {
+      quoteHtml?: string;
+      forward?: boolean;
+    };
     expect(init.forward).toBe(true);
     expect(init.quoteHtml).toContain("전달된 대화 · 1개 메일");
-    expect((init.quoteHtml?.match(/<section\b/g) ?? []).length).toBe(1);
+    expect(
+      (init.quoteHtml?.match(/class="mail-fwd-message"/g) ?? []).length,
+    ).toBe(1);
   });
 
   it("does not expose forwarding while the thread is loading or after it fails", async () => {
@@ -200,12 +222,19 @@ describe("Reader forwarding", () => {
     threadMock.mockResolvedValue([
       makeMessage("old", {
         attachments: [
-          { id: "broken", filename: "broken.pdf", mimeType: "application/pdf", size: 1 },
+          {
+            id: "broken",
+            filename: "broken.pdf",
+            mimeType: "application/pdf",
+            size: 1,
+          },
         ],
       }),
       makeMessage("new"),
     ]);
-    downloadAttachmentMock.mockRejectedValue(new Error("attachment unavailable"));
+    downloadAttachmentMock.mockRejectedValue(
+      new Error("attachment unavailable"),
+    );
     const onReply = vi.fn();
     renderReader(onReply);
 

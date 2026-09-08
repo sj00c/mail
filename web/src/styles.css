@@ -1,7 +1,6 @@
 /* 색 토큰. 라이트가 기본이고, <html data-theme="dark">가 아래 블록에서
    같은 이름을 덮어쓴다 — 규칙 본문에는 hex를 직접 쓰지 않는다.
-   서식 편집기와 메일 원본 보기는 "종이"(--paper) 위에 그린다.
-   다크 본문 읽기는 reader.css와 mailDark.ts에서 별도로 적용한다. */
+   서식 편집기와 메일 원본 보기는 테마와 독립된 "종이"(--paper) 위에 그린다. */
 :root {
   color-scheme: light;
   --bg: #eef1f6;
@@ -49,6 +48,7 @@
   --mark-bg: #fef0b8;
   --paper: #ffffff;
   --paper-text: #1b1f27;
+  --paper-link: #1155cc;
   --toast-bg: #202124;
   --toast-text: #f1f3f4;
   --toast-accent: #8ab4f8;
@@ -1482,8 +1482,7 @@ body::after {
   height: 320px; /* JS overrides to fit content; this is the pre-measure fallback */
   border: none;
   display: block;
-  /* 라이트 및 원본 색상 보기의 기본 종이 배경.
-     다크 읽기는 reader.css의 data-mail-dark 규칙이 덮어쓴다. */
+  /* 배경이 없는 원문도 흰 종이 위에 표시하며, 앱 테마로 원문 색을 바꾸지 않는다. */
   background: var(--paper);
   color-scheme: light;
 }
@@ -3777,7 +3776,7 @@ mark {
   pointer-events: none;
 }
 .rich-body a {
-  color: var(--accent);
+  color: var(--paper-link);
 }
 .rich-body img {
   max-width: 100%;
@@ -3794,10 +3793,14 @@ mark {
   padding-left: 14px;
   color: #3c4453;
 }
-.rich-body .mail-fwd {
-  margin-top: 14px;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
+.rich-body .mail-fwd-message {
+  color: inherit;
+}
+.rich-body .mail-fwd-header {
+  overflow-wrap: anywhere;
+}
+.rich-body .mail-fwd-summary {
+  color: var(--paper-text);
 }
 .rich-body .mail-signature {
   color: #5f6368;

@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { installAppMocks, openMailbox } from "./fixtures/app.ts";
+import { expect } from "@playwright/test";
+import { test, installAppMocks, openMailbox } from "./fixtures/app.ts";
 
 test("sidebar distinguishes account-wide, folder total and unread message counts", async ({ page }) => {
   const calls = await installAppMocks(page, {

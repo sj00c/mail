@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { installAppMocks, openMailbox } from "./fixtures/app.ts";
+import { expect } from "@playwright/test";
+import { test, installAppMocks, openMailbox } from "./fixtures/app.ts";
 
 // 메일 열기(목록 클릭·검색 카드·좁은 화면)는 전부 중앙 팝업 리더로 뜬다.
 const baseMessage = {

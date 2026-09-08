@@ -1,11 +1,10 @@
 // 작성창: 서식 에디터, 수신자 칩 입력, 발송/임시저장, 인용 조립, data:→cid 변환.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   AuthError,
   HttpError,
   parseAddr,
-  splitAddrList,
   type Contact,
   type SendAsInfo,
 } from "../api.ts";
@@ -19,21 +18,26 @@ import {
 } from "../lib/attachments.ts";
 import { QUOTE_FMT } from "../lib/format.tsx";
 import { htmlToText, sanitizeMailHtml } from "../lib/mailHtml.ts";
+import { loadContactsOnce } from "../lib/contacts.ts";
 import {
-  FONT_FAMILIES,
   getDefaultFont,
   getSignatureBlockHtml,
   getUndoSec,
 } from "../lib/settings.ts";
 import { DialogGrip, DialogTools, useResizableDialog } from "../ui/dialog.tsx";
 import { AlertIcon, AttachmentIcon } from "../ui/icons.tsx";
+import { RichEditor } from "../ui/richEditor.tsx";
+import { RecipientField } from "../ui/recipientField.tsx";
 
 // 서명/붙여넣기로 본문에 박힌 data:image base64 → cid 인라인 첨부. 이메일
 // 클라이언트는 data: URI 이미지를 막으므로, 발송 직전 multipart/related cid로
 // 옮겨야 모든 수신함에서 보인다. 반환 html은 src가 cid:로 치환된 것.
 let inlineCidSeq = 0;
 
-export function dataUrisToCid(html: string): { html: string; inline: ComposeAttachment[] } {
+export function dataUrisToCid(html: string): {
+  html: string;
+  inline: ComposeAttachment[];
+} {
   if (!/data:image\//i.test(html)) return { html, inline: [] };
   const inline: ComposeAttachment[] = [];
   try {
@@ -93,9 +97,8 @@ export function buildQuotedHtml(init?: ComposeInit): string {
   // 들어가므로 <img onerror> 류가 마운트 즉시 실행되는 걸 막는다. 전달은 인라인
   // 이미지를 재첨부하므로 cid: 유지, 답장은 재첨부 안 하므로 cid: 이미지 제거.
   if (init.forward) {
-    // Reader already builds one independently sanitized-at-insertion boundary
-    // per message. Keep that flat card structure intact; adding another
-    // per-message wrapper here would compound indentation on every forward.
+    // Preserve the flat thread and original author formatting. App theme CSS
+    // stays outside this HTML; sanitize before insertion into the editor.
     return `<br>${sanitizeMailHtml(init.quoteHtml)}`;
   }
   const when = init.quoteDate ? QUOTE_FMT.format(new Date(init.quoteDate)) : "";
@@ -107,421 +110,6 @@ export function buildQuotedHtml(init?: ComposeInit): string {
     `<blockquote style="margin:0;border-left:3px solid #c8d0dd;padding-left:14px;color:#3c4453">` +
     `${safe}</blockquote></div>`
   );
-}
-
-// 서식 작성 에디터 — contentEditable + 툴바. 외부 라이브러리 없이
-// document.execCommand로 굵게/기울임/밑줄/목록/링크를 처리한다. 본문은
-// 부모가 editorRef.current.innerHTML로 읽어 발송한다 (uncontrolled).
-export function RichEditor({
-  editorRef,
-  initialHtml,
-  onFiles,
-  rich,
-  placeholder,
-  bodyStyle,
-}: {
-  editorRef: React.RefObject<HTMLDivElement>;
-  initialHtml: string;
-  onFiles: (files: File[]) => void;
-  rich?: boolean; // 폰트·크기·색상·이미지 삽입 툴 노출
-  placeholder?: string;
-  bodyStyle?: React.CSSProperties; // 기본 글꼴 미리보기 (발송 HTML과 시각 일치)
-}) {
-  const imgInputRef = useRef<HTMLInputElement>(null);
-  // contentEditable은 select/color/파일다이얼로그로 포커스를 뺏기면 caret을 잃는다.
-  // 에디터를 누를/칠 때마다 range를 저장해 두고, 서식 적용 직전 복원한다.
-  const savedRange = useRef<Range | null>(null);
-
-  // 마운트 시 1회만 주입 — contentEditable은 uncontrolled로 둔다.
-  useEffect(() => {
-    if (editorRef.current) editorRef.current.innerHTML = initialHtml;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const saveSel = () => {
-    const sel = window.getSelection?.();
-    if (
-      sel &&
-      sel.rangeCount > 0 &&
-      editorRef.current &&
-      editorRef.current.contains(sel.anchorNode)
-    ) {
-      savedRange.current = sel.getRangeAt(0).cloneRange();
-    }
-  };
-  const restoreSel = () => {
-    const sel = window.getSelection?.();
-    if (sel && savedRange.current) {
-      sel.removeAllRanges();
-      sel.addRange(savedRange.current);
-    }
-  };
-
-  const cmd = (command: string, value?: string) => {
-    editorRef.current?.focus();
-    try {
-      // 폰트/크기/색을 <font> 대신 인라인 style로 — 이메일 클라이언트 호환이 낫다.
-      document.execCommand("styleWithCSS", false, "true");
-    } catch {
-      /* 미지원 브라우저는 레거시 태그로 폴백 */
-    }
-    document.execCommand(command, false, value);
-  };
-  // 저장된 selection 복원 후 적용 (font/size/color/image 공용)
-  const applyWithSel = (command: string, value: string) => {
-    restoreSel();
-    cmd(command, value);
-  };
-  const makeLink = () => {
-    const sel = window.getSelection?.()?.toString();
-    const url = window.prompt("링크 URL:", sel && /^https?:/i.test(sel) ? sel : "https://");
-    if (url) cmd("createLink", url);
-  };
-  // 본문 인라인 이미지 — data: URI로 삽입하고, 발송 시 dataUrisToCid가 cid 첨부로 옮긴다.
-  const insertInlineImages = (files: File[]) => {
-    const imgs = files.filter((f) => f.type.startsWith("image/"));
-    if (imgs.length === 0) return;
-    void Promise.all(imgs.map(fileToBase64)).then((list) => {
-      restoreSel();
-      editorRef.current?.focus();
-      for (const im of list) {
-        document.execCommand("insertImage", false, `data:${im.mimeType};base64,${im.data}`);
-      }
-      saveSel();
-    });
-  };
-  // 버튼이 selection을 빼앗지 않게 mousedown 기본동작 차단 후 click에서 실행
-  const tool = (
-    label: ReactNode,
-    action: () => void,
-    title: string,
-  ) => (
-    <button
-      type="button"
-      className="rich-tool"
-      title={title}
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={action}
-    >
-      {label}
-    </button>
-  );
-
-
-  return (
-    <div className="rich-compose">
-      <div className="rich-toolbar">
-        <select
-          className="rich-select"
-          title="글꼴 (선택 영역 또는 이후 입력에 적용)"
-          value=""
-          onMouseDown={saveSel}
-          onChange={(e) => {
-            if (e.target.value) applyWithSel("fontName", e.target.value);
-          }}
-        >
-          {FONT_FAMILIES.map((f) => (
-            <option key={f.label} value={f.css} disabled={!f.css}>
-              {f.label.replace("글꼴: 기본", "글꼴")}
-            </option>
-          ))}
-        </select>
-        <select
-          className="rich-select"
-          title="글자 크기 (선택 영역 또는 이후 입력에 적용)"
-          value=""
-          onMouseDown={saveSel}
-          onChange={(e) => {
-            if (e.target.value) applyWithSel("fontSize", e.target.value);
-          }}
-        >
-          <option value="" disabled>
-            크기
-          </option>
-          <option value="1">작게</option>
-          <option value="3">보통</option>
-          <option value="5">크게</option>
-          <option value="7">아주 크게</option>
-        </select>
-        <span className="rich-sep" />
-        {tool(<b>B</b>, () => cmd("bold"), "굵게")}
-        {tool(<i>I</i>, () => cmd("italic"), "기울임")}
-        {tool(<u>U</u>, () => cmd("underline"), "밑줄")}
-        {rich && (
-          <>
-            <span className="rich-sep" />
-            <input
-              type="color"
-              className="rich-color"
-              title="글자 색"
-              defaultValue="#202124"
-              onMouseDown={saveSel}
-              onChange={(e) => applyWithSel("foreColor", e.target.value)}
-            />
-          </>
-        )}
-        <span className="rich-sep" />
-        {tool("• 목록", () => cmd("insertUnorderedList"), "글머리 목록")}
-        {tool("1. 목록", () => cmd("insertOrderedList"), "번호 목록")}
-        <span className="rich-sep" />
-        {tool("🔗", makeLink, "링크")}
-        {rich &&
-          tool(
-            "🖼",
-            () => {
-              saveSel();
-              imgInputRef.current?.click();
-            },
-            "이미지 삽입",
-          )}
-        {tool("✕서식", () => cmd("removeFormat"), "서식 지우기")}
-        {rich && (
-          <input
-            ref={imgInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            hidden
-            onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              e.target.value = "";
-              insertInlineImages(picked);
-            }}
-          />
-        )}
-      </div>
-      <div
-        ref={editorRef}
-        className="rich-body"
-        style={bodyStyle}
-        contentEditable
-        suppressContentEditableWarning
-        data-placeholder={placeholder ?? "내용을 입력하세요"}
-        onMouseUp={saveSel}
-        onKeyUp={saveSel}
-        onPaste={(e) => {
-          const pasted = Array.from(e.clipboardData.files);
-          if (pasted.length) {
-            e.preventDefault(); // 파일/스크린샷 붙여넣기 → 첨부
-            onFiles(pasted);
-          }
-          // 그 외(텍스트/HTML)는 브라우저 기본 붙여넣기에 맡긴다
-        }}
-      />
-    </div>
-  );
-}
-
-// "Name <email>" 또는 "email" 토큰이 유효한 주소를 담고 있나 (대략적).
-export function tokenHasEmail(tok: string): boolean {
-  return /[^\s@]+@[^\s@]+\.[^\s@]+/.test(parseAddr(tok).email);
-}
-
-// 수신자 칩 입력. value는 콤마 구분 문자열(send/draft가 그대로 읽음)이고,
-// 확정된 토큰은 칩으로, 입력 중인 것은 인풋에 둔다.
-//  · 확정: 콤마/세미콜론/엔터/탭, 그리고 "완성된 단독 이메일 뒤 공백"
-//    (표시명에는 공백이 있을 수 있어 "이름 <메일>" 입력은 공백으로 끊지 않음)
-//  · 칩 본문 클릭 또는 빈 인풋에서 백스페이스 → 그 칩을 인풋으로 되돌려 수정
-//  · ✕ → 삭제
-//  · blur 시 입력 중이던 텍스트도 확정 → 보내기 직전 누락 방지
-export function RecipientField({
-  label,
-  value,
-  onChange,
-  autoFocus,
-  suggestions,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  autoFocus?: boolean;
-  suggestions?: Contact[];
-}) {
-  const [draft, setDraft] = useState("");
-  // 자동완성: 드롭다운에서 ↑↓로 고른 항목. -1 = 선택 없음(Enter는 입력값 확정).
-  const [hi, setHi] = useState(-1);
-  // Escape로 닫은 상태 — 다음 입력 변경까지 드롭다운을 띄우지 않는다.
-  const [dismissed, setDismissed] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const items = splitAddrList(value);
-
-  // 이미 칩으로 추가된 주소는 제안에서 뺀다.
-  const matches = useMemo(() => {
-    const q = draft.trim().toLowerCase();
-    if (dismissed || !q || !suggestions?.length) return [];
-    const used = new Set(items.map((t) => parseAddr(t).email.toLowerCase()));
-    return suggestions
-      .filter(
-        (s) =>
-          !used.has(s.email.toLowerCase()) &&
-          (s.email.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)),
-      )
-      .slice(0, 8);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, suggestions, value, dismissed]);
-
-  const pick = (s: Contact) => {
-    addTokens([s.name ? `${s.name} <${s.email}>` : s.email]);
-    setDraft("");
-    setHi(-1);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  };
-
-  const setItems = (next: string[]) => onChange(next.filter(Boolean).join(", "));
-  const addTokens = (toks: string[]) => {
-    const clean = toks.map((t) => t.trim()).filter(Boolean);
-    if (clean.length) setItems([...items, ...clean]);
-  };
-  const removeAt = (i: number) => setItems(items.filter((_, j) => j !== i));
-  // 칩을 인풋으로 되돌려 수정. 입력 중이던 draft가 있으면 먼저 칩으로 확정.
-  const editAt = (i: number) => {
-    const tok = items[i];
-    const rest = items.filter((_, j) => j !== i);
-    setItems(draft.trim() ? [...rest, draft.trim()] : rest);
-    setDraft(tok);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  };
-
-  return (
-    <label className="recip-field">
-      <span className="recip-label">{label}</span>
-      <span className="recip-box">
-        {items.map((tok, i) => {
-          const a = parseAddr(tok);
-          const hasName = !!a.name && a.name !== a.email;
-          return (
-            <span
-              key={`${tok}-${i}`}
-              className={`recip-chip${tokenHasEmail(tok) ? "" : " invalid"}`}
-              title={`${tok} (클릭하여 수정)`}
-              onClick={() => editAt(i)}
-            >
-              {/* 이메일은 항상 표시 — 이름만 보이면 누구에게 가는지 확인 불가 */}
-              {hasName && <span className="recip-chip-name">{a.name}</span>}
-              <span className="recip-chip-mail">{a.email}</span>
-              <button
-                type="button"
-                className="recip-x"
-                onClick={(e) => {
-                  e.stopPropagation(); // 칩 수정과 구분
-                  removeAt(i);
-                }}
-              >
-                ✕
-              </button>
-            </span>
-          );
-        })}
-        <input
-          ref={inputRef}
-          className="recip-input"
-          // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus={autoFocus}
-          value={draft}
-          placeholder={items.length === 0 ? `${label} 추가` : ""}
-          onChange={(e) => {
-            const v = e.target.value;
-            setHi(-1); // 입력이 바뀌면 드롭다운 선택은 초기화
-            setDismissed(false);
-            if (/[,;]/.test(v)) {
-              // 구분자 기준으로 끊어 앞부분은 확정, 마지막 조각만 draft로
-              const parts = v.split(/[,;]+/);
-              const last = parts.pop() ?? "";
-              addTokens(parts);
-              setDraft(last);
-            } else if (/\s$/.test(v)) {
-              // 완성된 "단독 이메일" 뒤 공백 → 자동 칩 (표시명 입력은 제외)
-              const t = v.trim();
-              if (t && !t.includes("<") && tokenHasEmail(t)) {
-                addTokens([t]);
-                setDraft("");
-              } else {
-                setDraft(v);
-              }
-            } else {
-              setDraft(v);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowDown" && matches.length) {
-              e.preventDefault();
-              setHi((h) => (h + 1) % matches.length);
-            } else if (e.key === "ArrowUp" && matches.length) {
-              e.preventDefault();
-              setHi((h) => (h <= 0 ? matches.length - 1 : h - 1));
-            } else if (e.key === "Escape" && matches.length) {
-              e.preventDefault();
-              setHi(-1);
-              setDismissed(true); // 드롭다운만 닫는다 (입력값은 유지)
-            } else if (e.key === "Enter" || e.key === "Tab") {
-              if (hi >= 0 && matches[hi]) {
-                e.preventDefault();
-                pick(matches[hi]);
-              } else if (draft.trim()) {
-                e.preventDefault();
-                addTokens([draft]);
-                setDraft("");
-              }
-            } else if (e.key === "Backspace" && !draft && items.length) {
-              // 통째 삭제 대신 마지막 칩을 인풋으로 되돌려 수정
-              e.preventDefault();
-              editAt(items.length - 1);
-            }
-          }}
-          onPaste={(e) => {
-            const text = e.clipboardData.getData("text");
-            if (/[,;\n]/.test(text)) {
-              e.preventDefault();
-              addTokens(splitAddrList(text.replace(/\n/g, ",")));
-            }
-          }}
-          // 입력 중이던 주소도 확정 — 안 하면 보내기 시 누락된다.
-          onBlur={() => {
-            if (draft.trim()) {
-              addTokens([draft]);
-              setDraft("");
-            }
-            setHi(-1);
-          }}
-        />
-        {matches.length > 0 && (
-          <ul className="recip-suggest" role="listbox">
-            {matches.map((s, i) => (
-              <li
-                key={s.email}
-                role="option"
-                aria-selected={i === hi}
-                className={i === hi ? "active" : ""}
-                // mousedown: click이면 blur가 먼저 와서 draft가 칩으로 확정돼
-                // 버린다 — 포커스를 안 뺏고 바로 선택.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  pick(s);
-                }}
-                onMouseEnter={() => setHi(i)}
-              >
-                {s.name && <span className="recip-sug-name">{s.name}</span>}
-                <span className="recip-sug-mail">{s.email}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </span>
-    </label>
-  );
-}
-
-// 연락처는 작성창 첫 오픈 때 한 번만 가져와 모듈 캐시. 실패는 조용히 빈 목록 —
-// contacts 스코프가 없는 구 토큰에서 자동완성 하나 때문에 로그인으로 보내지
-// 않는다 (재시도는 다음 작성창 오픈 때).
-let contactsPromise: Promise<Contact[]> | null = null;
-
-export function loadContactsOnce(): Promise<Contact[]> {
-  contactsPromise ??= api.contacts().catch(() => {
-    contactsPromise = null;
-    return [];
-  });
-  return contactsPromise;
 }
 
 export function Compose({
@@ -546,9 +134,13 @@ export function Compose({
   // 미검증 별칭의 From을 기본 주소로 강제 재작성하므로 verified만 노출.
   const aliases = (sendAs ?? []).filter((s) => s.verified);
   const defaultAlias = () =>
-    aliases.find((s) => s.isDefault) ?? aliases.find((s) => s.isPrimary) ?? aliases[0];
+    aliases.find((s) => s.isDefault) ??
+    aliases.find((s) => s.isPrimary) ??
+    aliases[0];
   // 드래프트 이어쓰기 시 원래 별칭(init.from) 복원, 아니면 기본 별칭.
-  const initFromEmail = init?.from ? parseAddr(init.from).email.toLowerCase() : "";
+  const initFromEmail = init?.from
+    ? parseAddr(init.from).email.toLowerCase()
+    : "";
   const [fromEmail, setFromEmail] = useState(
     () =>
       aliases.find((s) => s.email.toLowerCase() === initFromEmail)?.email ??
@@ -580,7 +172,8 @@ export function Compose({
   }, []);
 
   // chosenAlias가 아직 비어 있어도(레이스) 기본 별칭으로 폴백해 표시값과 일치.
-  const chosenAlias = aliases.find((s) => s.email === fromEmail) ?? defaultAlias();
+  const chosenAlias =
+    aliases.find((s) => s.email === fromEmail) ?? defaultAlias();
   const fromHeader = chosenAlias
     ? chosenAlias.displayName
       ? `"${chosenAlias.displayName.replace(/"/g, "")}" <${chosenAlias.email}>`
@@ -589,7 +182,10 @@ export function Compose({
   // 인라인 이미지(cid:) 미리보기 매핑 (마운트 1회). 전달/드래프트 인라인 첨부를
   // blob URL로 만들어 에디터에 보여주고, 발송 직전 cid:로 되돌린다.
   const editorRef = useRef<HTMLDivElement>(null);
-  const cidMaps = useRef<{ cidToUrl: Map<string, string>; urlToCid: Map<string, string> }>({
+  const cidMaps = useRef<{
+    cidToUrl: Map<string, string>;
+    urlToCid: Map<string, string>;
+  }>({
     cidToUrl: new Map(),
     urlToCid: new Map(),
   });
@@ -610,7 +206,8 @@ export function Compose({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(
-    () => () => cidMaps.current.urlToCid.forEach((_, url) => URL.revokeObjectURL(url)),
+    () => () =>
+      cidMaps.current.urlToCid.forEach((_, url) => URL.revokeObjectURL(url)),
     [],
   );
 
@@ -619,7 +216,9 @@ export function Compose({
     // 있으므로 에디터(메인 문서)에 넣기 전 위생 처리한다.
     let html: string;
     if (init?.draftId || init?.bodyHtml) {
-      html = init?.bodyHtml ? sanitizeMailHtml(init.bodyHtml) : "<div><br></div>";
+      html = init?.bodyHtml
+        ? sanitizeMailHtml(init.bodyHtml)
+        : "<div><br></div>";
     } else {
       // 새 메일 / 답장 / 전달: 입력칸 + 서명 + 인용
       const sigBlock = getSignatureBlockHtml();
@@ -670,7 +269,8 @@ export function Compose({
       tmp.innerHTML = `<br>${block}`;
       // 입력칸(첫 자식) 바로 뒤, 인용보다 앞에 되돌린다.
       const anchor = ed.firstChild ? ed.firstChild.nextSibling : null;
-      for (const node of Array.from(tmp.childNodes)) ed.insertBefore(node, anchor);
+      for (const node of Array.from(tmp.childNodes))
+        ed.insertBefore(node, anchor);
       setSigOn(true);
     }
   };
@@ -807,7 +407,11 @@ export function Compose({
           }))
         : undefined,
       driveAttachments: drive.length
-        ? drive.map(({ filename, mimeType, data }) => ({ filename, mimeType, data }))
+        ? drive.map(({ filename, mimeType, data }) => ({
+            filename,
+            mimeType,
+            data,
+          }))
         : undefined,
     };
   };
@@ -904,7 +508,8 @@ export function Compose({
           >
             {aliases.map((a) => (
               <option key={a.email} value={a.email}>
-                보내는 주소: {a.displayName ? `${a.displayName} <${a.email}>` : a.email}
+                보내는 주소:{" "}
+                {a.displayName ? `${a.displayName} <${a.email}>` : a.email}
               </option>
             ))}
           </select>
@@ -916,7 +521,12 @@ export function Compose({
           autoFocus
           suggestions={contacts}
         />
-        <RecipientField label="참조" value={cc} onChange={setCc} suggestions={contacts} />
+        <RecipientField
+          label="참조"
+          value={cc}
+          onChange={setCc}
+          suggestions={contacts}
+        />
         <RecipientField
           label="숨은참조"
           value={bcc}
@@ -944,7 +554,8 @@ export function Compose({
               // 인라인 이미지(cid:)는 본문에 박혀 있으므로 칩으로 안 보인다.
               f.contentId ? null : (
                 <span key={`${f.filename}-${i}`} className="chip">
-                  <AttachmentIcon />{f.filename} ({Math.round(f.size / 1024)}KB)
+                  <AttachmentIcon />
+                  {f.filename} ({Math.round(f.size / 1024)}KB)
                   <button
                     type="button"
                     className="chip-x"
@@ -958,11 +569,15 @@ export function Compose({
           </div>
         )}
         {formErr && (
-          <div className="muted settings-label"><AlertIcon />{formErr}</div>
+          <div className="muted settings-label">
+            <AlertIcon />
+            {formErr}
+          </div>
         )}
         <div className="modal-foot">
           <label className="btn">
-            <AttachmentIcon />파일 첨부
+            <AttachmentIcon />
+            파일 첨부
             <input
               type="file"
               multiple

@@ -1,5 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
-import { installAppMocks, openMailbox } from "./fixtures/app";
+import { expect, type Page } from "@playwright/test";
+import {
+  installAppMocks,
+  installNetworkBoundary,
+  openMailbox,
+  TEST_ORIGIN,
+  test,
+} from "./fixtures/app.ts";
 
 function productionChunks(page: Page) {
   const urls: string[] = [];
@@ -14,7 +20,10 @@ function requestCount(urls: string[], url: string) {
   return urls.filter((candidate) => candidate === url).length;
 }
 
-async function newlyLoadedChunks(chunks: string[], action: () => Promise<void>) {
+async function newlyLoadedChunks(
+  chunks: string[],
+  action: () => Promise<void>,
+) {
   const before = chunks.length;
   await action();
   await expect.poll(() => chunks.length > before).toBeTruthy();
@@ -26,13 +35,17 @@ async function openCalendar(page: Page) {
   await expect(page.locator(".calendar")).toBeVisible();
 }
 
-test("production mail boot excludes lazy feature chunks until their first use", async ({ page }) => {
+test("production mail boot excludes lazy feature chunks until their first use", async ({
+  page,
+}) => {
   const chunks = productionChunks(page);
   await installAppMocks(page);
   await openMailbox(page);
   const initialChunks = new Set(chunks);
 
-  const calendarChunks = await newlyLoadedChunks(chunks, () => openCalendar(page));
+  const calendarChunks = await newlyLoadedChunks(chunks, () =>
+    openCalendar(page),
+  );
   await page.getByRole("button", { name: "메일", exact: true }).click();
   const driveChunks = await newlyLoadedChunks(chunks, async () => {
     await page.getByRole("button", { name: "드라이브", exact: true }).click();
@@ -50,38 +63,75 @@ test("production mail boot excludes lazy feature chunks until their first use", 
   }
 });
 
-test("production calendar chunk loads once and stays cached when returning to mail", async ({ page }) => {
+test("production calendar chunk loads once and stays cached when returning to mail", async ({
+  page,
+}) => {
   const chunks = productionChunks(page);
   await installAppMocks(page);
   await openMailbox(page);
-  const calendarChunks = await newlyLoadedChunks(chunks, () => openCalendar(page));
+  const calendarChunks = await newlyLoadedChunks(chunks, () =>
+    openCalendar(page),
+  );
 
-  const calendarRequestCounts = new Map(calendarChunks.map((url) => [url, requestCount(chunks, url)]));
+  const calendarRequestCounts = new Map(
+    calendarChunks.map((url) => [url, requestCount(chunks, url)]),
+  );
 
   await page.getByRole("button", { name: "메일", exact: true }).click();
   await openCalendar(page);
-  for (const [url, count] of calendarRequestCounts) expect(requestCount(chunks, url)).toBe(count);
+  for (const [url, count] of calendarRequestCounts)
+    expect(requestCount(chunks, url)).toBe(count);
 });
 
-test("blocking the discovered production calendar chunk preserves the shell and recovery UI", async ({ browser }) => {
-  const probeContext = await browser.newContext({ baseURL: "http://127.0.0.1:4173" });
-  const probe = await probeContext.newPage();
-  const probeChunks = productionChunks(probe);
-  await installAppMocks(probe);
-  await openMailbox(probe);
-  const calendarChunks = await newlyLoadedChunks(probeChunks, () => openCalendar(probe));
-  await probeContext.close();
+test("blocking the discovered production calendar chunk preserves the shell and recovery UI", async ({
+  browser,
+}, testInfo) => {
+  const probeContext = await browser.newContext({
+    baseURL: TEST_ORIGIN,
+    serviceWorkers: "block",
+  });
+  const probeBoundary = await installNetworkBoundary(probeContext);
+  let calendarChunks: string[] = [];
+  try {
+    const probe = await probeContext.newPage();
+    const probeChunks = productionChunks(probe);
+    await installAppMocks(probe);
+    await openMailbox(probe);
+    calendarChunks = await newlyLoadedChunks(probeChunks, () =>
+      openCalendar(probe),
+    );
+  } finally {
+    await probeBoundary.finalize(testInfo);
+  }
 
-  const context = await browser.newContext({ baseURL: "http://127.0.0.1:4173" });
-  const page = await context.newPage();
-  await installAppMocks(page);
-  for (const url of calendarChunks) await page.route(url, (route) => route.abort());
-  await openMailbox(page);
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  const context = await browser.newContext({
+    baseURL: TEST_ORIGIN,
+    serviceWorkers: "block",
+  });
+  const boundary = await installNetworkBoundary(context);
+  try {
+    const page = await context.newPage();
+    await installAppMocks(page);
+    for (const url of calendarChunks) {
+      const parsed = new URL(url);
+      if (
+        parsed.origin !== TEST_ORIGIN ||
+        !parsed.pathname.startsWith("/assets/")
+      ) {
+        throw new Error(
+          "Discovered calendar chunk escaped the local assets origin",
+        );
+      }
+      await page.route(url, (route) => route.abort());
+    }
+    await openMailbox(page);
+    await page.getByRole("button", { name: "캘린더", exact: true }).click();
 
-  await expect(page.locator("#app-sidebar")).toBeVisible();
-  await expect(page.locator("header")).toBeVisible();
-  await expect(page.getByText("화면을 불러오지 못했습니다.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "다시 시도" })).toBeVisible();
-  await context.close();
+    await expect(page.locator("#app-sidebar")).toBeVisible();
+    await expect(page.locator("header")).toBeVisible();
+    await expect(page.getByText("화면을 불러오지 못했습니다.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "다시 시도" })).toBeVisible();
+  } finally {
+    await boundary.finalize(testInfo);
+  }
 });

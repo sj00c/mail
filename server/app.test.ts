@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { createApp, createMessageListApi } from "./app.ts";
+import { createApp } from "./app.ts";
+import { createMessageListApi } from "./routes/mail.ts";
 import { describe, expect, it } from "vitest";
 import { GmailBatchPartError } from "./gmailBatch.ts";
 import { apiErrorStatus, needAuthError, publicApiError } from "./apiErrors.ts";

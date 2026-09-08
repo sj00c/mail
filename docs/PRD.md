@@ -2,15 +2,17 @@
 
 전체 레포 점검 결과: 현재 기능 인벤토리, 이번 업데이트로 반영된 수정사항, 확인된 데이터 이슈, 최적화 백로그.
 
+이 문서는 날짜가 붙은 제품 기록과 후속 검토 백로그입니다. 아래 과거 검증 결과를 현재 버전의 검증 결과로 간주하지 않습니다. 현재 기능·설치·보안·폴더 구조의 기준은 [README](../README.md)입니다.
+
 ## 1. 제품 개요
 
 로컬 개인용 Gmail/Calendar/Drive 클라이언트.
 
-- 서버: Bun + Hono (`server/`), Google API 프록시. `127.0.0.1:8787` 전용(LAN 노출 opt-in).
+- 서버: Bun + Hono (`server/`), Google API 연동을 담당하는 백엔드. 현재는 루프백 전용이며 LAN 공개를 지원하지 않습니다.
 - 웹: React 18 + Vite SPA (`web/`). 프로덕션에서는 서버가 `dist/`를 직접 서빙.
 - 배포: launchd(macOS) / Task Scheduler(Windows) 스크립트 (`deploy/`).
 
-### 현재 기능 인벤토리
+### 기록 당시 기능 인벤토리
 
 | 영역 | 기능 |
 |---|---|
@@ -127,9 +129,11 @@
 - 메일 스누즈 / 보내기 예약 (Gmail API 미지원 — 로컬 스케줄러로 자체 구현 필요. launchd 상시 구동이라 가능).
 - ~~키보드 단축키~~ — 적용됨: j/k 이전·다음 메일, e 보관, # 휴지통, c 새 메일, / 검색, u·Esc 목록으로 (메일 뷰 한정, 입력 중·모달 오픈 시 무시, j 끝에서 다음 페이지 자동 로드).
 - Drive 공유 설정 UI(`permissions.*`) / 버전 히스토리(`revisions.*`) / 파일 이동·복사.
-- `server/.data/`의 QA 프로브 스크립트(e2e-*.ts, qa-*.sh)를 `scripts/` 로 승격해 회귀 테스트로 정례화.
+- `server/.data/`의 기존 QA 프로브는 사용자 자료로 보존합니다. 회귀 시험으로 재사용할 때는 별도 검토를 거쳐 비밀·개인 자료와 실제 발송/수정 호출을 제거한 합성 시험만 채택합니다. 기존 프로브를 일괄 이동하거나 실행하지 않습니다.
 
-## 5. 이번 변경 파일
+## 5. 당시 변경 파일
+
+아래 경로는 당시 기록입니다. 현재 서버 진입점은 `server/index.ts`, 공통 정책·조립은 `server/app.ts`, 도메인 HTTP 처리는 `server/routes/`로 구분합니다.
 
 - `server/calendar.ts` — `EventInput` 확장(attendees/reminder/createMeet), `getEvent` reminder 노출, Meet 생성.
 - `server/index.ts` — 첨부→Drive 저장 라우트.

@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { installAppMocks, openMailbox } from "./fixtures/app.ts";
+import { expect } from "@playwright/test";
+import { test, installAppMocks, openMailbox } from "./fixtures/app.ts";
 
 const message = {
   id: "message-1",

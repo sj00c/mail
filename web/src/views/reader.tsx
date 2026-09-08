@@ -9,13 +9,10 @@ import {
   type MessageSummary,
 } from "../api.ts";
 import { downloadAttachment, saveAttachment } from "../lib/attachments.ts";
-import { useTheme } from "../hooks/useTheme.ts";
-import { applyMailDarkMode } from "../lib/mailDark.ts";
-import "./reader.css";
 import { avatarColor, DATETIME_FMT, listDateLabel } from "../lib/format.tsx";
 import {
   directMessageHtml,
-  directMessageText,
+  forwardMessageHtml,
   fwdSubject,
   linkifyParts,
   prepareEmailHtml,
@@ -42,7 +39,11 @@ export function listParty(m: MessageSummary): { name: string; email: string } {
   const outgoing = m.labelIds.includes("SENT") || m.labelIds.includes("DRAFT");
   const raw = outgoing ? m.to : m.from;
   const toks = splitAddrList(raw);
-  if (toks.length === 0) return { name: outgoing ? "(받는사람 없음)" : "(보낸사람 없음)", email: "" };
+  if (toks.length === 0)
+    return {
+      name: outgoing ? "(받는사람 없음)" : "(보낸사람 없음)",
+      email: "",
+    };
   const first = parseAddr(toks[0]);
   const name =
     toks.length > 1 ? `${first.name} 외 ${toks.length - 1}명` : first.name;
@@ -100,7 +101,13 @@ export const MessageRow = memo(function MessageRow({
           onToggleCheck(m.id, e.shiftKey);
         }}
       >
-        <input type="checkbox" className="msg-check" checked={checked} tabIndex={-1} readOnly />
+        <input
+          type="checkbox"
+          className="msg-check"
+          checked={checked}
+          tabIndex={-1}
+          readOnly
+        />
       </span>
       <span
         className="avatar sm"
@@ -122,7 +129,11 @@ export const MessageRow = memo(function MessageRow({
         </span>
         <span className="msg-subject">
           {m.subject || "(제목 없음)"}
-          {m.hasAttachments && <span className="paperclip"><AttachmentIcon /></span>}
+          {m.hasAttachments && (
+            <span className="paperclip">
+              <AttachmentIcon />
+            </span>
+          )}
         </span>
         <span className="msg-snippet">{m.snippet}</span>
       </span>
@@ -192,9 +203,11 @@ export function Reader({
             onPatched(m.id, { unread: false });
             if (cancelled) return;
             setMsg((prev) => (prev ? { ...prev, unread: false } : prev));
-            setThread((prev) =>
-              prev?.map((tm) => (tm.id === m.id ? { ...tm, unread: false } : tm)) ??
-              prev,
+            setThread(
+              (prev) =>
+                prev?.map((tm) =>
+                  tm.id === m.id ? { ...tm, unread: false } : tm,
+                ) ?? prev,
             );
           } catch (e) {
             if (!cancelled && e instanceof AuthError) {
@@ -231,9 +244,18 @@ export function Reader({
       return next;
     });
   }, []);
-  const composeTo = useCallback((email: string) => onReply({ to: email }), [onReply]);
+  const composeTo = useCallback(
+    (email: string) => onReply({ to: email }),
+    [onReply],
+  );
 
-  if (loadErr) return <div className="empty"><AlertIcon />{loadErr}</div>;
+  if (loadErr)
+    return (
+      <div className="empty">
+        <AlertIcon />
+        {loadErr}
+      </div>
+    );
   if (!msg) return <div className="empty">불러오는 중…</div>;
 
   return (
@@ -241,10 +263,16 @@ export function Reader({
       <div className="reader-head">
         <h2>{msg.subject || "(제목 없음)"}</h2>
         <div className="reader-actions">
-          <button className="btn" onClick={() => onReply(buildReplyInit(msg, ownAddresses, false))}>
+          <button
+            className="btn"
+            onClick={() => onReply(buildReplyInit(msg, ownAddresses, false))}
+          >
             ↩ 답장
           </button>
-          <button className="btn" onClick={() => onReply(buildReplyInit(msg, ownAddresses, true))}>
+          <button
+            className="btn"
+            onClick={() => onReply(buildReplyInit(msg, ownAddresses, true))}
+          >
             ↩↩ 전체답장
           </button>
           <button
@@ -256,6 +284,12 @@ export function Reader({
                 // forwarding can never mutate the rendered/stateful array.
                 const loadedThread = thread;
                 if (!loadedThread) return;
+                const messageBodies = new Map(
+                  loadedThread.map((m) => [
+                    m.id,
+                    forwardMessageHtml(m, loadedThread),
+                  ]),
+                );
                 const source = [...loadedThread].reverse();
                 // Content-IDs are scoped to one source message. Namespace and
                 // rewrite each message before combining, or equal CIDs from two
@@ -274,7 +308,10 @@ export function Reader({
                     });
                     return {
                       message: tm,
-                      bodyHtml: rewriteCidRefs(directMessageHtml(tm), cidMap),
+                      bodyHtml: rewriteCidRefs(
+                        messageBodies.get(tm.id)!,
+                        cidMap,
+                      ),
                       attachments,
                     };
                   }),
@@ -295,7 +332,8 @@ export function Reader({
             title="이 메일 내용으로 캘린더 일정 만들기"
             onClick={() => onCreateEvent(msg)}
           >
-            <CalendarIcon />일정
+            <CalendarIcon />
+            일정
           </button>
           <button
             className="btn"
@@ -337,17 +375,21 @@ export function Reader({
                   add: wasUnread ? [] : ["UNREAD"],
                   remove: wasUnread ? ["UNREAD"] : [],
                 });
-                setMsg((prev) => (prev ? { ...prev, unread: !wasUnread } : prev));
-                setThread((prev) =>
-                  prev?.map((tm) =>
-                    tm.id === id ? { ...tm, unread: !wasUnread } : tm,
-                  ) ?? prev,
+                setMsg((prev) =>
+                  prev ? { ...prev, unread: !wasUnread } : prev,
+                );
+                setThread(
+                  (prev) =>
+                    prev?.map((tm) =>
+                      tm.id === id ? { ...tm, unread: !wasUnread } : tm,
+                    ) ?? prev,
                 );
                 onPatched(id, { unread: !wasUnread });
               })
             }
           >
-            <MailIcon />{msg.unread ? "읽음" : "안읽음"}
+            <MailIcon />
+            {msg.unread ? "읽음" : "안읽음"}
           </button>
           {inTrash ? (
             // 휴지통: trash/보관/스팸은 모두 no-op이므로 '복원'만 노출.
@@ -361,7 +403,8 @@ export function Reader({
                 })
               }
             >
-              <RestoreIcon />받은편지함으로 복원
+              <RestoreIcon />
+              받은편지함으로 복원
             </button>
           ) : (
             <>
@@ -375,7 +418,8 @@ export function Reader({
                   })
                 }
               >
-                <ArchiveIcon />보관
+                <ArchiveIcon />
+                보관
               </button>
               <button
                 className="btn"
@@ -391,7 +435,8 @@ export function Reader({
                   })
                 }
               >
-                <BanIcon />{msg.labelIds.includes("SPAM") ? "스팸 아님" : "스팸"}
+                <BanIcon />
+                {msg.labelIds.includes("SPAM") ? "스팸 아님" : "스팸"}
               </button>
               <button
                 className="btn danger"
@@ -403,7 +448,8 @@ export function Reader({
                   })
                 }
               >
-                <TrashIcon />삭제
+                <TrashIcon />
+                삭제
               </button>
             </>
           )}
@@ -451,10 +497,8 @@ export function Reader({
   );
 }
 
-// 전체 전달: 각 메일의 직접 작성한 본문만 독립 카드로 조립한다.
-// 각 메일에 내장된 과거 인용까지 다시 합치면 같은 대화가 N번씩 중첩된다.
-// 카드는 평면으로 유지하고 각 카드에 같은 왼쪽 들여쓰기만 적용해, 전달을
-// 거듭해도 인용이 기하급수적으로 좁아지지 않게 한다.
+// Portable forwarded-message headers, not application cards. Do not prescribe
+// foreground/background colors: the receiving email client owns its theme.
 export function threadQuoteHtml(
   msgs: { message: MessageFull; bodyHtml: string }[],
 ): string {
@@ -462,22 +506,22 @@ export function threadQuoteHtml(
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return (
     `<div class="mail-fwd-thread" style="margin-top:16px">` +
-    `<div style="font-size:12px;font-weight:700;letter-spacing:.3px;color:#5f6368;margin-bottom:10px">전달된 대화 · ${msgs.length}개 메일</div>` +
+    `<div class="mail-fwd-summary" style="font-size:13px;margin-bottom:16px">전달된 대화 · ${msgs.length}개 메일 · 최신순</div>` +
     msgs
-      .map(({ message: m, bodyHtml }, index) => {
-        const addr = parseAddr(m.from);
+      .map(({ message: m, bodyHtml }) => {
         const when = DATETIME_FMT.format(new Date(m.date));
-        const body = bodyHtml;
         return (
-          `<section style="border:1px solid #dfe3eb;border-left:3px solid #aeb8ca;border-radius:10px;overflow:hidden;margin:0 0 12px 16px;background:#fff">` +
-          `<div style="background:#f6f8fb;border-bottom:1px solid #e3e7ee;padding:10px 12px;font-size:12.5px;line-height:1.65;color:#5f6368">` +
-          `<div style="font-weight:700;color:#202124">${index + 1}. ${esc(addr.name || addr.email)} &lt;${esc(addr.email)}&gt;</div>` +
-          `<div>${esc(when)}</div>` +
-          `<div>받는사람: ${esc(m.to)}${m.cc ? `<br>참조: ${esc(m.cc)}` : ""}</div>` +
-          `<div>제목: ${esc(m.subject || "(제목 없음)")}</div>` +
+          `<blockquote class="mail-fwd-message" style="margin:16px 0 24px 12px;padding:0 0 0 12px;border-left:2px solid #9aa0a6">` +
+          `<div class="mail-fwd-header" style="font-size:13px;line-height:1.6;margin-bottom:12px">` +
+          `<div>---------- Forwarded message ---------</div>` +
+          `<div><strong>보낸사람:</strong> ${esc(m.from)}</div>` +
+          `<div><strong>날짜:</strong> ${esc(when)}</div>` +
+          `<div><strong>제목:</strong> ${esc(m.subject || "(제목 없음)")}</div>` +
+          `<div><strong>받는사람:</strong> ${esc(m.to)}</div>` +
+          (m.cc ? `<div><strong>참조:</strong> ${esc(m.cc)}</div>` : "") +
           `</div>` +
-          `<div style="padding:12px 14px">${body}</div>` +
-          `</section>`
+          `<div class="mail-fwd-body">${bodyHtml}</div>` +
+          `</blockquote>`
         );
       })
       .join("") +
@@ -494,7 +538,9 @@ export function buildReplyInit(
   ownAddresses: string[],
   all: boolean,
 ): ComposeInit {
-  const own = new Set(ownAddresses.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  const own = new Set(
+    ownAddresses.map((e) => e.trim().toLowerCase()).filter(Boolean),
+  );
   const fromMe = own.has(parseAddr(msg.from).email.toLowerCase());
   const to = (fromMe ? msg.to : msg.replyTo || msg.from).trim();
   let cc: string | undefined;
@@ -503,14 +549,15 @@ export function buildReplyInit(
       splitAddrList(to).map((t) => parseAddr(t).email.toLowerCase()),
     );
     const seen = new Set<string>();
-    const rest = [...splitAddrList(msg.to), ...splitAddrList(msg.cc || "")].filter(
-      (tok) => {
-        const e = parseAddr(tok).email.toLowerCase();
-        if (!e || own.has(e) || toEmails.has(e) || seen.has(e)) return false;
-        seen.add(e);
-        return true;
-      },
-    );
+    const rest = [
+      ...splitAddrList(msg.to),
+      ...splitAddrList(msg.cc || ""),
+    ].filter((tok) => {
+      const e = parseAddr(tok).email.toLowerCase();
+      if (!e || own.has(e) || toEmails.has(e) || seen.has(e)) return false;
+      seen.add(e);
+      return true;
+    });
     cc = rest.join(", ") || undefined;
   }
   return {
@@ -540,7 +587,8 @@ export function replyDepths(msgs: MessageFull[]): Map<string, number> {
     const direct = strip(m.inReplyTo ?? "");
     const refs = (m.references ?? "").trim().split(/\s+/).filter(Boolean);
     const last = refs.length ? strip(refs[refs.length - 1]) : "";
-    const parent = byMsgId.get(direct) ?? (last ? byMsgId.get(last) : undefined);
+    const parent =
+      byMsgId.get(direct) ?? (last ? byMsgId.get(last) : undefined);
     return parent && parent.id !== m.id ? parent : undefined;
   };
   const out = new Map<string, number>();
@@ -581,7 +629,8 @@ export const ThreadMessage = memo(function ThreadMessage({
   const cidUrls = useMemo(() => {
     const map = new Map<string, string>();
     for (const a of m.attachments) {
-      if (a.contentId) map.set(a.contentId, api.attachmentUrl(m.id, a.id, a.filename));
+      if (a.contentId)
+        map.set(a.contentId, api.attachmentUrl(m.id, a.id, a.filename));
     }
     return map;
   }, [m]);
@@ -613,7 +662,11 @@ export const ThreadMessage = memo(function ThreadMessage({
         style={{ marginLeft: Math.min(depth, 8) * 16 }}
         data-depth={Math.min(depth, 8)}
       >
-        <button type="button" className="thread-peek" onClick={() => onToggle(m.id)}>
+        <button
+          type="button"
+          className="thread-peek"
+          onClick={() => onToggle(m.id)}
+        >
           <span className="thread-peek-n">{index + 1}</span>
           <span className="thread-peek-who">{who.name || who.email}</span>
           <span className="thread-peek-snip">{m.snippet || "(내용 없음)"}</span>
@@ -622,7 +675,9 @@ export const ThreadMessage = memo(function ThreadMessage({
               <AttachmentIcon />
             </span>
           )}
-          <span className="thread-peek-when">{DATETIME_FMT.format(new Date(m.date))}</span>
+          <span className="thread-peek-when">
+            {DATETIME_FMT.format(new Date(m.date))}
+          </span>
           {m.unread && <span className="thread-peek-unread">●</span>}
         </button>
       </div>
@@ -641,15 +696,16 @@ export const ThreadMessage = memo(function ThreadMessage({
           onClick={() => onToggle(m.id)}
           title="이 메일 접기"
         >
-          <span className="thread-peek-n">{index + 1}</span>
-          ▾ 접기
+          <span className="thread-peek-n">{index + 1}</span>▾ 접기
         </button>
         {depth > 0 && (
           <span className="thread-depth" title={`답장 ${depth}단계`}>
             ↳ {depth}단계 답장
           </span>
         )}
-        {index === total - 1 && total > 1 && <span className="thread-last">최신</span>}
+        {index === total - 1 && total > 1 && (
+          <span className="thread-last">최신</span>
+        )}
         <div className="thread-from">
           <strong>{who.name}</strong>{" "}
           <button
@@ -682,7 +738,8 @@ export const ThreadMessage = memo(function ThreadMessage({
                     void guard(() => saveAttachment(m.id, a));
                   }}
                 >
-                  <AttachmentIcon />{a.filename} ({Math.round(a.size / 1024)}KB)
+                  <AttachmentIcon />
+                  {a.filename} ({Math.round(a.size / 1024)}KB)
                 </a>
                 <button
                   type="button"
@@ -699,9 +756,14 @@ export const ThreadMessage = memo(function ThreadMessage({
       )}
       <div className="reader-body">
         {m.bodyHtml ? (
-          <HtmlBody html={directMessageHtml(m)} id={m.id} cidUrls={cidUrls} onComposeTo={onComposeTo} />
+          <HtmlBody
+            html={m.bodyHtml}
+            id={m.id}
+            cidUrls={cidUrls}
+            onComposeTo={onComposeTo}
+          />
         ) : (
-          <TextBody text={directMessageText(m)} onComposeTo={onComposeTo} />
+          <TextBody text={m.bodyText || ""} onComposeTo={onComposeTo} />
         )}
       </div>
     </div>
@@ -760,31 +822,16 @@ export function HtmlBody({
   onComposeTo: (email: string) => void;
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
-  const { theme } = useTheme();
-  const [originalFor, setOriginalFor] = useState<string | null>(null);
-  const originalColors = originalFor === id;
-  const dark = theme === "dark" && !originalColors;
-  const restoreColors = useRef<(() => void) | undefined>(undefined);
-  const syncColors = useCallback(() => {
-    restoreColors.current?.();
-    restoreColors.current = undefined;
-    const doc = ref.current?.contentDocument;
-    if (dark && doc?.body) restoreColors.current = applyMailDarkMode(doc);
-  }, [dark]);
-  useEffect(() => {
-    syncColors();
-    return () => {
-      restoreColors.current?.();
-      restoreColors.current = undefined;
-    };
-  }, [syncColors]);
   // 부모가 onLoad에서 iframe 문서에 click 리스너를 단다 — 최신 콜백을 ref로
   // 잡아 stale 클로저를 피한다.
   const composeRef = useRef(onComposeTo);
   composeRef.current = onComposeTo;
   // DOMParser full-parse is not free on big newsletters — don't redo it when
   // unrelated parent state (star toggle etc.) re-renders this component.
-  const prepared = useMemo(() => prepareEmailHtml(html, undefined, cidUrls), [html, cidUrls]);
+  const prepared = useMemo(
+    () => prepareEmailHtml(html, undefined, cidUrls),
+    [html, cidUrls],
+  );
   // 어느 단계가 펼쳐져 있는지 — 네비게이터 칩 표시에 쓴다.
   const [openStages, setOpenStages] = useState<Set<number>>(new Set());
 
@@ -844,7 +891,6 @@ export function HtmlBody({
   );
 
   const onLoad = useCallback(() => {
-    syncColors();
     resize();
     const doc = ref.current?.contentDocument;
     if (!doc) return;
@@ -903,7 +949,7 @@ export function HtmlBody({
         el?.scrollIntoView({ block: "start" });
       }
     });
-  }, [resize, syncOpen, syncColors]);
+  }, [resize, syncOpen]);
 
   return (
     <>
@@ -916,10 +962,18 @@ export function HtmlBody({
               🧾 인용·전달 히스토리 <b>{prepared.stages.length}단계</b>
             </span>
             <span className="qchain-sp" />
-            <button type="button" className="btn sm" onClick={() => applyStage("all")}>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => applyStage("all")}
+            >
               모두 펼치기
             </button>
-            <button type="button" className="btn sm" onClick={() => applyStage("none")}>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => applyStage("none")}
+            >
               모두 접기
             </button>
           </div>
@@ -931,7 +985,10 @@ export function HtmlBody({
                 className={`qchain-step${openStages.has(s.n) ? " on" : ""}`}
                 style={{ marginLeft: Math.min(s.depth, 5) * 14 }}
                 onClick={() => applyStage(s.n)}
-                title={[s.who, s.when, s.subject].filter(Boolean).join(" · ") || "이전 대화"}
+                title={
+                  [s.who, s.when, s.subject].filter(Boolean).join(" · ") ||
+                  "이전 대화"
+                }
               >
                 <span className="qchain-n">{s.n}</span>
                 <span className="qchain-who">{s.who || "이전 대화"}</span>
@@ -942,26 +999,12 @@ export function HtmlBody({
           </div>
         </div>
       )}
-      {theme === "dark" && (
-        <div className="mail-color-controls">
-          <button
-            type="button"
-            className="btn sm"
-            aria-pressed={originalColors}
-            onClick={() => setOriginalFor(originalColors ? null : id)}
-            title="이미지와 로고는 원래 색상을 유지합니다. 메일 디자인이 읽기 어려우면 원본 색상으로 보세요."
-          >
-            {originalColors ? "다크 본문으로 보기" : "원본 색상으로 보기"}
-          </button>
-        </div>
-      )}
       <iframe
         ref={ref}
         title={`message-${id}`}
         sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         srcDoc={prepared.html}
         className="html-frame"
-        data-mail-dark={dark}
         onLoad={onLoad}
       />
     </>

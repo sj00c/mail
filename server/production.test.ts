@@ -39,9 +39,22 @@ async function start(withBuild: boolean) {
   fixture = await mkdtemp(join(tmpdir(), "mail-production-"));
   await mkdir(join(fixture, "server"));
   // Copy source only: never copy .env, OAuth tokens, or the user's build.
-  for (const file of await readdir(source)) {
-    if (file.endsWith(".ts") && !file.endsWith(".test.ts")) {
-      await copyFile(join(source, file), join(fixture, "server", file));
+  for (const directory of ["", "routes"]) {
+    const target = join(fixture, "server", directory);
+    await mkdir(target, { recursive: true });
+    for (const entry of await readdir(join(source, directory), {
+      withFileTypes: true,
+    })) {
+      if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+        if (!entry.isFile())
+          throw new Error(
+            `Unexpected source file kind: ${directory}/${entry.name}`,
+          );
+        await copyFile(
+          join(source, directory, entry.name),
+          join(target, entry.name),
+        );
+      }
     }
   }
   await symlink(
@@ -142,14 +155,20 @@ it("runs the real production adapter without credentials or user data", async ()
   expect(foreignBrowser.status).toBe(403);
   // Fetch can normalize forbidden headers; send the actual hostile Host on the wire.
   const reboundStatus = await new Promise<number | undefined>((done, fail) => {
-    const request = httpRequest(`${base}/api/not-a-route`, {
-      headers: { Host: "foreign.example" },
-    }, (response) => {
-      response.resume();
-      done(response.statusCode);
-    });
+    const request = httpRequest(
+      `${base}/api/not-a-route`,
+      {
+        headers: { Host: "foreign.example" },
+      },
+      (response) => {
+        response.resume();
+        done(response.statusCode);
+      },
+    );
     request.once("error", fail);
-    request.setTimeout(2_000, () => request.destroy(new Error("Host check timed out")));
+    request.setTimeout(2_000, () =>
+      request.destroy(new Error("Host check timed out")),
+    );
     request.end();
   });
   expect(reboundStatus).toBe(403);

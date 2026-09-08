@@ -1,5 +1,13 @@
-import { expect, test } from "@playwright/test";
-import { calendarMutationCalls, installAppMocks, openMailbox, primaryCalendar } from "./fixtures/app";
+import { expect } from "@playwright/test";
+import type { CalEventDetail } from "../web/src/api.ts";
+import {
+  calendarMutationCalls,
+  installAppMocks,
+  openMailbox,
+  primaryCalendar,
+  TEST_ORIGIN,
+  test,
+} from "./fixtures/app.ts";
 
 const primaryEvent = {
   id: "primary-event",
@@ -13,6 +21,16 @@ const primaryEvent = {
   calendarSummary: primaryCalendar.summary,
   color: null,
 };
+
+const primaryEventDetail = {
+  ...primaryEvent,
+  description: "상세 설명",
+  attendees: [],
+  organizer: "owner@example.com",
+  reminderDefault: true,
+  reminderMinutes: null,
+  hangoutLink: "",
+} satisfies CalEventDetail;
 
 function shiftDateKey(key: string, days: number) {
   const [year, month, day] = key.split("-").map(Number);
@@ -31,7 +49,7 @@ async function openCalendar(page: Parameters<typeof installAppMocks>[0]) {
 test("month recycler exposes a fixed continuous week window", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-01T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   await expect(region.locator(".month-week")).toHaveCount(13);
@@ -67,7 +85,7 @@ test("month recycler exposes a fixed continuous week window", async ({ page }) =
 test("upward recycler preserves an exact retained row and offset", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-01T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   const calendar = page.locator(".month-continuous");
@@ -102,7 +120,7 @@ test("upward recycler preserves an exact retained row and offset", async ({ page
 test("continuous creation exposes one tab stop", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-01T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   await expect(region.locator(".month-create-hitarea[tabindex='0']")).toHaveCount(1);
@@ -113,7 +131,7 @@ test("new overlapping range is authoritative when an event disappears", async ({
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
   let requests = 0;
-  await page.route("**/api/calendar/events?*", (route) => {
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => {
     requests += 1;
     return route.fulfill({ json: requests === 1 ? [primaryEvent] : [] });
   });
@@ -135,7 +153,7 @@ test("new overlapping range is authoritative when an event disappears", async ({
 test("burst scroll events schedule only one recycler shift", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   const calendar = page.locator(".month-continuous");
@@ -153,11 +171,11 @@ test("burst scroll events schedule only one recycler shift", async ({ page }) =>
 test("read-only empty calendar remains keyboard-scrollable", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/calendars", (route) =>
+  await page.route(`${TEST_ORIGIN}/api/calendar/calendars`, (route) =>
     route.fulfill({
       json: [{ ...primaryCalendar, primary: false, accessRole: "reader" }],
     }));
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   await expect(region.locator(".month-create-hitarea")).toHaveCount(0);
@@ -176,7 +194,7 @@ test("failed uncovered range retries in place", async ({ page }) => {
   const retryGate = new Promise<void>((resolve) => {
     releaseRetry = resolve;
   });
-  await page.route("**/api/calendar/events?*", async (route) => {
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, async (route) => {
     attempts += 1;
     if (attempts === 1) {
       return route.fulfill({ status: 503, json: { error: "temporary calendar failure" } });
@@ -210,7 +228,7 @@ test("late aborted range cannot overwrite the current request", async ({ page })
     releaseOld = resolve;
   });
   const currentEvent = { ...primaryEvent, id: "current-range", summary: "현재 범위 일정" };
-  await page.route("**/api/calendar/events?*", async (route) => {
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, async (route) => {
     requests += 1;
     if (requests === 1) {
       await oldGate;
@@ -251,7 +269,7 @@ test("responsive week pitch preserves the visible anchor", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1100 });
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   await region.dispatchEvent("wheel", { deltaY: 120 });
@@ -294,7 +312,7 @@ test("calendar requests stay 19 weeks and cache stays bounded", async ({ page })
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
   const ranges: Array<{ from: string; to: string }> = [];
-  await page.route("**/api/calendar/events?*", (route) => {
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => {
     const url = new URL(route.request().url());
     ranges.push({ from: url.searchParams.get("from")!, to: url.searchParams.get("to")! });
     return route.fulfill({ json: [] });
@@ -364,7 +382,11 @@ test("modal interaction locks the recycler window", async ({ page }) => {
     id: `locked-${index}`,
     summary: `잠금 일정 ${index + 1}`,
   }));
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: events }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: events }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/event?*`, (route) => {
+    expect(new URL(route.request().url()).searchParams.get("eventId")).toBe(events[0]!.id);
+    return route.fulfill({ json: { ...primaryEventDetail, ...events[0] } });
+  });
   await openCalendar(page);
   const region = page.getByRole("region", { name: "연속 월간 캘린더" });
   const calendar = page.locator(".month-continuous");
@@ -402,7 +424,7 @@ test("recycler parks removed focus and preserves retained focus identity", async
   await installAppMocks(page);
   let removedDate = "";
   let retainedDate = "";
-  await page.route("**/api/calendar/events?*", (route) => {
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => {
     const from = new URL(route.request().url()).searchParams.get("from")!;
     const fetchStart = from.slice(0, 10);
     removedDate ||= shiftDateKey(fetchStart, 22);
@@ -421,7 +443,8 @@ test("recycler parks removed focus and preserves retained focus identity", async
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   let expectedWindow = (await calendar.getAttribute("data-window-start"))!;
   const removed = page.locator(`.month-cell[data-date="${removedDate}"] .month-ev`);
-  await removed.focus();
+  await removed.evaluate((element) => (element as HTMLElement).focus({ preventScroll: true }));
+  await expect(removed).toBeFocused();
   await region.dispatchEvent("wheel", { deltaY: 1000 });
   await page.evaluate(() => new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -434,7 +457,8 @@ test("recycler parks removed focus and preserves retained focus identity", async
   await expect(region).toBeFocused();
 
   const retained = page.locator(`.month-cell[data-date="${retainedDate}"] .month-ev`);
-  await retained.focus();
+  await retained.evaluate((element) => (element as HTMLElement).focus({ preventScroll: true }));
+  await expect(retained).toBeFocused();
   const retainedHandle = await retained.elementHandle();
   await page.evaluate(() => new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -458,7 +482,7 @@ test.describe("DST-observing calendar context", () => {
     test(`date keys remain consecutive across ${name} DST`, async ({ page }) => {
       await page.clock.install({ time: new Date(date) });
       await installAppMocks(page);
-      await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [] }));
+      await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [] }));
       await openCalendar(page);
       const keys = await page.locator(".month-cell").evaluateAll((cells) =>
         cells.map((cell) => cell.getAttribute("data-date")!));
@@ -492,8 +516,8 @@ test.describe("DST-observing calendar context", () => {
 test("primary calendar is first/default, remains hideable, and local color controls do not mutate the API", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-01T12:00:00") });
   const calls = await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [primaryEvent] }));
-  await page.route("**/api/calendar/calendars", (route) =>
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [primaryEvent] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/calendars`, (route) =>
     route.fulfill({
       json: [
         primaryCalendar,
@@ -545,9 +569,13 @@ test("primary calendar is first/default, remains hideable, and local color contr
 test("day numbers create events while event chips open details", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) =>
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) =>
     route.fulfill({ json: [primaryEvent] }),
   );
+  await page.route(`${TEST_ORIGIN}/api/calendar/event?*`, (route) => {
+    expect(new URL(route.request().url()).searchParams.get("eventId")).toBe(primaryEvent.id);
+    return route.fulfill({ json: primaryEventDetail });
+  });
   await openCalendar(page);
 
   const emptyDay = page.locator('.month-cell[data-date="2026-04-06"]');
@@ -605,7 +633,7 @@ for (const [name, date] of [
       start: `${date}T09:00:00`,
       end: `${date}T10:00:00`,
     }));
-    await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: events }));
+    await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: events }));
     await openCalendar(page);
 
     const day = page.locator(`.month-cell[data-date="${date}"]`);
@@ -920,7 +948,7 @@ test("calendar shell remains usable and accessible at the 768px quality boundary
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) =>
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) =>
     route.fulfill({
       json: Array.from({ length: 10 }, (_, index) => ({
         ...primaryEvent,
@@ -1026,18 +1054,10 @@ test("event detail modal traps focus, closes with Escape, and restores the event
 }) => {
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [primaryEvent] }));
-  await page.route("**/api/calendar/event?*", (route) =>
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [primaryEvent] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/event?*`, (route) =>
     route.fulfill({
-      json: {
-        ...primaryEvent,
-        description: "상세 설명",
-        attendees: [],
-        organizer: "owner@example.com",
-        reminderDefault: true,
-        reminderMinutes: null,
-        hangoutLink: "",
-      },
+      json: primaryEventDetail,
     }),
   );
   await openCalendar(page);
@@ -1096,7 +1116,7 @@ test("agenda groups events in deterministic chronological order", async ({ page 
       end: "2026-04-13T10:00:00",
     },
   ];
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: events }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: events }));
   await openCalendar(page);
   await page.getByRole("button", { name: "목록", exact: true }).click();
 
@@ -1106,7 +1126,7 @@ test("calendar interactions honor reduced-motion preferences", async ({ page }) 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: [primaryEvent] }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: [primaryEvent] }));
   await openCalendar(page);
 
   const motion = await page.locator(".month-ev").evaluate((element) => {
@@ -1121,7 +1141,7 @@ test("cached events remain visible while refresh failures are diagnosed", async 
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
   let requestCount = 0;
-  await page.route("**/api/calendar/events?*", (route) => {
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => {
     requestCount += 1;
     return requestCount === 1
       ? route.fulfill({ json: [primaryEvent] })
@@ -1142,7 +1162,7 @@ test("exact-fit capacity and keyboard controls keep creation, event, and more is
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);
   let eventCount = 0;
-  await page.route("**/api/calendar/events?*", (route) =>
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) =>
     route.fulfill({
       json: Array.from({ length: eventCount }, (_, index) => ({
         ...primaryEvent,
@@ -1150,6 +1170,10 @@ test("exact-fit capacity and keyboard controls keep creation, event, and more is
         summary: `용량 일정 ${index + 1}`,
       })),
     }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/event?*`, (route) => {
+    expect(new URL(route.request().url()).searchParams.get("eventId")).toBe("capacity-0");
+    return route.fulfill({ json: { ...primaryEventDetail, id: "capacity-0", summary: "용량 일정 1" } });
+  });
   await openCalendar(page);
   const calendar = page.locator(".month-continuous");
   await expect(calendar).toHaveAttribute("data-event-capacity-measured", "true");
@@ -1231,7 +1255,7 @@ test("dense bottom-row events do not resize the fixed month grid", async ({ page
     start: "2026-06-05T09:00:00",
     end: "2026-06-05T10:00:00",
   }));
-  await page.route("**/api/calendar/events?*", (route) => route.fulfill({ json: events }));
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) => route.fulfill({ json: events }));
   await openCalendar(page);
 
   const calendar = page.locator(".calendar");

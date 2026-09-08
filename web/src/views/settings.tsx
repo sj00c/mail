@@ -18,7 +18,7 @@ import {
 import { useTheme } from "../hooks/useTheme.ts";
 import { THEME_OPTIONS, type ThemePref } from "../lib/theme.ts";
 import { DialogGrip, DialogTools, useResizableDialog } from "../ui/dialog.tsx";
-import { RichEditor } from "./compose.tsx";
+import { RichEditor } from "../ui/richEditor.tsx";
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const sigEditorRef = useRef<HTMLDivElement>(null);

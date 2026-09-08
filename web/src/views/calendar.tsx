@@ -42,6 +42,7 @@ import {
   getCalendarDisplayColor,
   readPrimaryColorOverride,
 } from "../lib/calendarPresentation.ts";
+import { loadContactsOnce } from "../lib/contacts.ts";
 import {
   DialogGrip,
   DialogTools,
@@ -56,7 +57,7 @@ import {
   LocationIcon,
   TrashIcon,
 } from "../ui/icons.tsx";
-import { loadContactsOnce, RecipientField } from "./compose.tsx";
+import { RecipientField } from "../ui/recipientField.tsx";
 function uniquePrimaryId(calendars: readonly Calendar[]) {
   const primaries = calendars.filter((calendar) => calendar.primary);
   return primaries.length === 1 ? primaries[0].id : null;

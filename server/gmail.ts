@@ -71,7 +71,9 @@ function decodeEntities(s: string): string {
         ent[1]?.toLowerCase() === "x"
           ? parseInt(ent.slice(2), 16)
           : parseInt(ent.slice(1), 10);
-      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : whole;
+      return Number.isFinite(code) && code > 0
+        ? String.fromCodePoint(code)
+        : whole;
     }
     return NAMED_ENTITIES[ent.toLowerCase()] ?? whole;
   });
@@ -111,40 +113,139 @@ function decodeBody(data?: string | null): string {
   return Buffer.from(data, "base64url").toString("utf-8");
 }
 
-
 type ExtractAcc = {
   html: string | null;
   text: string | null;
   attachments: MessageFull["attachments"];
 };
 
-function walkParts(part: gmail_v1.Schema$MessagePart | undefined, acc: ExtractAcc) {
+type HydratedBodyParts = ReadonlyMap<gmail_v1.Schema$MessagePart, string>;
+
+function isExternalTextBodyPart(part: gmail_v1.Schema$MessagePart): boolean {
+  const mime = (part.mimeType ?? "").toLowerCase();
+  if (mime !== "text/plain" && mime !== "text/html") return false;
+  if (!part.body?.attachmentId || part.filename) return false;
+  const disposition = header(part.headers, "Content-Disposition");
+  return !/^\s*attachment(?:\s*;|$)/i.test(disposition);
+}
+
+function walkParts(
+  part: gmail_v1.Schema$MessagePart | undefined,
+  acc: ExtractAcc,
+  hydratedBodyParts?: HydratedBodyParts,
+) {
   if (!part) return;
-  const mime = part.mimeType ?? "";
-  if (part.body?.attachmentId) {
+  const mime = (part.mimeType ?? "").toLowerCase();
+  const isHydratedBody = hydratedBodyParts?.has(part) ?? false;
+  if (part.body?.attachmentId && !isHydratedBody) {
     // Filename-less parts are real too (inline cid: images, some calendar
     // invites) — dropping them made them undownloadable and broke cid: refs.
     const contentId = header(part.headers, "Content-ID").replace(/^<|>$/g, "");
     acc.attachments.push({
       id: part.body.attachmentId,
       filename:
-        part.filename || `attachment.${(mime.split("/")[1] ?? "bin").slice(0, 10)}`,
+        part.filename ||
+        `attachment.${(mime.split("/")[1] ?? "bin").slice(0, 10)}`,
       mimeType: mime,
       size: part.body.size ?? 0,
       contentId: contentId || undefined,
     });
     return;
   }
+  const bodyData = isHydratedBody
+    ? hydratedBodyParts!.get(part)
+    : part.body?.data;
   // Concatenate, don't keep-first: multipart/mixed bodies interleave text
   // segments around attachments and keeping only the first truncates them.
   if (mime === "text/html") {
-    const html = decodeBody(part.body?.data);
+    const html = decodeBody(bodyData);
     if (html) acc.html = acc.html === null ? html : acc.html + html;
   } else if (mime === "text/plain") {
-    const text = decodeBody(part.body?.data);
+    const text = decodeBody(bodyData);
     if (text) acc.text = acc.text === null ? text : `${acc.text}\n${text}`;
   }
-  for (const child of part.parts ?? []) walkParts(child, acc);
+  for (const child of part.parts ?? [])
+    walkParts(child, acc, hydratedBodyParts);
+}
+
+const EXTERNAL_BODY_CONCURRENCY = 5;
+
+async function hydrateExternalBodyParts(
+  g: gmail_v1.Gmail,
+  messages: gmail_v1.Schema$Message[],
+): Promise<HydratedBodyParts> {
+  const refs: Array<{
+    messageId: string;
+    attachmentId: string;
+    part: gmail_v1.Schema$MessagePart;
+  }> = [];
+
+  const collect = (
+    message: gmail_v1.Schema$Message,
+    part?: gmail_v1.Schema$MessagePart,
+  ) => {
+    if (!part) return;
+    if (isExternalTextBodyPart(part)) {
+      refs.push({
+        messageId: message.id ?? "",
+        attachmentId: part.body!.attachmentId!,
+        part,
+      });
+    } else if (part.body?.attachmentId) {
+      // Keep real file/inline attachments opaque, just as walkParts does.
+      // Their nested parts are not message bodies and must not trigger RPCs.
+      return;
+    }
+    for (const child of part.parts ?? []) collect(message, child);
+  };
+  for (const message of messages) collect(message, message.payload);
+
+  const hydrated = new Map<gmail_v1.Schema$MessagePart, string>();
+  let next = 0;
+  let failed = false;
+  let firstFailure: unknown;
+  const worker = async () => {
+    while (true) {
+      if (failed) return;
+      const index = next++;
+      if (index >= refs.length) return;
+      const ref = refs[index];
+      try {
+        if (!ref.messageId)
+          throw new Error("Gmail thread message is missing an id");
+        const res = await g.users.messages.attachments.get({
+          userId: "me",
+          messageId: ref.messageId,
+          id: ref.attachmentId,
+        });
+        const data = res.data?.data;
+        if (data === undefined || data === null) {
+          throw new Error(
+            `Gmail external body ${ref.attachmentId} returned no data`,
+          );
+        }
+        if (data === "" && (ref.part.body?.size ?? 0) > 0) {
+          throw new Error(
+            `Gmail external body ${ref.attachmentId} returned incomplete data`,
+          );
+        }
+        hydrated.set(ref.part, data);
+      } catch (error) {
+        if (!failed) firstFailure = error;
+        failed = true;
+        throw error;
+      }
+    }
+  };
+
+  await Promise.allSettled(
+    Array.from(
+      { length: Math.min(EXTERNAL_BODY_CONCURRENCY, refs.length) },
+      () => worker(),
+    ),
+  );
+  if (failed) throw firstFailure;
+  return hydrated;
 }
 
 export type MessageListTransport = {
@@ -155,7 +256,10 @@ export type MessageListTransport = {
     maxResults: number;
     includeSpamTrash: boolean;
   }): Promise<gmail_v1.Schema$ListMessagesResponse>;
-  batch(body: string, boundary: string): Promise<{
+  batch(
+    body: string,
+    boundary: string,
+  ): Promise<{
     contentType?: string;
     body: string;
   }>;
@@ -170,11 +274,16 @@ type MessageListAuth = {
     data: string;
     headers: Record<string, string>;
     responseType: "text";
-  }): Promise<{ headers?: Record<string, string | string[] | undefined>; data?: string }>;
+  }): Promise<{
+    headers?: Record<string, string | string[] | undefined>;
+    data?: string;
+  }>;
   refreshAccessToken(): Promise<unknown>;
 };
 
-export function createMessageListTransport(auth: MessageListAuth): MessageListTransport {
+export function createMessageListTransport(
+  auth: MessageListAuth,
+): MessageListTransport {
   const g = gmailApi({ version: "v1", auth: auth as never });
   return {
     async list(opts) {
@@ -239,8 +348,10 @@ export async function listMessagesWithTransport(
 }> {
   const maxResults = opts.maxResults ?? 25;
   const transientRetryDelays = [1_000, 2_000, 4_000, 8_000];
-  const waitBeforeRetry = transport.waitBeforeRetry ??
-    ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const waitBeforeRetry =
+    transport.waitBeforeRetry ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   let listRetries = 0;
   let list: gmail_v1.Schema$ListMessagesResponse;
   while (true) {
@@ -249,15 +360,19 @@ export async function listMessagesWithTransport(
         q: opts.q,
         labelIds: opts.labelIds,
         includeSpamTrash:
-          opts.labelIds?.includes("SPAM") || opts.labelIds?.includes("TRASH") || false,
+          opts.labelIds?.includes("SPAM") ||
+          opts.labelIds?.includes("TRASH") ||
+          false,
         pageToken: opts.pageToken,
         maxResults,
       });
       break;
     } catch (error) {
       const status = httpStatusOf(error);
-      if ((status === 429 || (status !== undefined && status >= 500)) &&
-        listRetries < transientRetryDelays.length) {
+      if (
+        (status === 429 || (status !== undefined && status >= 500)) &&
+        listRetries < transientRetryDelays.length
+      ) {
         await waitBeforeRetry(transientRetryDelays[listRetries++]);
         continue;
       }
@@ -276,11 +391,18 @@ export async function listMessagesWithTransport(
     const resolved = new Map<number, MessageSummary | undefined>();
     const fetchPending = async () => {
       const boundary = makeBatchBoundary();
-      const response = await transport.batch(buildMessageMetadataBatch(
-        pending.map(({ ref }) => ref.id ?? ""),
+      const response = await transport.batch(
+        buildMessageMetadataBatch(
+          pending.map(({ ref }) => ref.id ?? ""),
+          boundary,
+        ),
         boundary,
-      ), boundary);
-      return parseMessageMetadataBatch(response.contentType, response.body, pending.length);
+      );
+      return parseMessageMetadataBatch(
+        response.contentType,
+        response.body,
+        pending.length,
+      );
     };
 
     let transientRetries = 0;
@@ -290,8 +412,10 @@ export async function listMessagesWithTransport(
         parts = await fetchPending();
       } catch (error) {
         const status = httpStatusOf(error);
-        if ((status === 429 || (status !== undefined && status >= 500)) &&
-          transientRetries < transientRetryDelays.length) {
+        if (
+          (status === 429 || (status !== undefined && status >= 500)) &&
+          transientRetries < transientRetryDelays.length
+        ) {
           await waitBeforeRetry(transientRetryDelays[transientRetries++]);
           continue;
         }
@@ -306,7 +430,10 @@ export async function listMessagesWithTransport(
         if (part.status === 404) {
           resolved.set(item.index, undefined);
         } else if (part.status >= 200 && part.status < 300) {
-          resolved.set(item.index, toSummary(part.body as gmail_v1.Schema$Message));
+          resolved.set(
+            item.index,
+            toSummary(part.body as gmail_v1.Schema$Message),
+          );
         } else if (part.status === 401) {
           hasAuthFailure = true;
           retryPending.push(item);
@@ -314,12 +441,18 @@ export async function listMessagesWithTransport(
           part.status === 429 ||
           part.status >= 500 ||
           (part.status === 403 &&
-            ["user_rate_limit", "project_rate_limit", "backend_error"].includes(part.reason ?? ""))
+            ["user_rate_limit", "project_rate_limit", "backend_error"].includes(
+              part.reason ?? "",
+            ))
         ) {
           hasTransientFailure = true;
           retryPending.push(item);
         } else {
-          throw new GmailBatchPartError(part.status, offset + item.index, part.reason);
+          throw new GmailBatchPartError(
+            part.status,
+            offset + item.index,
+            part.reason,
+          );
         }
       }
 
@@ -335,12 +468,20 @@ export async function listMessagesWithTransport(
         );
       }
 
-      if (hasTransientFailure && transientRetries >= transientRetryDelays.length) {
-        const failedPart = parts.find((part) =>
-          part.status === 429 ||
-          part.status >= 500 ||
-          (part.status === 403 &&
-            ["user_rate_limit", "project_rate_limit", "backend_error"].includes(part.reason ?? ""))
+      if (
+        hasTransientFailure &&
+        transientRetries >= transientRetryDelays.length
+      ) {
+        const failedPart = parts.find(
+          (part) =>
+            part.status === 429 ||
+            part.status >= 500 ||
+            (part.status === 403 &&
+              [
+                "user_rate_limit",
+                "project_rate_limit",
+                "backend_error",
+              ].includes(part.reason ?? "")),
         )!;
         throw new GmailBatchPartError(
           failedPart.status,
@@ -380,10 +521,13 @@ export async function listMessages(opts: {
   return listMessagesWithTransport(opts, await messageListTransport());
 }
 
-function toFull(m: gmail_v1.Schema$Message): MessageFull {
+function toFull(
+  m: gmail_v1.Schema$Message,
+  hydratedBodyParts?: HydratedBodyParts,
+): MessageFull {
   const summary = toSummary(m);
   const acc: ExtractAcc = { html: null, text: null, attachments: [] };
-  walkParts(m.payload, acc);
+  walkParts(m.payload, acc, hydratedBodyParts);
   return {
     ...summary,
     cc: header(m.payload?.headers, "Cc"),
@@ -406,7 +550,11 @@ export async function getThread(threadId: string): Promise<MessageFull[]> {
     id: threadId,
     format: "full",
   });
-  return (res.data.messages ?? []).map(toFull);
+  const messages = res.data.messages ?? [];
+  const hydratedBodyParts = await hydrateExternalBodyParts(g, messages);
+  return messages
+    .map((message) => toFull(message, hydratedBodyParts))
+    .sort((left, right) => Date.parse(left.date) - Date.parse(right.date));
 }
 
 export async function getAttachment(
@@ -435,9 +583,15 @@ const DISPLAYED_SYSTEM = new Set([
 ]);
 
 export async function listLabelsWithTransport(
-  labels: Array<{ id?: string | null; name?: string | null; type?: string | null }>,
+  labels: Array<{
+    id?: string | null;
+    name?: string | null;
+    type?: string | null;
+  }>,
   getCounts: (id: string) => Promise<{ unread: number; total: number }>,
-): Promise<{ id: string; name: string; type: string; unread: number; total: number }[]> {
+): Promise<
+  { id: string; name: string; type: string; unread: number; total: number }[]
+> {
   const result = labels.map((label) => ({
     id: label.id ?? "",
     name: label.name ?? "",
@@ -447,18 +601,27 @@ export async function listLabelsWithTransport(
   }));
   const pending = result
     .map((label, index) => ({ label, index }))
-    .filter(({ label }) => label.id && (label.type === "user" || DISPLAYED_SYSTEM.has(label.id)));
+    .filter(
+      ({ label }) =>
+        label.id && (label.type === "user" || DISPLAYED_SYSTEM.has(label.id)),
+    );
   let next = 0;
-  const workers = Array.from({ length: Math.min(5, pending.length) }, async () => {
-    while (next < pending.length) {
-      const item = pending[next++];
-      try {
-        result[item.index] = { ...item.label, ...await getCounts(item.label.id) };
-      } catch (error) {
-        if (httpStatusOf(error) !== 404) throw error;
+  const workers = Array.from(
+    { length: Math.min(5, pending.length) },
+    async () => {
+      while (next < pending.length) {
+        const item = pending[next++];
+        try {
+          result[item.index] = {
+            ...item.label,
+            ...(await getCounts(item.label.id)),
+          };
+        } catch (error) {
+          if (httpStatusOf(error) !== 404) throw error;
+        }
       }
-    }
-  });
+    },
+  );
   await Promise.all(workers);
   return result;
 }
@@ -468,20 +631,17 @@ export async function listLabels(): Promise<
 > {
   const g = await api();
   const res = await g.users.labels.list({ userId: "me" });
-  return listLabelsWithTransport(
-    res.data.labels ?? [],
-    async (id) => {
-      const detail = await g.users.labels.get({
-        userId: "me",
-        id,
-        fields: "messagesUnread,messagesTotal",
-      });
-      return {
-        unread: detail.data.messagesUnread ?? 0,
-        total: detail.data.messagesTotal ?? 0,
-      };
-    },
-  );
+  return listLabelsWithTransport(res.data.labels ?? [], async (id) => {
+    const detail = await g.users.labels.get({
+      userId: "me",
+      id,
+      fields: "messagesUnread,messagesTotal",
+    });
+    return {
+      unread: detail.data.messagesUnread ?? 0,
+      total: detail.data.messagesTotal ?? 0,
+    };
+  });
 }
 
 function encodeHeaderWord(s: string, fold = true): string {
@@ -662,8 +822,14 @@ function buildMime(input: MailInput): string {
   const inline = all.filter((a) => a.contentId);
   const files = all.filter((a) => !a.contentId);
 
-  const attachPart = (a: OutAttachment, disposition: "attachment" | "inline") => {
-    const fname = encodeHeaderWord(a.filename.replace(/[\r\n"\\]/g, "_"), false);
+  const attachPart = (
+    a: OutAttachment,
+    disposition: "attachment" | "inline",
+  ) => {
+    const fname = encodeHeaderWord(
+      a.filename.replace(/[\r\n"\\]/g, "_"),
+      false,
+    );
     const lines = [
       `Content-Type: ${a.mimeType || "application/octet-stream"}; name="${fname}"`,
       "Content-Transfer-Encoding: base64",
@@ -687,7 +853,8 @@ function buildMime(input: MailInput): string {
       `--${rel}`,
       ...bodyLines,
     ];
-    for (const a of inline) relLines.push(`--${rel}`, ...attachPart(a, "inline"));
+    for (const a of inline)
+      relLines.push(`--${rel}`, ...attachPart(a, "inline"));
     relLines.push(`--${rel}--`);
     bodyLines = relLines;
   }
@@ -704,7 +871,8 @@ function buildMime(input: MailInput): string {
     `--${mixed}`,
     ...bodyLines,
   ];
-  for (const a of files) parts.push(`--${mixed}`, ...attachPart(a, "attachment"));
+  for (const a of files)
+    parts.push(`--${mixed}`, ...attachPart(a, "attachment"));
   parts.push(`--${mixed}--`);
   return parts.join("\r\n");
 }
@@ -1022,7 +1190,10 @@ export async function prepareBulkAllMessages(opts: {
     pageToken = res.data.nextPageToken ?? undefined;
   } while (pageToken);
 
-  const profile = await g.users.getProfile({ userId: "me", fields: "emailAddress" });
+  const profile = await g.users.getProfile({
+    userId: "me",
+    fields: "emailAddress",
+  });
   const operationId = crypto.randomUUID();
   const expiresAt = Date.now() + BULK_TTL_MS;
   expirePreparedBulks();
@@ -1045,7 +1216,10 @@ export async function confirmBulkAllMessages(
   preparedBulks.delete(operationId);
 
   const g = await api();
-  const profile = await g.users.getProfile({ userId: "me", fields: "emailAddress" });
+  const profile = await g.users.getProfile({
+    userId: "me",
+    fields: "emailAddress",
+  });
   if ((profile.data.emailAddress ?? "") !== op.account) {
     throw new Error("BULK_OPERATION_ACCOUNT_CHANGED");
   }
