@@ -308,6 +308,33 @@ test("responsive week pitch preserves the visible anchor", async ({ page }) => {
   );
 });
 
+test("event capacity republishes after a same-capacity width change", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
+  await installAppMocks(page);
+  await openCalendar(page);
+  const calendar = page.locator(".month-continuous");
+  const region = page.getByRole("region", { name: "연속 월간 캘린더" });
+  await expect(calendar).toHaveAttribute("data-event-capacity-measured", "true");
+  const initial = await region.evaluate((element) => ({
+    width: element.clientWidth,
+    height: element.clientHeight,
+    capacity: Number(element.closest(".month-continuous")!.getAttribute("data-event-row-capacity")),
+  }));
+
+  await page.evaluate(({ width, height }) => {
+    const region = document.querySelector<HTMLElement>(".month-virtual-scroll")!;
+    region.style.flex = "none";
+    region.style.width = `${width - 2}px`;
+    region.style.height = `${height}px`;
+    document.querySelector<HTMLButtonElement>('button[aria-label="다음 달"]')!.click();
+  }, initial);
+  await expect.poll(() => region.evaluate((element) => element.clientWidth))
+    .not.toBe(initial.width);
+  await expect(calendar).toHaveAttribute("data-event-capacity-measured", "true");
+  await expect(calendar).toHaveAttribute("data-event-row-capacity", String(initial.capacity));
+});
+
 test("calendar requests stay 19 weeks and cache stays bounded", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);

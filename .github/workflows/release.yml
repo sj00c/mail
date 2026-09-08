@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mail-release-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Refuse unsupported release events and verify the tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_DRAFT: ${{ github.event.release.draft }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          node <<'NODE'
+          const { readFileSync } = require("node:fs");
+
+          if (process.env.REPOSITORY !== "sj00c/mail") {
+            throw new Error(`Refusing to run release workflow for ${process.env.REPOSITORY}.`);
+          }
+          if (process.env.EVENT_NAME === "workflow_dispatch") {
+            if (process.env.REF !== "refs/heads/main") {
+              throw new Error("workflow_dispatch is a dry run and is allowed only from main.");
+            }
+            console.log("workflow_dispatch is a dry run; npm publication is disabled.");
+            process.exit(0);
+          }
+
+          if (process.env.RELEASE_DRAFT === "true" || process.env.RELEASE_PRERELEASE === "true") {
+            throw new Error("Only stable, non-draft GitHub releases may be published.");
+          }
+          const tag = process.env.RELEASE_TAG;
+          if (!/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(tag)) {
+            throw new Error(`Release tag must be vX.Y.Z; received ${JSON.stringify(tag)}.`);
+          }
+          const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+          if (`v${manifest.version}` !== tag) {
+            throw new Error(`Release tag ${tag} does not match package version ${manifest.version}.`);
+          }
+          console.log(`Validated stable release ${tag} for ${manifest.name}.`);
+          NODE
+
+  pack:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+      - name: Require npm 11.5.1 or newer
+        run: |
+          node -e 'const npm=require("child_process").execFileSync("npm",["--version"],{encoding:"utf8"}).trim().split(".").map(Number); if (npm[0] < 11 || (npm[0] === 11 && npm[1] < 5) || (npm[0] === 11 && npm[1] === 5 && npm[2] < 1)) throw new Error(`npm >=11.5.1 required; found ${npm.join(".")}`); console.log(`npm ${npm.join(".")}`);'
+      - run: bun install --frozen-lockfile
+      - name: Test the clean checkout
+        run: bun run test:unit
+      - name: Typecheck the clean checkout
+        run: bun run typecheck
+      - name: Build the clean checkout before packing
+        run: bun run build
+      - name: Install Chromium for release E2E coverage
+        run: bunx playwright install --with-deps chromium
+      - name: Run release E2E coverage
+        run: bun run test:e2e
+      - name: Pack without lifecycle recursion
+        run: npm pack --json --ignore-scripts > pack-receipt.json
+      - name: Validate the npm pack receipt and archive
+        run: |
+          node scripts/check-package.mjs --receipt pack-receipt.json
+          node <<'NODE'
+          const { copyFileSync, mkdirSync, readFileSync, statSync } = require("node:fs");
+          const { resolve } = require("node:path");
+          const receipt = JSON.parse(readFileSync("pack-receipt.json", "utf8"));
+          const item = Array.isArray(receipt) ? receipt[0] : receipt;
+          if (!item || typeof item.filename !== "string") throw new Error("npm pack receipt has no filename");
+          const source = resolve(item.filename);
+          if (!statSync(source).isFile()) throw new Error(`Packed tarball is not a file: ${source}`);
+          mkdirSync("artifact", { recursive: true });
+          copyFileSync(source, "artifact/sj-mail.tgz");
+          NODE
+          node scripts/check-package.mjs artifact/sj-mail.tgz
+          sha256sum artifact/sj-mail.tgz > artifact/sj-mail.tgz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sj-mail-package
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: sj-mail-package
+          path: artifact
+      - name: Run packaged smoke test
+        run: node scripts/package-smoke.mjs artifact/sj-mail.tgz
+
+  publish:
+    needs: smoke
+    if: github.event_name == 'release' && github.repository == 'sj00c/mail' && github.event.release.draft == false && github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+      - name: Require npm 11.5.1 or newer
+        run: |
+          node -e 'const npm=require("child_process").execFileSync("npm",["--version"],{encoding:"utf8"}).trim().split(".").map(Number); if (npm[0] < 11 || (npm[0] === 11 && npm[1] < 5) || (npm[0] === 11 && npm[1] === 5 && npm[2] < 1)) throw new Error(`npm >=11.5.1 required; found ${npm.join(".")}`); console.log(`npm ${npm.join(".")}`);'
+      - uses: actions/download-artifact@v4
+        with:
+          name: sj-mail-package
+          path: artifact
+      - name: Verify the downloaded artifact bytes
+        run: sha256sum --check artifact/sj-mail.tgz.sha256
+      # Configure the npm trusted publisher for sj00c/mail before enabling this job.
+      - name: Publish the validated tarball with npm trusted publishing
+        run: npm publish artifact/sj-mail.tgz --access public --provenance --ignore-scripts

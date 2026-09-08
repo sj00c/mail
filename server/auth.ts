@@ -18,7 +18,11 @@ export const SCOPES = [
   "https://www.googleapis.com/auth/contacts.other.readonly",
 ];
 
-const TOKEN_PATH = join(dirname(fileURLToPath(import.meta.url)), ".data", "token.json");
+const TOKEN_PATH = join(
+  process.env.MAIL_DATA_DIR ??
+    join(dirname(fileURLToPath(import.meta.url)), ".data"),
+  "token.json",
+);
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;

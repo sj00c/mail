@@ -320,6 +320,12 @@ type CalendarRequestState =
   | { status: "loading"; generation: number; rangeKey: string }
   | { status: "failed"; generation: number; rangeKey: string; message: string };
 type DateCoverage = "covered" | "loading" | "unavailable";
+type CapacityMeasurement = {
+  element: HTMLDivElement;
+  value: number;
+  windowStart: string;
+  layout: string;
+};
 
 export function useCalendarEvents(
   range: CalRange,
@@ -461,6 +467,7 @@ export function MonthGrid({
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const [capacity, setCapacity] = useState(1);
   const [measured, setMeasured] = useState(false);
+  const [capacityMeasurement, setCapacityMeasurement] = useState<CapacityMeasurement | null>(null);
   const [alignmentGutter, setAlignmentGutter] = useState(0);
   const [navigationToken, setNavigationToken] = useState(0);
   const [navigationPhase, setNavigationPhase] = useState<"idle" | "rebase" | "align" | "settling" | "settled">("idle");
@@ -486,7 +493,7 @@ export function MonthGrid({
   } | null>(null);
   const navigationFrameRef = useRef<number | null>(null);
   const navigationGenerationRef = useRef(0);
-  const capacityRef = useRef<{ element: HTMLDivElement; value: number; windowStart: string; layout: string } | null>(null);
+  const capacityRef = useRef<CapacityMeasurement | null>(null);
   const programmaticRef = useRef(true);
   const markCorrectingScroll = useCallback(() => {
     correctingScrollRef.current = true;
@@ -569,12 +576,21 @@ export function MonthGrid({
     const value = Math.max(1, Math.floor(available / (rowHeight + (Number.parseFloat(style.gap) || 0))));
     const week = element.querySelector<HTMLElement>(".month-week");
     setAlignmentGutter(Math.max(0, element.clientHeight - (week?.offsetHeight ?? 0)));
-    capacityRef.current = {
+    const measurement = {
       element,
       value,
       windowStart: windowStartKey,
       layout: `${element.clientWidth}|${element.clientHeight}|${week?.offsetHeight ?? 0}|${rowHeight}`,
     };
+    capacityRef.current = measurement;
+    setCapacityMeasurement((current) =>
+      current &&
+      current.element === measurement.element &&
+      current.value === measurement.value &&
+      current.windowStart === measurement.windowStart &&
+      current.layout === measurement.layout
+        ? current
+        : measurement);
     setCapacity(value);
     setMeasured(true);
   }, [interactionLocked, windowStartKey]);
@@ -873,7 +889,6 @@ export function MonthGrid({
   }, [interactionLocked]);
   const hasVisibleCoverage = weeks.some((week) =>
     Array.from({ length: 7 }, (_, index) => coverage(addDays(week, index))).includes("covered"));
-  const capacityMeasurement = capacityRef.current;
   const currentCell = scrollElement?.querySelector<HTMLElement>(".month-cell") ?? null;
   const currentWeek = scrollElement?.querySelector<HTMLElement>(".month-week") ?? null;
   const currentRowHeight = currentCell

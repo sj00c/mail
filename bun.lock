@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "mail-ui",
+      "name": "@sj00c/mail",
       "dependencies": {
         "@googleapis/calendar": "9.8.0",
         "@googleapis/drive": "12.1.0",
