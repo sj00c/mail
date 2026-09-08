@@ -79,6 +79,38 @@ if ($settingsCommands.Count -eq 1) {
   $intervalText = if ($null -ne $intervalArgument) { $intervalArgument.Extent.Text } else { "" }
   Assert ($intervalText -match '^\(?\s*New-TimeSpan\s+-Minutes\s+1\s*\)?$') "Production restart interval is one minute"
 }
+$actionCommands = @($installerAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+      $node.GetCommandName() -eq "New-ScheduledTaskAction"
+  }, $true))
+Assert ($actionCommands.Count -eq 1) "Production installer has one scheduler action command"
+if ($actionCommands.Count -eq 1) {
+  Assert ($actionCommands[0].Extent.Text -match '-WindowStyle\s+Hidden') "Scheduled login action hides the PowerShell window"
+}
+$triggerCommands = @($installerAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+      $node.GetCommandName() -eq "New-ScheduledTaskTrigger"
+  }, $true))
+Assert ($triggerCommands.Count -eq 1) "Production installer has one scheduler trigger command"
+if ($triggerCommands.Count -eq 1) {
+  $atLogOn = @($triggerCommands[0].CommandElements | Where-Object {
+      $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq "AtLogOn"
+    })
+  Assert ($atLogOn.Count -eq 1) "Scheduled login action triggers at user logon"
+}
+$principalCommands = @($installerAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+      $node.GetCommandName() -eq "New-ScheduledTaskPrincipal"
+  }, $true))
+Assert ($principalCommands.Count -eq 1) "Production installer has one scheduler principal command"
+if ($principalCommands.Count -eq 1) {
+  $principalText = $principalCommands[0].Extent.Text
+  Assert ($principalText -match '-LogonType\s+Interactive') "Scheduled login action uses the interactive user session"
+  Assert ($principalText -match '-RunLevel\s+Limited') "Scheduled login action retains least privilege"
+}
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("mail-installer-test-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $temp | Out-Null
@@ -118,6 +150,115 @@ try {
   & $hostExecutable -NoProfile -File (Join-Path $fixtureDeploy "run.ps1") -BunPath $hostExecutable -LogPath $launchLog
   Assert ($LASTEXITCODE -ne 0) "Missing build fails without rebuilding at startup"
   Assert ((Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8).Contains("dist/index.html missing")) "Launcher explains missing build in log"
+
+  # A scheduler stop terminates the launcher before Bun can exit gracefully.
+  # Run a real Bun fixture, kill only the launcher PID, and require both the
+  # child PID and its listening port to disappear.
+  $bunCommand = Get-Command bun -CommandType Application -ErrorAction SilentlyContinue
+  Assert ($null -ne $bunCommand) "Bun executable is available for job lifetime regression"
+  $jobRoot = Join-Path $temp "job-lifetime-fixture"
+  $jobDeploy = Join-Path $jobRoot "deploy"
+  $jobDist = Join-Path $jobRoot "dist"
+  $jobServer = Join-Path $jobRoot "server"
+  New-Item -ItemType Directory -Force -Path $jobDeploy, $jobDist, $jobServer | Out-Null
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run.ps1") -Destination $jobDeploy
+  Set-Content -LiteralPath (Join-Path $jobDist "index.html") -Value "<!doctype html><title>job fixture</title>" -Encoding UTF8
+  @'
+const marker = process.env.MAIL_JOB_TEST_PID_FILE;
+const port = Number(process.env.PORT);
+if (!marker || !Number.isInteger(port)) {
+  throw new Error("Job lifetime fixture environment is incomplete.");
+}
+Bun.serve({
+  hostname: "127.0.0.1",
+  port,
+  fetch() {
+    return new Response("job fixture");
+  },
+});
+await Bun.write(marker, String(process.pid));
+await new Promise(() => {});
+'@ | Set-Content -LiteralPath (Join-Path $jobServer "index.ts") -Encoding UTF8
+  $jobPortListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+  $jobPortListener.Start()
+  $jobPort = ([Net.IPEndPoint]$jobPortListener.LocalEndpoint).Port
+  $jobPortListener.Stop()
+  $jobPidFile = Join-Path $jobRoot "bun.pid"
+  $jobLog = Join-Path $jobRoot "server.log"
+  $jobLauncher = $null
+  $jobBunPid = 0
+  $jobBunProcess = $null
+  $oldPort = $env:PORT
+  $oldJobPidFile = $env:MAIL_JOB_TEST_PID_FILE
+  try {
+    $env:PORT = [string]$jobPort
+    $env:MAIL_JOB_TEST_PID_FILE = $jobPidFile
+    $quote = { param([string]$value) '"' + $value + '"' }
+    $jobArguments = @(
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+      "-File", (& $quote (Join-Path $jobDeploy "run.ps1")),
+      "-BunPath", (& $quote $bunCommand.Source),
+      "-LogPath", (& $quote $jobLog)
+    )
+    $jobLauncher = Start-Process -FilePath $hostExecutable -ArgumentList $jobArguments -WorkingDirectory $jobRoot -PassThru
+    $startDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    while ([DateTime]::UtcNow -lt $startDeadline -and $jobBunPid -eq 0) {
+      if (Test-Path -LiteralPath $jobPidFile) {
+        $pidText = (Get-Content -LiteralPath $jobPidFile -Raw -Encoding UTF8).Trim()
+        if ($pidText -match '^\d+$') { $jobBunPid = [int]$pidText }
+      }
+      if ($jobBunPid -eq 0 -and $jobLauncher.HasExited) { throw "Job lifetime launcher exited before Bun started." }
+      if ($jobBunPid -eq 0) { Start-Sleep -Milliseconds 100 }
+    }
+    Assert ($jobBunPid -gt 0) "Launcher starts the Bun lifetime fixture"
+    $jobBunProcess = Get-Process -Id $jobBunPid -ErrorAction SilentlyContinue
+    Assert ($null -ne $jobBunProcess) "Bun lifetime fixture process is running"
+    $portReady = $false
+    $readyDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ([DateTime]::UtcNow -lt $readyDeadline -and -not $portReady) {
+      $client = $null
+      try {
+        $client = [Net.Sockets.TcpClient]::new()
+        $client.Connect("127.0.0.1", $jobPort)
+        $portReady = $true
+      }
+      catch {}
+      finally { if ($null -ne $client) { $client.Dispose() } }
+      if (-not $portReady) { Start-Sleep -Milliseconds 100 }
+    }
+    Assert $portReady "Bun lifetime fixture binds its port"
+    $jobLauncher.Kill()
+    $jobLauncher.WaitForExit(10000)
+    Assert $jobLauncher.HasExited "Forced launcher termination completes"
+    $childGone = $false
+    $portFree = $false
+    $stopDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $stopDeadline -and (-not $childGone -or -not $portFree)) {
+      $childGone = $jobBunProcess.HasExited
+      $probeListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $jobPort)
+      try {
+        $probeListener.Start()
+        $portFree = $true
+      }
+      catch { $portFree = $false }
+      finally { $probeListener.Stop() }
+      if (-not $childGone -or -not $portFree) { Start-Sleep -Milliseconds 100 }
+    }
+    Assert $childGone "Forced launcher termination reaps the Bun child"
+    Assert $portFree "Forced launcher termination frees the Bun port"
+  }
+  finally {
+    if ($null -ne $jobLauncher -and -not $jobLauncher.HasExited) {
+      $jobLauncher.Kill()
+      $jobLauncher.WaitForExit(10000)
+    }
+    if ($null -ne $jobBunProcess -and -not $jobBunProcess.HasExited) {
+      $jobBunProcess.Kill()
+      $jobBunProcess.WaitForExit(10000)
+    }
+    if ($null -eq $oldPort) { Remove-Item Env:PORT -ErrorAction SilentlyContinue } else { $env:PORT = $oldPort }
+    if ($null -eq $oldJobPidFile) { Remove-Item Env:MAIL_JOB_TEST_PID_FILE -ErrorAction SilentlyContinue } else { $env:MAIL_JOB_TEST_PID_FILE = $oldJobPidFile }
+  }
 
   # Scheduler commands do not exist on Linux; use controlled task observations.
   function Get-ScheduledTask { [CmdletBinding()]param($TaskName) [pscustomobject]@{ State = $script:taskState } }
@@ -207,29 +348,34 @@ try {
   # Exercise the real uninstaller with isolated scheduler mocks. These cases
   # never touch the user's MailLocal task or files.
   $uninstallScript = Join-Path $PSScriptRoot "uninstall.ps1"
-  $script:uninstallTaskPresent = $true
-  $script:uninstallOtherTaskPresent = $true
-  $script:uninstallState = "Ready"
-  $script:uninstallDiscoveryFailure = $null
-  $script:uninstallDisableFailure = $false
-  $script:uninstallStopFailure = $false
-  $script:uninstallStopTransitions = $true
-  $script:uninstallDisableCalls = 0
-  $script:uninstallUnregisterFailure = $false
-  $script:uninstallUnregisterRemovesTask = $true
-  $script:uninstallStopCalls = 0
-  $script:uninstallUnregisterCalls = 0
-  $script:uninstallDiscoveryCalls = 0
+  # The uninstaller runs in a child script scope. Keep mock state in a
+  # captured object rather than $script: variables, which would resolve to
+  # uninstall.ps1's script scope when these functions are called there.
+  $uninstallMockState = [pscustomobject]@{
+    TaskPresent = $true
+    OtherTaskPresent = $true
+    State = "Ready"
+    DiscoveryFailure = $null
+    DisableFailure = $false
+    StopFailure = $false
+    StopTransitions = $true
+    DisableCalls = 0
+    UnregisterFailure = $false
+    UnregisterRemovesTask = $true
+    StopCalls = 0
+    UnregisterCalls = 0
+    DiscoveryCalls = 0
+  }
   function Get-ScheduledTask {
     [CmdletBinding()]
     param([string]$TaskPath)
-    $script:uninstallDiscoveryCalls++
-    if ($null -ne $script:uninstallDiscoveryFailure) { throw $script:uninstallDiscoveryFailure }
+    $uninstallMockState.DiscoveryCalls++
+    if ($null -ne $uninstallMockState.DiscoveryFailure) { throw $uninstallMockState.DiscoveryFailure }
     if ($TaskPath -ne "\") { throw "unexpected task path: $TaskPath" }
-    if ($script:uninstallTaskPresent) {
-      [pscustomobject]@{ TaskName = "MailLocal"; TaskPath = "\"; State = $script:uninstallState }
+    if ($uninstallMockState.TaskPresent) {
+      [pscustomobject]@{ TaskName = "MailLocal"; TaskPath = "\"; State = $uninstallMockState.State }
     }
-    if ($script:uninstallOtherTaskPresent) {
+    if ($uninstallMockState.OtherTaskPresent) {
       [pscustomobject]@{ TaskName = "MailLocal"; TaskPath = "\Other\"; State = "Running" }
     }
   }
@@ -237,24 +383,24 @@ try {
     [CmdletBinding()]
     param([string]$TaskName, [string]$TaskPath)
     if ($TaskPath -ne "\") { throw "unexpected task path: $TaskPath" }
-    $script:uninstallDisableCalls++
-    if ($script:uninstallDisableFailure) { throw "disable failed" }
+    $uninstallMockState.DisableCalls++
+    if ($uninstallMockState.DisableFailure) { throw "disable failed" }
   }
   function Stop-ScheduledTask {
     [CmdletBinding()]
     param([string]$TaskName, [string]$TaskPath)
     if ($TaskPath -ne "\") { throw "unexpected task path: $TaskPath" }
-    $script:uninstallStopCalls++
-    if ($script:uninstallStopFailure) { throw "stop failed" }
-    if ($script:uninstallStopTransitions) { $script:uninstallState = "Ready" }
+    $uninstallMockState.StopCalls++
+    if ($uninstallMockState.StopFailure) { throw "stop failed" }
+    if ($uninstallMockState.StopTransitions) { $uninstallMockState.State = "Ready" }
   }
   function Unregister-ScheduledTask {
     [CmdletBinding()]
     param([string]$TaskName, [string]$TaskPath, [switch]$Confirm)
     if ($TaskPath -ne "\") { throw "unexpected task path: $TaskPath" }
-    $script:uninstallUnregisterCalls++
-    if ($script:uninstallUnregisterFailure) { throw "unregister failed" }
-    if ($script:uninstallUnregisterRemovesTask) { $script:uninstallTaskPresent = $false }
+    $uninstallMockState.UnregisterCalls++
+    if ($uninstallMockState.UnregisterFailure) { throw "unregister failed" }
+    if ($uninstallMockState.UnregisterRemovesTask) { $uninstallMockState.TaskPresent = $false }
   }
   $sentinels = @(
     (Join-Path $temp ".env"),
@@ -264,114 +410,114 @@ try {
   foreach ($sentinel in $sentinels) { Set-Content -LiteralPath $sentinel -Value "must remain" -Encoding UTF8 }
 
   foreach ($timeout in @([double]::NaN, [double]::PositiveInfinity, 0, -1)) {
-    $discoveryBefore = $script:uninstallDiscoveryCalls
+    $discoveryBefore = $uninstallMockState.DiscoveryCalls
     $errorText = ""
     try { & $uninstallScript -WaitTimeoutSeconds $timeout } catch { $errorText = $_.Exception.Message }
     Assert ($errorText -match "유한한 숫자") "Invalid uninstall timeout is rejected"
-    Assert ($script:uninstallDiscoveryCalls -eq $discoveryBefore) "Invalid timeout cannot mutate or inspect scheduled tasks"
+    Assert ($uninstallMockState.DiscoveryCalls -eq $discoveryBefore) "Invalid timeout cannot mutate or inspect scheduled tasks"
   }
 
   # An absent task is a successful no-op and is safe to rerun.
-  $script:uninstallTaskPresent = $false
-  $script:uninstallOtherTaskPresent = $true
-  $script:uninstallStopCalls = 0
-  $script:uninstallDisableCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.TaskPresent = $false
+  $uninstallMockState.OtherTaskPresent = $true
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.DisableCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $uninstallSucceeded = $true
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $uninstallSucceeded = $false }
   Assert $uninstallSucceeded "Uninstaller accepts an absent task"
-  Assert ($script:uninstallStopCalls -eq 0 -and $script:uninstallUnregisterCalls -eq 0) "Absent task does not invoke stop or unregister"
+  Assert ($uninstallMockState.StopCalls -eq 0 -and $uninstallMockState.UnregisterCalls -eq 0) "Absent task does not invoke stop or unregister"
   $uninstallSucceeded = $true
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $uninstallSucceeded = $false }
   Assert $uninstallSucceeded "Uninstaller can be rerun when the task is absent"
 
   # A running task is stopped, observed inactive, unregistered, and verified gone.
-  $script:uninstallTaskPresent = $true
-  $script:uninstallState = "Running"
-  $script:uninstallDisableFailure = $false
-  $script:uninstallStopFailure = $false
-  $script:uninstallStopTransitions = $true
-  $script:uninstallUnregisterFailure = $false
-  $script:uninstallUnregisterRemovesTask = $true
-  $script:uninstallStopCalls = 0
-  $script:uninstallDisableCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.TaskPresent = $true
+  $uninstallMockState.State = "Running"
+  $uninstallMockState.DisableFailure = $false
+  $uninstallMockState.StopFailure = $false
+  $uninstallMockState.StopTransitions = $true
+  $uninstallMockState.UnregisterFailure = $false
+  $uninstallMockState.UnregisterRemovesTask = $true
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.DisableCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $uninstallSucceeded = $true
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $uninstallSucceeded = $false }
   Assert $uninstallSucceeded "Uninstaller removes an active task after it becomes inactive"
-  Assert ($script:uninstallDisableCalls -eq 1 -and $script:uninstallStopCalls -eq 1 -and $script:uninstallUnregisterCalls -eq 1 -and -not $script:uninstallTaskPresent) "Active task is disabled, stopped, unregistered, and verified removed"
-  Assert $script:uninstallOtherTaskPresent "Same-name task outside the root path is preserved"
+  Assert ($uninstallMockState.DisableCalls -eq 1 -and $uninstallMockState.StopCalls -eq 1 -and $uninstallMockState.UnregisterCalls -eq 1 -and -not $uninstallMockState.TaskPresent) "Active task is disabled, stopped, unregistered, and verified removed"
+  Assert $uninstallMockState.OtherTaskPresent "Same-name task outside the root path is preserved"
 
   # Queued work is active too and must be stopped before unregistering.
-  $script:uninstallTaskPresent = $true
-  $script:uninstallState = "Queued"
-  $script:uninstallStopCalls = 0
-  $script:uninstallDisableCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.TaskPresent = $true
+  $uninstallMockState.State = "Queued"
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.DisableCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $uninstallSucceeded = $true
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $uninstallSucceeded = $false }
-  Assert ($uninstallSucceeded -and $script:uninstallDisableCalls -eq 1 -and $script:uninstallStopCalls -eq 1 -and $script:uninstallUnregisterCalls -eq 1) "Queued task is disabled and stopped before unregistering"
+  Assert ($uninstallSucceeded -and $uninstallMockState.DisableCalls -eq 1 -and $uninstallMockState.StopCalls -eq 1 -and $uninstallMockState.UnregisterCalls -eq 1) "Queued task is disabled and stopped before unregistering"
 
   # Discovery errors must not be mistaken for an absent task.
-  $script:uninstallTaskPresent = $true
-  $script:uninstallDiscoveryFailure = "scheduler discovery failed"
-  $script:uninstallStopCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.TaskPresent = $true
+  $uninstallMockState.DiscoveryFailure = "scheduler discovery failed"
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
   Assert ($errorText -match "scheduler discovery failed") "Task discovery failure propagates"
-  Assert ($script:uninstallStopCalls -eq 0 -and $script:uninstallUnregisterCalls -eq 0) "Discovery failure does not mutate the task"
-  $script:uninstallDiscoveryFailure = $null
+  Assert ($uninstallMockState.StopCalls -eq 0 -and $uninstallMockState.UnregisterCalls -eq 0) "Discovery failure does not mutate the task"
+  $uninstallMockState.DiscoveryFailure = $null
 
   # Disabling is part of the stop barrier and its failures must propagate.
-  $script:uninstallState = "Ready"
-  $script:uninstallDisableFailure = $true
-  $script:uninstallStopCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.State = "Ready"
+  $uninstallMockState.DisableFailure = $true
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
   Assert ($errorText -match "disable failed") "Disable failure propagates"
-  Assert ($script:uninstallStopCalls -eq 0 -and $script:uninstallUnregisterCalls -eq 0 -and $script:uninstallTaskPresent) "Disable failure leaves the task registered"
+  Assert ($uninstallMockState.StopCalls -eq 0 -and $uninstallMockState.UnregisterCalls -eq 0 -and $uninstallMockState.TaskPresent) "Disable failure leaves the task registered"
 
   # Stop failures and bounded waits must prevent unregister and success.
-  $script:uninstallTaskPresent = $true
-  $script:uninstallState = "Running"
-  $script:uninstallDisableFailure = $false
-  $script:uninstallStopFailure = $true
-  $script:uninstallStopTransitions = $true
-  $script:uninstallStopCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.TaskPresent = $true
+  $uninstallMockState.State = "Running"
+  $uninstallMockState.DisableFailure = $false
+  $uninstallMockState.StopFailure = $true
+  $uninstallMockState.StopTransitions = $true
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
   Assert ($errorText -match "stop failed") "Stop failure propagates"
-  Assert ($script:uninstallUnregisterCalls -eq 0 -and $script:uninstallTaskPresent) "Stop failure leaves the task registered"
+  Assert ($uninstallMockState.UnregisterCalls -eq 0 -and $uninstallMockState.TaskPresent) "Stop failure leaves the task registered"
 
-  $script:uninstallStopFailure = $false
-  $script:uninstallStopTransitions = $false
-  $script:uninstallStopCalls = 0
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.StopFailure = $false
+  $uninstallMockState.StopTransitions = $false
+  $uninstallMockState.StopCalls = 0
+  $uninstallMockState.UnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.05 -PollMilliseconds 5 } catch { $errorText = $_.Exception.Message }
   Assert ($errorText -match "종료되지 않았습니다") "Active task wait has a bounded timeout"
-  Assert ($script:uninstallStopCalls -eq 1 -and $script:uninstallUnregisterCalls -eq 0 -and $script:uninstallTaskPresent) "Wait timeout leaves the active task registered"
+  Assert ($uninstallMockState.StopCalls -eq 1 -and $uninstallMockState.UnregisterCalls -eq 0 -and $uninstallMockState.TaskPresent) "Wait timeout leaves the active task registered"
 
   # Unregister failures and a no-op unregister cannot report success.
-  $script:uninstallState = "Ready"
-  $script:uninstallDisableFailure = $false
-  $script:uninstallUnregisterFailure = $true
-  $script:uninstallUnregisterRemovesTask = $true
-  $script:uninstallUnregisterCalls = 0
+  $uninstallMockState.State = "Ready"
+  $uninstallMockState.DisableFailure = $false
+  $uninstallMockState.UnregisterFailure = $true
+  $uninstallMockState.UnregisterRemovesTask = $true
+  $uninstallMockState.UnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
   Assert ($errorText -match "unregister failed") "Unregister failure propagates"
-  Assert ($script:uninstallUnregisterCalls -eq 1 -and $script:uninstallTaskPresent) "Unregister failure leaves the task registered"
+  Assert ($uninstallMockState.UnregisterCalls -eq 1 -and $uninstallMockState.TaskPresent) "Unregister failure leaves the task registered"
 
-  $script:uninstallUnregisterFailure = $false
-  $script:uninstallUnregisterRemovesTask = $false
+  $uninstallMockState.UnregisterFailure = $false
+  $uninstallMockState.UnregisterRemovesTask = $false
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
   Assert ($errorText -match "제거하지 못했습니다") "Surviving task fails removal verification"
-  Assert $script:uninstallTaskPresent "Removal verification observes a surviving task"
+  Assert $uninstallMockState.TaskPresent "Removal verification observes a surviving task"
   foreach ($sentinel in $sentinels) {
     Assert (Test-Path -LiteralPath $sentinel) "Uninstaller preserves $([IO.Path]::GetFileName($sentinel))"
   }
@@ -407,6 +553,7 @@ if ($Integration) {
     Assert ([int]$installedTask.Settings.RestartCount -eq 3) "Scheduler registers three restart attempts"
     Assert ($installedTask.Settings.RestartInterval -eq "PT1M") "Scheduler accepts one-minute restart interval"
     Assert ($installedTask.Actions.Arguments.Contains($bunPath)) "Scheduled launch uses the exact installed Bun executable"
+    Assert ($installedTask.Actions.Arguments.Contains("-WindowStyle Hidden")) "Scheduled launch keeps the PowerShell window hidden"
 
     # Register a uniquely named, deliberately failing task and observe one
     # scheduler restart. The future trigger prevents a second independent

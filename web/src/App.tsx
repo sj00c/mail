@@ -1598,22 +1598,22 @@ function LabelRow({
 }) {
   const name = SYSTEM_LABEL_NAMES[label.id] ?? label.name;
   const LabelIcon = LABEL_ICONS[label.id] ?? TagIcon;
+  const hasCounts =
+    label.total !== undefined || (label.unread ?? 0) > 0;
   return (
-    <button className={`label-row ${active ? "active" : ""}`} onClick={onClick}>
+    <button
+      className={`label-row${hasCounts ? " has-counts" : ""}${active ? " active" : ""}`}
+      onClick={onClick}
+    >
       <span className="label-name">
         <span className="label-ic">
           <LabelIcon />
         </span>
         {name}
       </span>
-      {(label.total !== undefined || (label.unread ?? 0) > 0) && (
+      {hasCounts && (
         <span
-          style={{
-            display: "grid",
-            justifyItems: "end",
-            gap: 2,
-            flexShrink: 0,
-          }}
+          className="label-counts"
         >
           {label.total !== undefined && (
             <small title="해당 편지함의 전체 메시지 수">

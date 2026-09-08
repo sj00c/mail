@@ -147,7 +147,7 @@ try {
 
   Set-InstallStage "[4/5] 로그인 시 자동 실행 등록"
   # Use the same absolute Bun path as installation, not the scheduler's PATH.
-  $action = New-ScheduledTaskAction -Execute $powershell -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`"" -WorkingDirectory $dir
+  $action = New-ScheduledTaskAction -Execute $powershell -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`"" -WorkingDirectory $dir
   $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
   $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
