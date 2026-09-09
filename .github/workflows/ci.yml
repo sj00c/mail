@@ -26,6 +26,31 @@ jobs:
       - name: Run mocked production E2E suite
         run: bun run test:e2e
 
+  npm-resolver-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - name: Ensure npm 10.9.2
+        run: |
+          if [ "$(npm --version)" != "10.9.2" ]; then
+            npm install --global npm@10.9.2
+          fi
+          test "$(npm --version)" = "10.9.2"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install from frozen Bun lockfile
+        run: bun install --frozen-lockfile
+      - name: Probe npm resolver without changing the lockfile
+        run: |
+          cp bun.lock "$RUNNER_TEMP/bun.lock.before"
+          npm update --dry-run --ignore-scripts --no-audit --no-fund
+          cmp --silent "$RUNNER_TEMP/bun.lock.before" bun.lock
+          git diff --exit-code -- bun.lock
+
   macos-deploy:
     runs-on: macos-latest
     steps:

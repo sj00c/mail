@@ -230,6 +230,8 @@ npm 방식은 Windows 예약 작업이나 macOS `launchd`를 등록·수정하�
 
 ## 개발자 참고
 
+- CI의 npm resolver 회귀 검사는 `.github/workflows/ci.yml`에 고정한 Node/npm과 `package.json`의 Bun 도구 조합을 사용합니다. 로컬 재현 시에도 이 도구 조합을 맞추세요.
+- 소스 설치·빌드는 저장소 루트에서 `bun install --frozen-lockfile` 후 `bun run build`를 사용하세요. 배포 가능한 아카이브는 `npm pack`으로 확인하고, 소비자 프로젝트 의존성 갱신에만 해당 프로젝트에서 `npm update`를 실행하세요.
 - 환경 변수 예시는 [`.env.example`](.env.example)에서 확인하세요. 개발 서버는 `bun run dev`(웹 `5173`, API `8787`), 운영 빌드는 `bun run build && bun run start`입니다.
 - 소스 구조와 설치 안전 지침은 [CLAUDE.md](CLAUDE.md)를 참고하세요.
 
