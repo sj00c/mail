@@ -37,7 +37,7 @@
     "build": "vite build",
     "prepack": "bun run build",
     "check:package": "node scripts/check-package.mjs",
-    "start": "NODE_ENV=production bun --use-system-ca server/index.ts",
+    "start": "node cli/mail.mjs start",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
