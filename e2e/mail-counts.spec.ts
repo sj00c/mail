@@ -30,16 +30,19 @@ async function labelGeometry(
   });
 }
 
-function expectLabelGeometry(bounds: Awaited<ReturnType<typeof labelGeometry>>) {
+function expectLabelGeometry(
+  bounds: Awaited<ReturnType<typeof labelGeometry>>,
+  options: { nameMustFit?: boolean } = {},
+) {
   expect(bounds.rowScroll).toBeLessThanOrEqual(bounds.rowWidth);
-  expect(bounds.nameScroll).toBeLessThanOrEqual(bounds.nameWidth);
+  if (options.nameMustFit !== false) {
+    expect(bounds.nameScroll).toBeLessThanOrEqual(bounds.nameWidth);
+  }
   expect(bounds.nameLeft).toBeGreaterThanOrEqual(bounds.rowLeft);
   expect(bounds.countsRight).toBeLessThanOrEqual(bounds.rowRight);
-  expect(
-    bounds.countsLeft >= bounds.nameRight + 8 ||
-      bounds.countsTop >= bounds.nameBottom + 2 ||
-      bounds.nameTop >= bounds.countsBottom + 2,
-  ).toBe(true);
+  expect(bounds.countsLeft).toBeGreaterThanOrEqual(bounds.nameRight);
+  expect(Math.abs(bounds.nameTop - bounds.countsTop)).toBeLessThanOrEqual(1);
+  expect(Math.abs(bounds.nameBottom - bounds.countsBottom)).toBeLessThanOrEqual(1);
 }
 
 async function reserveClassicSidebarScrollbar(
@@ -59,12 +62,33 @@ async function reserveClassicSidebarScrollbar(
   });
 }
 
+function labelDetails(
+  name: string,
+  total: number | undefined,
+  unread: number | undefined,
+) {
+  const totalText =
+    total === undefined
+      ? "제공되지 않음"
+      : `${total.toLocaleString("ko-KR")}개`;
+  const unreadText =
+    unread === undefined
+      ? "제공되지 않음"
+      : `${unread.toLocaleString("ko-KR")}개`;
+  return `${name} — 전체 메시지 수: ${totalText}, 안 읽은 메시지 수: ${unreadText}`;
+}
+
+function compactCount(count: number) {
+  return new Intl.NumberFormat("ko-KR", { notation: "compact" }).format(count);
+}
+
 test("sidebar distinguishes account-wide, folder total and unread message counts", async ({ page }) => {
   const calls = await installAppMocks(page, {
     profile: { email: "test@example.com", historyId: "10", messagesTotal: 12345 },
     labels: [
       { id: "INBOX", name: "INBOX", type: "system", total: 1234, unread: 56 },
       { id: "DRAFT", name: "DRAFT", type: "system", total: 7, unread: 0 },
+      { id: "STARRED", name: "STARRED", type: "system", total: 0, unread: 0 },
       { id: "TRASH", name: "TRASH", type: "system", total: 9, unread: 2 },
       { id: "work", name: "업무", type: "user", total: 24, unread: 3 },
     ],
@@ -73,14 +97,51 @@ test("sidebar distinguishes account-wide, folder total and unread message counts
   await expect(page.getByText("계정 메시지 12,345개")).toBeVisible();
   await expect(page.getByText("Google 제공 계정 기준", { exact: true })).toBeVisible();
   const inbox = page.locator(".label-row").filter({ hasText: "받은편지함" });
-  await expect(inbox).toContainText("전체 1,234");
-  await expect(inbox).toContainText("안 읽음 56");
+  await expect(inbox.locator(".label-counts")).toHaveText("56");
+  await expect(inbox.locator(".label-counts")).toHaveClass(/badge/);
+  await expect(inbox).toHaveAttribute(
+    "title",
+    labelDetails("받은편지함", 1234, 56),
+  );
+  await expect(inbox).toHaveAttribute(
+    "aria-label",
+    labelDetails("받은편지함", 1234, 56),
+  );
+  await expect(inbox.locator(".label-counts")).toHaveAttribute(
+    "title",
+    "안 읽은 메시지 수: 56개",
+  );
   const draft = page.locator(".label-row").filter({ hasText: "임시보관함" });
-  await expect(draft).toContainText("전체 7");
-  await expect(draft).not.toContainText("안 읽음");
+  await expect(draft.locator(".label-counts")).toHaveText("7");
+  await expect(draft.locator(".label-counts")).not.toHaveClass(/badge/);
+  await expect(draft).toHaveAttribute(
+    "title",
+    labelDetails("임시보관함", 7, 0),
+  );
+  await expect(draft.locator(".label-counts")).toHaveAttribute(
+    "title",
+    "전체 메시지 수: 7개",
+  );
+  const starred = page.locator(".label-row").filter({ hasText: "별표" });
+  await expect(starred.locator(".label-counts")).toHaveText("0");
+  await expect(starred.locator(".label-counts")).not.toHaveClass(/badge/);
+  await expect(starred.locator(".label-counts")).toHaveAttribute(
+    "title",
+    "전체 메시지 수: 0개",
+  );
   const work = page.locator(".label-row").filter({ hasText: "업무" });
-  await expect(work).toContainText("전체 24");
-  await expect(work).toContainText("안 읽음 3");
+  await expect(work.locator(".label-counts")).toHaveText("3");
+  await expect(work.locator(".label-counts")).toHaveClass(/badge/);
+  await expect(work).toHaveAttribute(
+    "aria-label",
+    labelDetails("업무", 24, 3),
+  );
+  const allMail = page.locator(".label-row").filter({ hasText: "전체메일" });
+  await expect(allMail.locator(".label-counts")).toHaveCount(0);
+  await expect(allMail).toHaveAttribute(
+    "aria-label",
+    labelDetails("전체메일", undefined, undefined),
+  );
   // Totals come from Gmail counters, not a mailbox-wide page traversal.
   expect(calls.filter((call) => call.path === "/api/messages")).toHaveLength(1);
   const bounds = await labelGeometry(inbox);
@@ -89,6 +150,7 @@ test("sidebar distinguishes account-wide, folder total and unread message counts
 
 test("sidebar keeps inbox labels readable with a reserved scrollbar at 1024px", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 800 });
+  const longCustomName = "프로젝트 알림과 고객지원 장기 보관함";
   await installAppMocks(page, {
     labels: [
       {
@@ -97,6 +159,13 @@ test("sidebar keeps inbox labels readable with a reserved scrollbar at 1024px", 
         type: "system",
         total: 2201,
         unread: 1,
+      },
+      {
+        id: "long-custom",
+        name: longCustomName,
+        type: "user",
+        total: 0,
+        unread: 0,
       },
     ],
   });
@@ -122,10 +191,17 @@ test("sidebar keeps inbox labels readable with a reserved scrollbar at 1024px", 
   }
 
   const inbox = page.locator(".label-row").filter({ hasText: "받은편지함" });
-  await expect(inbox).toContainText("전체 2,201");
-  await expect(inbox).toContainText("안 읽음 1");
+  await expect(inbox.locator(".label-counts")).toHaveText("1");
+  await expect(inbox.locator(".label-counts")).toHaveClass(/badge/);
+  await expect(inbox).toHaveAttribute(
+    "title",
+    labelDetails("받은편지함", 2201, 1),
+  );
   const bounds = await labelGeometry(inbox);
   expectLabelGeometry(bounds);
+  const custom = page.locator(".label-row").filter({ hasText: longCustomName });
+  await expect(custom.locator(".label-counts")).toHaveText("0");
+  expectLabelGeometry(await labelGeometry(custom), { nameMustFit: false });
 });
 
 test("sidebar keeps large counters from shrinking the label name", async ({ page }) => {
@@ -145,8 +221,18 @@ test("sidebar keeps large counters from shrinking the label name", async ({ page
   await reserveClassicSidebarScrollbar(page);
 
   const inbox = page.locator(".label-row").filter({ hasText: "받은편지함" });
-  await expect(inbox).toContainText("전체 123,456,789");
-  await expect(inbox).toContainText("안 읽음 98,765,432");
+  await expect(inbox.locator(".label-counts")).toHaveText(
+    compactCount(98765432),
+  );
+  await expect(inbox.locator(".label-counts")).toHaveClass(/badge/);
+  await expect(inbox).toHaveAttribute(
+    "title",
+    labelDetails("받은편지함", 123456789, 98765432),
+  );
+  await expect(inbox).toHaveAttribute(
+    "aria-label",
+    labelDetails("받은편지함", 123456789, 98765432),
+  );
   const bounds = await labelGeometry(inbox);
   expectLabelGeometry(bounds);
 });

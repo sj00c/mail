@@ -1117,6 +1117,123 @@ test("event detail modal traps focus, closes with Escape, and restores the event
   await expect(trigger).toBeFocused();
 });
 
+test("event description fills the dialog through grip resize and maximize restore", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
+  await installAppMocks(page);
+  const longDescription = Array.from(
+    { length: 160 },
+    (_, index) => `<p>Description row ${index + 1}: a long event detail paragraph for scrolling.</p>`,
+  ).join("");
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) =>
+    route.fulfill({ json: [primaryEvent] }),
+  );
+  await page.route(`${TEST_ORIGIN}/api/calendar/event?*`, (route) =>
+    route.fulfill({
+      json: { ...primaryEventDetail, description: longDescription },
+    }),
+  );
+  await openCalendar(page);
+
+  await page.getByRole("button", { name: /기본 캘린더 일정/ }).click();
+  const dialog = page.getByRole("dialog", { name: "일정" });
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate((element) => getComputedStyle(element).transform)).toBe("none");
+  const iframe = dialog.locator('iframe[title="event-description"]');
+  const frame = page.frameLocator('iframe[title="event-description"]');
+  await expect(frame.locator("body")).toContainText("Description row 1");
+  const initialIframe = (await iframe.boundingBox())!;
+  const initialDialog = (await dialog.boundingBox())!;
+  const initialScroll = await frame.locator("html").evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(initialScroll.scrollHeight).toBeGreaterThan(initialScroll.clientHeight);
+
+  const grip = dialog.locator(".dlg-grip");
+  const gripBox = (await grip.boundingBox())!;
+  await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gripBox.x + gripBox.width / 2 + 80, gripBox.y + gripBox.height / 2 + 90, {
+    steps: 4,
+  });
+  await page.mouse.up();
+  await expect.poll(async () => (await iframe.boundingBox())?.height ?? 0).toBeGreaterThan(
+    initialIframe.height + 80,
+  );
+  const resizedIframe = (await iframe.boundingBox())!;
+  const resizedDialog = (await dialog.boundingBox())!;
+  expect(resizedDialog.height).toBeGreaterThan(initialDialog.height + 100);
+  const resizedGap = await dialog.evaluate((element) => {
+    const description = element.querySelector<HTMLElement>(".ev-desc")!.getBoundingClientRect();
+    const footer = element.querySelector<HTMLElement>(".modal-foot")!.getBoundingClientRect();
+    return footer.top - description.bottom;
+  });
+  expect(resizedGap).toBeLessThanOrEqual(24);
+  expect(
+    await dialog.evaluate((element) => {
+      const footer = element.querySelector<HTMLElement>(".modal-foot")!.getBoundingClientRect();
+      const panel = element.getBoundingClientRect();
+      return footer.bottom <= panel.bottom + 1;
+    }),
+  ).toBeTruthy();
+
+  await dialog.getByRole("button", { name: "화면 꽉 채우기" }).click();
+  await expect(dialog.getByRole("button", { name: "이전 크기로" })).toBeVisible();
+  await expect.poll(async () => (await iframe.boundingBox())?.height ?? 0).toBeGreaterThan(
+    resizedIframe.height + 100,
+  );
+  const maximizedIframe = (await iframe.boundingBox())!;
+  const maximizedDialog = (await dialog.boundingBox())!;
+  expect(maximizedDialog.height).toBeGreaterThan(resizedDialog.height + 100);
+  expect(
+    await dialog.evaluate((element) => {
+      const description = element.querySelector<HTMLElement>(".ev-desc")!.getBoundingClientRect();
+      const footer = element.querySelector<HTMLElement>(".modal-foot")!.getBoundingClientRect();
+      const panel = element.getBoundingClientRect();
+      return footer.top - description.bottom <= 24 && footer.bottom <= panel.bottom + 1;
+    }),
+  ).toBeTruthy();
+
+  await dialog.getByRole("button", { name: "이전 크기로" }).click();
+  await expect(dialog.getByRole("button", { name: "화면 꽉 채우기" })).toBeVisible();
+  await expect.poll(async () => (await iframe.boundingBox())?.height ?? 0).toBeLessThan(
+    maximizedIframe.height - 100,
+  );
+  const restoredIframe = (await iframe.boundingBox())!;
+  const restoredDialog = (await dialog.boundingBox())!;
+  expect(restoredDialog.height).toBeLessThan(maximizedDialog.height - 100);
+  expect(restoredIframe.height).toBeGreaterThan(initialIframe.height + 80);
+});
+
+test("event detail without a description keeps metadata and footer usable", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
+  await installAppMocks(page);
+  await page.route(`${TEST_ORIGIN}/api/calendar/events?*`, (route) =>
+    route.fulfill({ json: [primaryEvent] }),
+  );
+  await page.route(`${TEST_ORIGIN}/api/calendar/event?*`, (route) =>
+    route.fulfill({
+      json: { ...primaryEventDetail, description: "" },
+    }),
+  );
+  await openCalendar(page);
+
+  await page.getByRole("button", { name: /기본 캘린더 일정/ }).click();
+  const dialog = page.getByRole("dialog", { name: "일정" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('iframe[title="event-description"]')).toHaveCount(0);
+  await expect(dialog.getByText("주최: owner@example.com")).toBeVisible();
+  const footer = dialog.locator(".modal-foot");
+  await expect(footer).toBeVisible();
+  expect(
+    await dialog.evaluate((element) => {
+      const panel = element.getBoundingClientRect();
+      const footer = element.querySelector<HTMLElement>(".modal-foot")!.getBoundingClientRect();
+      return footer.top >= panel.top && footer.bottom <= panel.bottom + 1;
+    }),
+  ).toBeTruthy();
+});
+
 test("agenda groups events in deterministic chronological order", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-04-12T12:00:00") });
   await installAppMocks(page);

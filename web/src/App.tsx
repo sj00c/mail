@@ -181,6 +181,20 @@ const SYSTEM_LABEL_NAMES: Record<string, string> = {
   TRASH: "휴지통",
 };
 
+const LABEL_COUNT_COMPACT_FORMAT = new Intl.NumberFormat("ko-KR", {
+  notation: "compact",
+});
+
+function formatLabelCount(value: number): string {
+  return LABEL_COUNT_COMPACT_FORMAT.format(value);
+}
+
+function formatLabelCountDetail(value: number | undefined): string {
+  return value === undefined
+    ? "제공되지 않음"
+    : `${value.toLocaleString("ko-KR")}개`;
+}
+
 // 안정된 빈 배열 — 선택이 없을 때 checkedIds가 매번 새 []를 반환하지 않도록.
 const EMPTY_IDS: string[] = [];
 
@@ -1598,12 +1612,20 @@ function LabelRow({
 }) {
   const name = SYSTEM_LABEL_NAMES[label.id] ?? label.name;
   const LabelIcon = LABEL_ICONS[label.id] ?? TagIcon;
-  const hasCounts =
-    label.total !== undefined || (label.unread ?? 0) > 0;
+  const showUnread = (label.unread ?? 0) > 0;
+  const visibleCount = showUnread ? label.unread : label.total;
+  const countTitle = showUnread
+    ? `안 읽은 메시지 수: ${formatLabelCountDetail(label.unread)}`
+    : label.total !== undefined
+      ? `전체 메시지 수: ${formatLabelCountDetail(label.total)}`
+      : undefined;
+  const rowDetails = `${name} — 전체 메시지 수: ${formatLabelCountDetail(label.total)}, 안 읽은 메시지 수: ${formatLabelCountDetail(label.unread)}`;
   return (
     <button
-      className={`label-row${hasCounts ? " has-counts" : ""}${active ? " active" : ""}`}
+      className={`label-row${label.type === "system" ? " system" : ""}${active ? " active" : ""}`}
       onClick={onClick}
+      title={rowDetails}
+      aria-label={rowDetails}
     >
       <span className="label-name">
         <span className="label-ic">
@@ -1611,20 +1633,13 @@ function LabelRow({
         </span>
         {name}
       </span>
-      {hasCounts && (
+      {visibleCount !== undefined && countTitle && (
         <span
-          className="label-counts"
+          className={`label-counts${showUnread ? " badge" : " label-count-total"}`}
+          title={countTitle}
+          aria-label={countTitle}
         >
-          {label.total !== undefined && (
-            <small title="해당 편지함의 전체 메시지 수">
-              전체 {label.total.toLocaleString("ko-KR")}
-            </small>
-          )}
-          {(label.unread ?? 0) > 0 && (
-            <span className="badge" title="안 읽은 메시지 수">
-              안 읽음 {label.unread!.toLocaleString("ko-KR")}
-            </span>
-          )}
+          {formatLabelCount(visibleCount)}
         </span>
       )}
     </button>
