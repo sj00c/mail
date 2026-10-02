@@ -81,7 +81,7 @@ test("app theme changes without recoloring or reloading received mail", async ({
   // 전환 직후 400ms는 색이 크로스페이드 중이다 — 끝 값으로 수렴할 때까지 기다린다.
   await expect(page.locator(".list").first()).toHaveCSS(
     "background-color",
-    "rgb(23, 31, 46)",
+    "rgba(30, 34, 41, 0.66)",
   );
   expect(await bg(page, ".list")).not.toBe(lightList);
   await expect(page.locator("html")).not.toHaveClass(/theme-fade/);
@@ -218,11 +218,11 @@ test("today's month cell is unmistakable in dark mode", async ({ page }) => {
     };
   });
   // 셀 바탕이 패널과 다르고(강조 틴트), 테두리는 반투명이 아닌 실선 강조색이다.
-  expect(styles.bg).toBe("rgb(28, 39, 64)");
-  expect(styles.ring).toContain("rgb(126, 166, 244)");
+  expect(styles.bg).toBe("rgb(38, 44, 53)");
+  expect(styles.ring).toContain("rgb(169, 188, 212)");
   expect(styles.ring).not.toMatch(/rgba\(/);
-  expect(styles.numBg).toBe("rgb(126, 166, 244)");
-  expect(styles.numColor).toBe("rgb(12, 20, 36)");
+  expect(styles.numBg).toBe("rgb(169, 188, 212)");
+  expect(styles.numColor).toBe("rgb(20, 23, 28)");
 });
 
 test("settings modal exposes system/light/dark and applies immediately", async ({

@@ -35,8 +35,12 @@ import {
   BanIcon,
   CalendarIcon,
   CloudIcon,
+  ForwardIcon,
   MailIcon,
+  ReplyAllIcon,
+  ReplyIcon,
   RestoreIcon,
+  StarIcon,
   TrashIcon,
 } from "../ui/icons.tsx";
 import type { ComposeInit } from "./compose.tsx";
@@ -275,13 +279,15 @@ export function Reader({
             className="btn"
             onClick={() => onReply(buildReplyInit(msg, ownAddresses, false))}
           >
-            ↩ 답장
+            <ReplyIcon />
+            답장
           </button>
           <button
             className="btn"
             onClick={() => onReply(buildReplyInit(msg, ownAddresses, true))}
           >
-            ↩↩ 전체답장
+            <ReplyAllIcon />
+            전체답장
           </button>
           <button
             className="btn"
@@ -333,7 +339,8 @@ export function Reader({
               })
             }
           >
-            ↪ 전달
+            <ForwardIcon />
+            전달
           </button>
           <button
             className="btn"
@@ -372,7 +379,8 @@ export function Reader({
               })
             }
           >
-            {msg.labelIds.includes("STARRED") ? "★ 별표 해제" : "☆ 별표"}
+            <StarIcon />
+            {msg.labelIds.includes("STARRED") ? "별표 해제" : "별표"}
           </button>
           <button
             className="btn"
@@ -466,7 +474,7 @@ export function Reader({
       {msgs.length > 1 && (
         <div className="thread-bar">
           <span className="thread-bar-title">
-            💬 대화 <b>{msgs.length}개</b>
+            대화 <b>{msgs.length}개</b>
             {expanded.size < msgs.length && ` · ${expanded.size}개 펼침`}
           </span>
           <span className="modal-spacer" />
@@ -826,22 +834,24 @@ export const ThreadMessage = memo(function ThreadMessage({
       data-depth={Math.min(depth, 8)}
     >
       <div className="reader-meta">
-        <button
-          type="button"
-          className="thread-fold"
-          onClick={() => onToggle(m.id)}
-          title="이 메일 접기"
-        >
-          <span className="thread-peek-n">{index + 1}</span>▾ 접기
-        </button>
-        {depth > 0 && (
-          <span className="thread-depth" title={`답장 ${depth}단계`}>
-            ↳ {depth}단계 답장
-          </span>
-        )}
-        {index === total - 1 && total > 1 && (
-          <span className="thread-last">최신</span>
-        )}
+        <div className="thread-tags">
+          <button
+            type="button"
+            className="thread-fold"
+            onClick={() => onToggle(m.id)}
+            title="이 메일 접기"
+          >
+            <span className="thread-peek-n">{index + 1}</span>접기
+          </button>
+          {depth > 0 && (
+            <span className="thread-depth" title={`답장 ${depth}단계`}>
+              ↳ {depth}단계 답장
+            </span>
+          )}
+          {index === total - 1 && total > 1 && (
+            <span className="thread-last">최신</span>
+          )}
+        </div>
         <div className="thread-from">
           <RecipientHeader
             label="보낸사람"
@@ -869,7 +879,8 @@ export const ThreadMessage = memo(function ThreadMessage({
         )}
         <div className="muted">{DATETIME_FMT.format(new Date(m.date))}</div>
         <span className={`thread-read-state ${m.unread ? "unread" : "read"}`}>
-          {m.unread ? "● 안읽음" : "○ 읽음"}
+          <span className="msg-read-dot" />
+          {m.unread ? "안읽음" : "읽음"}
         </span>
       </div>
       {m.attachments.some((a) => !a.contentId) && (

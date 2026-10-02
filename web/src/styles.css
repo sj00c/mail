@@ -1,134 +1,160 @@
 /* 색 토큰. 라이트가 기본이고, <html data-theme="dark">가 아래 블록에서
    같은 이름을 덮어쓴다 — 규칙 본문에는 hex를 직접 쓰지 않는다.
    서식 편집기와 메일 원본 보기는 테마와 독립된 "종이"(--paper) 위에 그린다. */
+/* 스테인리스 + 유리: 무채색에 가까운 쿨 그레이 금속 바탕 위에 반투명 판유리를
+   얹는다. 강조색은 채도를 낮춘 스틸 블루 하나, 글자는 순수 그래파이트 계열로
+   바탕의 푸른 기운과 같은 축에서만 명도를 바꾼다. */
 :root {
   color-scheme: light;
-  --bg: #edf0f5;
-  --panel: #ffffff;
-  --panel-glass: #ffffff;
-  --panel-glass-2: #f6f8fb;
-  --panel-glass-3: #f0f3f8;
+  --bg: #e6e9ee;
+  --bg-image:
+    radial-gradient(1200px 700px at 8% -10%, rgba(255, 255, 255, 0.9), transparent 60%),
+    radial-gradient(900px 640px at 100% 0%, rgba(188, 199, 214, 0.7), transparent 58%),
+    radial-gradient(1100px 800px at 55% 125%, rgba(172, 182, 196, 0.65), transparent 62%),
+    linear-gradient(160deg, #eceff3 0%, #dde2e8 50%, #d1d7df 100%);
+  --panel: #fbfcfd;
+  --panel-glass: rgba(255, 255, 255, 0.58);
+  --panel-glass-2: rgba(255, 255, 255, 0.78);
+  --panel-glass-3: rgba(255, 255, 255, 0.5);
+  --glass-border: rgba(255, 255, 255, 0.75);
+  --glass-blur: blur(22px) saturate(1.5);
   /* 패널 위에 살짝 가라앉은 면: 행 hover, 요일 헤더, 섹션 카드 → 트랙/배지 → 그리드 선 */
-  --surface-1: #f6f8fb;
-  --surface-2: #f0f3f8;
-  --surface-3: #e7eaf0;
-  --border: #e3e7ee;
-  --border-weak: #f0f2f6;
-  --border-strong: #d3d9e3;
+  --surface-1: #f3f5f8;
+  --surface-2: #ebeef2;
+  --surface-3: #e1e5eb;
+  --border: #dde2e8;
+  --border-weak: rgba(20, 28, 40, 0.055);
+  --border-strong: #c9d0d9;
   /* 글자색 알파 스케일 — 투명 배경 컨트롤의 hover/선, 다크에서는 흰색 계열 */
-  --hairline: rgba(16, 24, 40, 0.07);
-  --hairline-strong: rgba(16, 24, 40, 0.18);
-  --fill-1: rgba(16, 24, 40, 0.045);
-  --fill-2: rgba(16, 24, 40, 0.06);
-  --fill-3: rgba(16, 24, 40, 0.08);
-  --text: #17243b;
-  --text-2: #40516b;
-  --muted: #63718a;
-  --faint: #9aa3b2;
-  --accent: #2859dc;
-  --accent-strong: #204abf;
-  --accent-bg: #e9f0fd;
-  --accent-bg-strong: #dce8ff;
-  --accent-border: #bcd3f7;
-  --accent-a4: rgba(33, 96, 216, 0.04);
-  --accent-a10: rgba(33, 96, 216, 0.1);
-  --accent-a18: rgba(33, 96, 216, 0.18);
-  --accent-a30: rgba(33, 96, 216, 0.3);
-  --accent-a50: rgba(33, 96, 216, 0.5);
+  --hairline: rgba(20, 28, 40, 0.08);
+  --hairline-strong: rgba(20, 28, 40, 0.16);
+  --fill-1: rgba(20, 28, 40, 0.04);
+  --fill-2: rgba(20, 28, 40, 0.06);
+  --fill-3: rgba(20, 28, 40, 0.09);
+  --text: #1b2028;
+  --text-2: #3d4552;
+  --muted: #6b7380;
+  --faint: #9ca3ae;
+  --accent: #3e5c80;
+  --accent-strong: #2e4766;
+  --accent-bg: rgba(62, 92, 128, 0.09);
+  --accent-bg-strong: rgba(62, 92, 128, 0.15);
+  --accent-border: rgba(62, 92, 128, 0.28);
+  --accent-a4: rgba(62, 92, 128, 0.04);
+  --accent-a10: rgba(62, 92, 128, 0.1);
+  --accent-a18: rgba(62, 92, 128, 0.18);
+  --accent-a30: rgba(62, 92, 128, 0.3);
+  --accent-a50: rgba(62, 92, 128, 0.5);
   --on-accent: #fff;
-  --danger: #d92d20;
-  --danger-bg: #fdecea;
-  --danger-bg-weak: #fff8f7;
-  --danger-border: #f4c7c3;
-  --warn-bg: #fff7e6;
-  --warn-text: #8a5a00;
-  --warn-border: #f3e2b8;
-  --sun: #bb443b;
-  --sat: #3769b2;
-  --mark-bg: #fef0b8;
+  /* 주 버튼: 브러시드 그래파이트 판 */
+  --metal: linear-gradient(180deg, #4a5260 0%, #2c323c 100%);
+  --metal-hover: linear-gradient(180deg, #555e6d 0%, #343b46 100%);
+  --metal-border: #232830;
+  --on-metal: #f6f7f9;
+  --danger: #b4322a;
+  --danger-bg: #f9ebe9;
+  --danger-bg-weak: #fdf6f5;
+  --danger-border: #edcbc7;
+  --warn-bg: #f8f3e6;
+  --warn-text: #7a5a14;
+  --warn-border: #eadfc0;
+  --sun: #b4453c;
+  --sat: #3e5c80;
+  --mark-bg: #f6ecc4;
   --paper: #ffffff;
   --paper-text: #1b1f27;
   --paper-link: #1155cc;
-  --toast-bg: #202124;
-  --toast-text: #f1f3f4;
-  --toast-accent: #8ab4f8;
-  --scrim: rgba(15, 19, 28, 0.46);
-  --scrim-weak: rgba(15, 19, 28, 0.34);
-  --scrollbar: rgba(16, 24, 40, 0.14);
-  --scrollbar-hover: rgba(16, 24, 40, 0.26);
-  --scrollbar-active: rgba(16, 24, 40, 0.42);
-  /* 패널 윗변 1px 하이라이트 — 유리판에 빛이 닿는 느낌. 라이트에서는 흰 패널이라 거의 안 보이고 다크에서 살아난다 */
-  --edge: rgba(255, 255, 255, 0.7);
+  --toast-bg: #23272e;
+  --toast-text: #f1f3f5;
+  --toast-accent: #b7c7dc;
+  --scrim: rgba(18, 22, 28, 0.38);
+  --scrim-weak: rgba(18, 22, 28, 0.26);
+  --scrollbar: rgba(20, 28, 40, 0.14);
+  --scrollbar-hover: rgba(20, 28, 40, 0.26);
+  --scrollbar-active: rgba(20, 28, 40, 0.42);
+  /* 판유리 윗변의 빛 반사 */
+  --edge: rgba(255, 255, 255, 0.9);
   --edge-highlight: inset 0 1px 0 var(--edge);
   --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
   --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.15);
-  --radius-s: 6px;
-  --radius-m: 10px;
-  --radius-l: 14px;
-  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-2: 0 4px 16px rgba(16, 24, 40, 0.08);
-  --shadow-3: 0 20px 60px rgba(16, 24, 40, 0.22);
-  --ring: 0 0 0 3px rgba(33, 96, 216, 0.14);
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 16px;
+  --shadow-1: 0 1px 2px rgba(20, 28, 40, 0.05);
+  --shadow-2: 0 1px 2px rgba(20, 28, 40, 0.04), 0 8px 24px rgba(20, 28, 40, 0.07);
+  --shadow-3: 0 2px 6px rgba(20, 28, 40, 0.06), 0 24px 64px rgba(20, 28, 40, 0.18);
+  --ring: 0 0 0 3px rgba(62, 92, 128, 0.18);
+  --today-bg: #eef1f5;
 }
 
-/* 다크: 순검정 대신 네이비 기운의 차콜. 강조색은 어두운 면 위에서 읽히도록
-   한 단계 밝게, 그 위에 얹는 글자(--on-accent)는 반대로 어둡게. */
+/* 다크: 건메탈. 순검정 대신 푸른 기가 아주 약한 무채색, 강조색은 밝은 스틸. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0f1218;
-  --panel: #171f2e;
-  --panel-glass: #171f2e;
-  --panel-glass-2: #1c2637;
-  --panel-glass-3: #202c3e;
-  --surface-1: #1d222c;
-  --surface-2: #232935;
-  --surface-3: #2b323f;
-  --border: #262c37;
-  --border-weak: #20252f;
-  --border-strong: #353d4b;
+  --bg: #121419;
+  --bg-image:
+    radial-gradient(1100px 700px at 10% -15%, rgba(120, 132, 150, 0.16), transparent 60%),
+    radial-gradient(900px 700px at 100% 110%, rgba(80, 92, 110, 0.14), transparent 60%),
+    linear-gradient(160deg, #191c22 0%, #121419 55%, #0d0f12 100%);
+  --panel: #1a1d23;
+  --panel-glass: rgba(30, 34, 41, 0.66);
+  --panel-glass-2: rgba(34, 38, 46, 0.82);
+  --panel-glass-3: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --surface-1: #20242b;
+  --surface-2: #262a32;
+  --surface-3: #2e333c;
+  --border: #2a2f37;
+  --border-weak: rgba(255, 255, 255, 0.05);
+  --border-strong: #3a404a;
   --hairline: rgba(255, 255, 255, 0.07);
-  --hairline-strong: rgba(255, 255, 255, 0.18);
-  --fill-1: rgba(255, 255, 255, 0.045);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --fill-1: rgba(255, 255, 255, 0.04);
   --fill-2: rgba(255, 255, 255, 0.065);
   --fill-3: rgba(255, 255, 255, 0.09);
-  --text: #e6e9ef;
-  --text-2: #c3cad6;
-  --muted: #8d97a9;
-  --faint: #5f6a7d;
-  --accent: #7ea6f4;
-  --accent-strong: #9dbbf7;
-  --accent-bg: #1c2740;
-  --accent-bg-strong: #243456;
-  --accent-border: #2f4a80;
-  --accent-a4: rgba(126, 166, 244, 0.05);
-  --accent-a10: rgba(126, 166, 244, 0.12);
-  --accent-a18: rgba(126, 166, 244, 0.22);
-  --accent-a30: rgba(126, 166, 244, 0.38);
-  --accent-a50: rgba(126, 166, 244, 0.55);
-  --on-accent: #0c1424;
-  --danger: #f28b82;
-  --danger-bg: #3a1f1e;
-  --danger-bg-weak: #221a1b;
-  --danger-border: #5a2e2b;
-  --warn-bg: #2a2412;
-  --warn-text: #f0c66a;
-  --warn-border: #4a3f1a;
-  --sun: #f28b82;
-  --sat: #8ab4f8;
-  --mark-bg: #5a4a12;
+  --text: #e7e9ec;
+  --text-2: #c2c7cf;
+  --muted: #8d94a0;
+  --faint: #626a76;
+  --accent: #a9bcd4;
+  --accent-strong: #c8d5e5;
+  --accent-bg: rgba(169, 188, 212, 0.1);
+  --accent-bg-strong: rgba(169, 188, 212, 0.16);
+  --accent-border: rgba(169, 188, 212, 0.28);
+  --accent-a4: rgba(169, 188, 212, 0.05);
+  --accent-a10: rgba(169, 188, 212, 0.1);
+  --accent-a18: rgba(169, 188, 212, 0.18);
+  --accent-a30: rgba(169, 188, 212, 0.32);
+  --accent-a50: rgba(169, 188, 212, 0.5);
+  --on-accent: #14171c;
+  /* 주 버튼: 브러시드 스테인리스 판 */
+  --metal: linear-gradient(180deg, #e9ecf0 0%, #b9c0c9 100%);
+  --metal-hover: linear-gradient(180deg, #f3f5f7 0%, #c6ccd4 100%);
+  --metal-border: #d4d9df;
+  --on-metal: #15181d;
+  --danger: #e8938b;
+  --danger-bg: rgba(232, 147, 139, 0.12);
+  --danger-bg-weak: rgba(232, 147, 139, 0.06);
+  --danger-border: rgba(232, 147, 139, 0.3);
+  --warn-bg: rgba(226, 190, 110, 0.1);
+  --warn-text: #e2c27a;
+  --warn-border: rgba(226, 190, 110, 0.26);
+  --sun: #e8938b;
+  --sat: #a9bcd4;
+  --mark-bg: #5a4d1c;
   --toast-bg: #e8eaed;
-  --toast-text: #202124;
-  --toast-accent: #1a5ec9;
-  --scrim: rgba(0, 0, 0, 0.6);
-  --scrim-weak: rgba(0, 0, 0, 0.5);
-  --scrollbar: rgba(255, 255, 255, 0.14);
-  --scrollbar-hover: rgba(255, 255, 255, 0.26);
-  --scrollbar-active: rgba(255, 255, 255, 0.42);
-  --edge: rgba(255, 255, 255, 0.07);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
-  --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.4), 0 24px 64px rgba(0, 0, 0, 0.55);
-  --ring: 0 0 0 3px rgba(126, 166, 244, 0.3);
+  --toast-text: #1b1f25;
+  --toast-accent: #3e5c80;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --scrim-weak: rgba(0, 0, 0, 0.42);
+  --scrollbar: rgba(255, 255, 255, 0.13);
+  --scrollbar-hover: rgba(255, 255, 255, 0.24);
+  --scrollbar-active: rgba(255, 255, 255, 0.4);
+  --edge: rgba(255, 255, 255, 0.06);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 4px 12px rgba(0, 0, 0, 0.35), 0 28px 72px rgba(0, 0, 0, 0.55);
+  --ring: 0 0 0 3px rgba(169, 188, 212, 0.28);
+  --today-bg: #262c35;
 }
 
 * {
@@ -143,10 +169,14 @@ body,
 }
 
 body {
-  font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo",
+    "Pretendard", system-ui, sans-serif;
   color: var(--text);
-  background: var(--bg);
+  background: var(--bg-image), var(--bg);
+  background-attachment: fixed;
   font-size: 14px;
+  letter-spacing: -0.01em;
+  font-feature-settings: "tnum" 0, "ss01" 1;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -197,7 +227,7 @@ body {
   border-width: 3px;
 }
 *::-webkit-scrollbar-thumb:active {
-  background-color: rgba(29, 79, 196, 0.55);
+  background-color: var(--scrollbar-active);
   border-width: 3px;
 }
 /* 스크롤바가 나타났다 사라질 때 본문이 흔들리지 않도록 자리를 미리 잡아 둔다 */
@@ -271,11 +301,11 @@ body {
   border-radius: 22px;
   display: grid;
   place-items: center;
-  color: #fff;
-  background: linear-gradient(135deg, #3b76e6 0%, #1d4fc4 100%);
+  color: var(--on-metal);
+  background: var(--metal);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 10px 30px rgba(33, 96, 216, 0.35);
+    0 14px 36px rgba(20, 28, 40, 0.28);
 }
 .login-mark svg {
   width: 34px;
@@ -322,21 +352,23 @@ body {
 }
 
 .btn {
-  border: 1px solid var(--border);
-  background: var(--panel);
+  border: 1px solid var(--hairline-strong);
+  background: linear-gradient(180deg, var(--panel-glass-2), var(--panel-glass));
   color: var(--text);
   /* 버튼 표적 34px — 툴바가 촘촘해도 손이 안 미끄러진다 */
   min-height: 34px;
   padding: 7px 14px;
+  gap: 7px;
   border-radius: var(--radius-s);
   cursor: pointer;
-  font-size: 13.5px;
-  font-weight: 500;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
   transition:
     box-shadow 0.15s ease,
     transform 0.15s ease,
@@ -346,7 +378,7 @@ body {
 .btn:hover {
   background: var(--surface-1);
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .btn:active {
   transform: translateY(0) scale(0.98);
@@ -356,15 +388,19 @@ body {
   outline: none;
   box-shadow: var(--ring);
 }
-/* 주 버튼은 테마와 무관하게 같은 브랜드 블루 — 다크의 밝은 --accent가 새지 않게 상수로 */
+/* 주 버튼: 브러시드 금속 판 — 라이트는 그래파이트, 다크는 스테인리스 */
 .btn.primary {
-  background: #2859dc;
-  border-color: #204abf;
-  color: #fff;
-  box-shadow: var(--shadow-1);
+  background: var(--metal);
+  border-color: var(--metal-border);
+  color: var(--on-metal);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    0 4px 12px rgba(20, 28, 40, 0.14);
 }
 .btn.primary:hover {
-  background: #204abf;
+  background: var(--metal-hover);
+  border-color: var(--metal-border);
 }
 .btn.primary:disabled {
   opacity: 0.5;
@@ -389,32 +425,37 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 64px;
-  padding: 12px 20px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--hairline);
+  min-height: 60px;
+  margin: 12px 16px 0;
+  padding: 10px 14px 10px 10px;
+  background: var(--panel-glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-2), var(--edge-highlight);
   position: relative;
   z-index: 10;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-weight: 700;
-  font-size: 19px;
+  gap: 10px;
+  font-weight: 650;
+  font-size: 17px;
   white-space: nowrap;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.02em;
 }
 .brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: #2859dc;
-  color: #fff;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--metal);
+  color: var(--on-metal);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), var(--shadow-1);
 }
 .brand-mark svg {
   width: 14px;
@@ -430,9 +471,9 @@ body {
   border: none;
   background: transparent;
   color: var(--muted);
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-s);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -474,10 +515,12 @@ body {
   display: flex;
   align-items: center;
   background: var(--fill-1);
-  border: 1px solid transparent;
-  border-radius: var(--radius-s);
-  padding: 0 12px;
-  max-width: 560px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+  box-shadow: inset 0 1px 2px rgba(20, 28, 40, 0.04);
+  padding: 0 14px;
+  max-width: 520px;
+  margin-left: 8px;
   transition:
     background 0.18s ease,
     border-color 0.18s ease,
@@ -497,14 +540,19 @@ body {
   min-width: 0;
   border: none;
   background: transparent;
-  padding: 10px 4px;
+  color: var(--text);
+  padding: 9px 2px;
   outline: none;
-  font-size: 14px;
+  font: inherit;
+  font-size: 13.5px;
 }
 .account {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+}
+.account .email {
+  margin: 0 6px 0 2px;
 }
 .account .email {
   color: var(--muted);
@@ -516,7 +564,8 @@ body {
   .topbar-spacer { display: none; }
 }
 @media (max-width: 700px) {
-  .topbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+  .topbar { flex-wrap: wrap; margin: 8px 8px 0; padding: 8px 10px; gap: 8px; }
+  .topbar .search { margin-left: 0; }
   .topbar .search { order: 1; flex: 1 0 100%; max-width: none; }
   .topbar .brand { flex: 1; }
   .account { gap: 2px; }
@@ -613,8 +662,8 @@ body {
   grid-template-columns: 200px 360px 1fr;
   min-height: 0;
   min-width: 0;
-  gap: 14px;
-  padding: 14px 16px 16px;
+  gap: 12px;
+  padding: 12px 16px 16px;
 }
 .body.calendar-mode {
   grid-template-columns: 240px minmax(0, 1fr);
@@ -629,11 +678,11 @@ body {
 .body.calendar-mode .sidebar-inner {
   width: 240px;
 }
-/* 접힌 상태: 첫 칼럼을 0으로 접고, 사이드바가 먹던 gap(14px)까지 회수해
+/* 접힌 상태: 첫 칼럼을 0으로 접고, 사이드바가 먹던 gap(12px)까지 회수해
    왼쪽 여백이 오른쪽과 같은 16px로 맞는다. */
 .body.nav-collapsed {
   grid-template-columns: 0 360px 1fr;
-  padding-left: 2px;
+  padding-left: 4px;
 }
 
 /* 메일만 리더에 폭을 우선 배분한다. .body는 드라이브에서도 공유하므로
@@ -641,36 +690,31 @@ body {
    바꾸지 않는다. */
 .body:not(.calendar-mode):has(.list) {
   grid-template-columns:
-    minmax(0, clamp(150px, 14vw, 200px))
-    minmax(0, clamp(220px, 25vw, 360px))
+    minmax(0, clamp(160px, 14vw, 212px))
+    minmax(0, clamp(240px, 26vw, 380px))
     minmax(0, 1fr);
 }
 .body.nav-collapsed:not(.calendar-mode):has(.list) {
   grid-template-columns:
     0
-    minmax(0, clamp(220px, 25vw, 360px))
+    minmax(0, clamp(240px, 26vw, 380px))
     minmax(0, 1fr);
 }
 
+/* 셀 개의 주 판(사이드바·목록·리더)은 같은 판유리 재질을 공유한다.
+   긴 스크롤 판에는 backdrop-filter를 쓰지 않는다 — 바탕이 정적인
+   그라디언트라 반투명 면만으로 같은 인상을 내고, 스크롤 비용을 아낀다. */
+.sidebar,
+.list,
+.reader {
+  background: var(--panel-glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-2), var(--edge-highlight);
+}
+
 .sidebar {
-  --panel: #111e35;
-  --panel-glass-3: #182840;
-  --text: #edf3ff;
-  --text-2: #c3cee2;
-  --muted: #a3b3cf;
-  --faint: #91a2bf;
-  --accent: #a8c4ff;
-  --accent-strong: #d5e2ff;
-  --accent-bg: #263e63;
-  --accent-bg-strong: #304d78;
-  --accent-border: #44618e;
-  --border: #2a3a55;
-  --hairline: #2a3a55;
-  --fill-1: #1c2e49;
-  --fill-3: #243754;
-  background: var(--panel);
   color: var(--text);
-  border-radius: var(--radius-m);
   min-width: 0;
   /* 트랙이 줄어드는 동안 안쪽 200px 패널이 찌그러지지 않게 잘라 낸다 */
   overflow: hidden;
@@ -679,7 +723,7 @@ body {
   width: 200px;
   min-width: 0;
   height: 100%;
-  padding: 16px 8px;
+  padding: 14px 10px;
   overflow-y: auto;
   transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
@@ -706,15 +750,15 @@ body {
 .workspace-switcher {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 4px;
-  margin: 0 0 20px;
-  padding: 0 0 16px;
-  border-bottom: 1px solid var(--border);
+  gap: 2px;
+  margin: 0 0 14px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .workspace-tab {
   min-width: 0;
-  min-height: 42px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -722,9 +766,10 @@ body {
   border: 0;
   border-radius: var(--radius-s);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-2);
+  font: inherit;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 550;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
@@ -749,9 +794,10 @@ body {
 }
 
 .workspace-tab.active {
-  color: var(--accent-strong);
-  background: var(--accent-bg);
-  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+  font-weight: 650;
+  background: var(--panel-glass-2);
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
 }
 
 .workspace-tab-icon {
@@ -763,8 +809,8 @@ body {
 }
 
 .workspace-tab-icon svg {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
 }
 
 .workspace-tab.active .workspace-tab-icon {
@@ -786,11 +832,11 @@ body {
 }
 
 .workspace-panel-title {
-  padding: 9px 10px 5px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.65px;
+  padding: 6px 10px 4px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -848,9 +894,14 @@ body {
   }
 }
 .nav-note {
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: var(--muted);
-  padding: 8px 10px;
+  padding: 2px 10px 10px;
+}
+.nav-note small {
+  color: var(--faint);
+  font-size: 10.5px;
 }
 .cal-check-wrap {
   border-radius: 10px;
@@ -1016,23 +1067,29 @@ body {
   gap: 4px;
   border: none;
   background: transparent;
-  padding: 9px 8px;
-  border-radius: 18px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
   cursor: pointer;
+  font: inherit;
   font-size: 13px;
-  color: var(--text);
+  color: var(--text-2);
   text-align: left;
   overflow: hidden;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .label-row:hover {
   background: var(--fill-1);
+  color: var(--text);
 }
 .label-row.active {
-  background: var(--accent-bg);
+  background: var(--panel-glass-2);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: var(--shadow-1), inset 0 0 0 1px var(--hairline);
+}
+.label-row.active .label-ic {
   color: var(--accent);
-  font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--accent-a18);
 }
 .label-name {
   min-width: 0;
@@ -1045,12 +1102,11 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-<<<<<<< HEAD
 .label-row.system .label-name {
   flex: 0 1 auto;
 }
 .label-counts {
-  height: 17px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
@@ -1063,18 +1119,17 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .label-counts.label-count-total {
-  color: var(--muted);
+  color: var(--faint);
 }
 .label-counts.badge {
-  padding: 1px 3px;
-  font-size: 10px;
-=======
+  padding: 2px 7px;
+  font-size: 10.5px;
+}
 .label-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
->>>>>>> c51b3e2 (Stabilize mail selection toolbar and harden reader and Windows lifecycle)
 }
 .label-ic {
   width: 17px;
@@ -1143,32 +1198,29 @@ body {
 .badge {
   background: var(--accent);
   color: var(--on-accent);
-  border-radius: 10px;
-  padding: 1px 7px;
-  font-size: 11px;
-  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 650;
+  line-height: 1.3;
   font-variant-numeric: tabular-nums;
 }
 .label-row.active .badge {
   background: var(--accent);
 }
 .sidebar-sep {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  padding: 12px 9px 5px;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--faint);
+  padding: 16px 10px 6px;
   text-transform: uppercase;
-  letter-spacing: 0.65px;
+  letter-spacing: 0.08em;
 }
 
 .list {
-  background: var(--panel);
   overflow-y: auto;
   overflow-x: hidden;
   min-width: 0;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .msg-row {
   width: 100%;
@@ -1176,11 +1228,11 @@ body {
   border: none;
   border-bottom: 1px solid var(--border-weak);
   background: transparent;
-  padding: 16px 14px;
+  padding: 14px 16px 14px 0;
   cursor: pointer;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   min-height: 62px;
   transition: background 0.13s ease;
   font-family: inherit;
@@ -1192,22 +1244,23 @@ body {
   contain-intrinsic-size: auto 86px;
 }
 .msg-row:hover {
-  background: var(--surface-1);
+  background: var(--fill-1);
 }
 .msg-row.active {
   background: var(--accent-bg);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .msg-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .msg-row.unread .msg-from,
 .msg-row.unread .msg-subject {
-  font-weight: 700;
+  font-weight: 650;
+  color: var(--text);
 }
 .msg-read-state {
   flex: none;
@@ -1215,29 +1268,31 @@ body {
   align-items: center;
   gap: 4px;
   border-radius: 999px;
-  padding: 2px 6px;
-  font-size: 10.5px;
+  padding: 1px 7px;
+  font-size: 10px;
   font-weight: 600;
+  line-height: 1.5;
   white-space: nowrap;
 }
 .msg-read-state.unread {
   color: var(--accent-strong);
-  background: var(--accent-bg);
+  background: var(--accent-bg-strong);
 }
 .msg-read-state.read {
-  color: var(--muted);
-  background: var(--surface-2);
+  color: var(--faint);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 .msg-read-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: currentColor;
 }
 .msg-top {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
 }
 .msg-top .msg-from {
@@ -1245,8 +1300,8 @@ body {
   min-width: 0;
 }
 .msg-from {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 13.5px;
+  font-weight: 550;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1254,15 +1309,17 @@ body {
 }
 .msg-date {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--faint);
   white-space: nowrap;
   flex: none;
   font-variant-numeric: tabular-nums;
 }
 .thread-read-state {
   display: inline-flex;
-  margin-top: 4px;
-  font-size: 10.5px;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 11px;
   font-weight: 600;
 }
 .thread-read-state.unread {
@@ -1273,12 +1330,14 @@ body {
 }
 .msg-subject {
   font-size: 13px;
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .msg-snippet {
   font-size: 12px;
+  line-height: 1.45;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1359,14 +1418,10 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   min-width: 0;
-  background: var(--panel);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .reader-inner {
   min-width: 0;
-  padding: 24px 32px;
+  padding: 28px 36px 36px;
   animation: fadein 0.16s var(--ease-out);
 }
 .reader-head,
@@ -1374,20 +1429,32 @@ body {
   min-width: 0;
 }
 .reader-head h2 {
-  margin: 0 0 14px;
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.4px;
+  margin: 0 0 18px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
   line-height: 1.35;
 }
 .reader-meta {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
   font-size: 13px;
-  margin-bottom: 12px;
+  color: var(--text-2);
+  margin-bottom: 16px;
   overflow-wrap: anywhere;
+}
+.reader-meta > * {
+  max-width: 100%;
 }
 .muted {
   color: var(--muted);
   font-size: 12px;
+}
+.recipient-label {
+  flex: none;
+  min-width: 52px;
+  color: var(--faint);
 }
 
 /* 수신자 헤더: 요약은 한 줄에서 안전하게 줄이고, 펼친 목록은 리더 안에서
@@ -1435,11 +1502,11 @@ body {
   flex: none;
   min-width: 0;
   max-width: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
   border-radius: 999px;
-  padding: 3px 8px;
+  padding: 2px 9px;
   overflow: hidden;
-  background: var(--surface-1);
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   font: inherit;
@@ -1477,10 +1544,13 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.recipient-summary .recipient-self,
 .recipient-self {
-  border: 1px solid var(--accent-border);
-  border-radius: var(--radius-s);
-  padding: 3px 6px;
+  flex: 0 1 auto;
+  align-items: center;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 10px 2px 3px;
   background: var(--accent-bg);
 }
 .recipient-self .recipient-address {
@@ -1489,9 +1559,9 @@ body {
 }
 .recipient-self-label {
   flex: none;
-  border: 1px solid var(--accent-border);
+  border: none;
   border-radius: 999px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   background: var(--accent-bg-strong);
   color: var(--accent-strong);
   font-size: 10.5px;
@@ -1504,17 +1574,34 @@ body {
   display: flex;
   gap: 2px;
   flex-wrap: wrap;
-  padding: 8px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  padding: 4px;
+  margin-bottom: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+  background: var(--panel-glass-3);
+  box-shadow: var(--edge-highlight);
 }
 .reader-actions .btn {
   border: none;
   background: transparent;
   box-shadow: none;
-  padding: 7px 11px;
+  min-height: 32px;
+  padding: 6px 11px;
+  gap: 6px;
   border-radius: var(--radius-s);
+  font-size: 12.5px;
   color: var(--text-2);
+}
+.reader-actions .btn > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.reader-actions .btn:hover > svg {
+  color: var(--text);
+}
+.reader-actions .btn.danger > svg {
+  color: currentColor;
 }
 .reader-actions .btn:hover {
   background: var(--fill-2);
@@ -1538,16 +1625,16 @@ body {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  border: 1px solid var(--border);
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-s);
-  padding: 6px 10px;
+  padding: 6px 8px 6px 12px;
   font-size: 12px;
   text-decoration: none;
   color: var(--text);
-  background: var(--panel);
-  box-shadow: var(--shadow-1);
+  background: var(--panel-glass-2);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
   transition:
     background 0.15s ease,
     box-shadow 0.15s ease,
@@ -1556,7 +1643,7 @@ body {
 .chip:hover {
   background: var(--surface-1);
   border-color: var(--border-strong);
-  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.09);
+  box-shadow: var(--shadow-2);
 }
 /* 첨부 칩 내부는 <a class=chip-link>(아이콘+파일명)와 <button class=chip-x>로
    한 번 더 감싸여 있다 — .chip > svg 자식 선택자는 여기에 닿지 않으므로
@@ -1608,6 +1695,8 @@ body {
   position: fixed;
   inset: 0;
   background: var(--scrim);
+  -webkit-backdrop-filter: blur(6px) saturate(1.2);
+  backdrop-filter: blur(6px) saturate(1.2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1631,11 +1720,12 @@ body {
   max-width: 94vw;
   height: min(88vh, 1040px);
   min-height: 0;
-  border-radius: var(--radius-l);
-  padding: 18px 22px;
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  padding: 20px 24px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   box-shadow: var(--shadow-3), var(--edge-highlight);
   animation: popin 0.22s var(--ease-out);
   /* 크기조절 손잡이의 기준 */
@@ -1696,14 +1786,16 @@ body {
   align-items: center;
 }
 .modal-head strong {
-  font-size: 18px;
-  letter-spacing: -0.2px;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 /* 작성창 필드: 박스 대신 헤어라인 언더라인 — Gmail식의 정돈된 결 */
 .modal input,
 .modal select.from-select {
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text);
   border-radius: 0;
   /* 줄이 얇아도 표적은 40px — 제목/보내는주소를 한 번에 짚는다 */
   min-height: 40px;
@@ -1787,11 +1879,11 @@ body {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 24px 26px 30px;
-  background: var(--panel);
-  border: 1px solid var(--hairline);
+  padding: 24px 28px 28px;
+  background: var(--panel-glass);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-2), var(--edge-highlight);
   scrollbar-gutter: stable;
   /* 페이드만 — 월간 리사이클러가 마운트 직후 셀 좌표를 재므로 transform으로 기하를 흔들면 안 된다 */
   animation: fadein 0.24s var(--ease-out) both;
@@ -1907,14 +1999,14 @@ body {
 .cal-range-options button.active {
   background: var(--panel);
   color: var(--text);
-  box-shadow: 0 1px 4px rgba(16, 24, 40, 0.12);
+  box-shadow: 0 1px 4px rgba(20, 28, 40, 0.1);
 }
 
 .cal-create {
   min-height: 44px;
   padding-inline: 16px;
   border-radius: 11px;
-  box-shadow: 0 5px 14px rgba(33, 96, 216, 0.2);
+  box-shadow: 0 5px 14px var(--accent-a18);
 }
 
 .cal-create span {
@@ -2001,8 +2093,8 @@ body {
    반투명 링만으로는 눈에 안 들어오므로 실선 색을 쓴다. selected와 겹쳐도 오늘이 이긴다. */
 .month-cell.today,
 .month-cell.today.selected {
-  background: var(--accent-bg);
-  box-shadow: inset 0 0 0 2px var(--accent);
+  background: var(--today-bg);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 
@@ -2099,7 +2191,7 @@ body {
 
 .month-ev:hover {
   filter: brightness(0.97) saturate(1.05);
-  box-shadow: 0 2px 5px rgba(16, 24, 40, 0.09);
+  box-shadow: 0 2px 5px rgba(20, 28, 40, 0.08);
 }
 
 .month-ev-time {
@@ -2887,12 +2979,14 @@ textarea.ev-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  margin: 4px 0 8px;
-  border: 1px solid var(--border);
+  padding: 8px 10px 8px 14px;
+  margin: 6px 0 12px;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-m);
-  background: var(--panel-glass);
-  box-shadow: var(--shadow-1);
+  background: var(--panel-glass-2);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .thread-bar-title {
   font-size: 13px;
@@ -2902,8 +2996,8 @@ textarea.ev-input {
   color: var(--text);
 }
 .thread-msg {
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
+  padding: 20px 0;
+  border-top: 1px solid var(--hairline);
   /* 답장 깊이만큼 들여쓴 왼쪽 가이드라인 — 어느 갈래인지 눈으로 따라간다 */
   transition: margin-left 0.15s ease;
 }
@@ -2926,9 +3020,10 @@ textarea.ev-input {
 .thread-msg[data-depth="8"] {
   border-left-color: color-mix(in srgb, var(--border-strong) 35%, var(--muted));
 }
-.thread-msg:first-of-type {
+.reader-head + .thread-msg,
+.thread-bar + .thread-msg {
   border-top: none;
-  padding-top: 4px;
+  padding-top: 8px;
 }
 .thread-msg .reader-body {
   margin-top: 12px;
@@ -2937,7 +3032,12 @@ textarea.ev-input {
   min-height: 80px;
 }
 .thread-from {
-  margin-top: 2px;
+  margin-top: 4px;
+}
+.thread-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 /* 접힌 메일 한 줄 요약 */
 .thread-msg.collapsed {
@@ -2948,16 +3048,17 @@ textarea.ev-input {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
+  min-height: 42px;
+  padding: 8px 14px 8px 10px;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-m);
-  background: var(--panel);
+  background: var(--panel-glass-3);
+  color: var(--text-2);
   cursor: pointer;
   font: inherit;
   font-size: 13px;
   text-align: left;
-  box-shadow: var(--shadow-1);
+  box-shadow: none;
   transition:
     background 0.15s ease,
     border-color 0.15s ease;
@@ -2976,8 +3077,8 @@ textarea.ev-input {
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--text-2);
   font-size: 11px;
   font-weight: 700;
 }
@@ -3017,11 +3118,11 @@ textarea.ev-input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px 3px 3px;
-  margin-right: 8px;
-  border: 1px solid var(--border);
+  height: 26px;
+  padding: 0 10px 0 3px;
+  border: 1px solid var(--hairline);
   border-radius: 999px;
-  background: var(--panel);
+  background: transparent;
   cursor: pointer;
   font: inherit;
   font-size: 11.5px;
@@ -3035,13 +3136,12 @@ textarea.ev-input {
 .thread-last {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  margin-right: 6px;
+  height: 22px;
+  padding: 0 9px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: var(--surface-2);
+  background: var(--fill-1);
   color: var(--muted);
 }
 .thread-last {
@@ -3115,8 +3215,8 @@ textarea.ev-input {
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
+  background: var(--fill-2);
+  color: var(--text-2);
   font-size: 11px;
   font-weight: 700;
 }
@@ -3249,7 +3349,7 @@ textarea.ev-input {
 }
 .scard.active {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(33, 96, 216, 0.16);
+  box-shadow: 0 0 0 1px var(--accent), 0 6px 20px var(--accent-a18);
 }
 .scard-main {
   flex: 1;
@@ -3339,19 +3439,21 @@ mark {
   height: 38px;
   border-radius: 50%;
   color: #fff;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
   user-select: none;
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.05));
-  box-shadow: inset 0 -1px 2px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(16, 24, 40, 0.12);
+  /* 발신자 색을 금속 톤으로 누른다 — 채도 높은 원색 동그라미가 판을 어지럽히지 않게 */
+  filter: saturate(0.55) brightness(0.95);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.08));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 1px 2px rgba(20, 28, 40, 0.12);
 }
 .avatar.sm {
   width: 34px;
   height: 34px;
-  font-size: 14px;
+  font-size: 13.5px;
   margin-top: 1px;
 }
 
@@ -3364,16 +3466,17 @@ mark {
   justify-content: center;
   /* 행 패딩을 일부 상쇄해 칸을 왼쪽 끝까지 붙이고 세로로도 넓힌다.
      클릭 영역은 넓게 유지하면서 체크박스만 작게 보이게 한다. */
-  margin: -12px 0 -12px -6px;
-  padding: 0 5px;
+  margin: -14px 0;
+  padding: 0 4px 0 14px;
   cursor: pointer;
 }
 .msg-check {
   width: 16px;
   height: 16px;
+  margin: 0;
   accent-color: var(--accent);
   pointer-events: none; /* 클릭은 셀이 받는다 — 체크박스는 시각 표시만 */
-  opacity: 0.45; /* 미선택 시 은은하게, 호버/선택 시 또렷하게 */
+  opacity: 0.4; /* 미선택 시 은은하게, 호버/선택 시 또렷하게 */
   transition: opacity 0.12s ease;
 }
 .msg-row:hover .msg-check,
@@ -3390,29 +3493,37 @@ mark {
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 24px 32px 24px;
+  grid-template-columns: 16px minmax(0, 1fr) 28px 28px 24px;
   grid-template-rows: 28px;
   align-items: center;
   height: 48px;
-  gap: 4px;
-  padding: 9px 10px 10px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  column-gap: 6px;
+  /* 체크박스 x좌표를 아래 행(.msg-check-cell 왼쪽 14px)과 맞춘다 */
+  padding: 10px 12px 10px 14px;
+  background: var(--panel-glass-2);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--hairline);
 }
 .bulk-bar > input[type="checkbox"] {
   grid-column: 1;
   grid-row: 1;
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
+}
+.bulk-bar .bulk-count,
+.bulk-bar .bulk-hint {
+  padding-left: 12px;
 }
 .bulk-count {
   flex: none;
   font-size: 12.5px;
-  font-weight: 600;
-  color: var(--accent);
+  font-weight: 650;
+  color: var(--text);
   white-space: nowrap;
 }
 .bulk-bar .bulk-count,
@@ -3439,7 +3550,7 @@ mark {
   background: transparent;
   cursor: pointer;
   color: var(--muted);
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   height: 28px;
   padding: 0;
@@ -3461,10 +3572,12 @@ mark {
   width: min(280px, calc(100vw - 16px));
   overflow-y: auto;
   padding: 6px;
-  background: var(--panel);
-  border: 1px solid var(--border-strong);
+  background: var(--panel-glass-2);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-m);
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-3), var(--edge-highlight);
 }
 .bulk-menu-caption {
   padding: 8px 10px;
@@ -3580,8 +3693,8 @@ mark {
   width: min(860px, 92vw);
   height: min(90vh, 1100px);
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
   box-shadow: var(--shadow-3), var(--edge-highlight);
   outline: none;
   animation: popin 0.22s var(--ease-out);
@@ -3953,10 +4066,10 @@ mark {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  background: var(--panel);
-  border: 1px solid var(--hairline);
+  background: var(--panel-glass);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1), var(--edge-highlight);
+  box-shadow: var(--shadow-2), var(--edge-highlight);
   animation: rise-in 0.28s var(--ease-out) both;
 }
 .drive-head {

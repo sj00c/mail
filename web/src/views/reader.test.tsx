@@ -143,12 +143,12 @@ describe("Reader forwarding", () => {
     const onReply = vi.fn();
     renderReader(onReply);
 
-    await screen.findByRole("button", { name: "↪ 전달" });
-    expect(screen.getAllByRole("button", { name: "↪ 전달" })).toHaveLength(1);
+    await screen.findByRole("button", { name: "전달" });
+    expect(screen.getAllByRole("button", { name: "전달" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "↪↪ 전체 전달" })).toBeNull();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "↪ 전달" }));
+      fireEvent.click(screen.getByRole("button", { name: "전달" }));
       await Promise.resolve();
     });
     await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1));
@@ -187,10 +187,10 @@ describe("Reader forwarding", () => {
     const onReply = vi.fn();
     renderReader(onReply, "only");
 
-    await screen.findByRole("button", { name: "↪ 전달" });
-    expect(screen.getAllByRole("button", { name: "↪ 전달" })).toHaveLength(1);
+    await screen.findByRole("button", { name: "전달" });
+    expect(screen.getAllByRole("button", { name: "전달" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "↪↪ 전체 전달" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "↪ 전달" }));
+    fireEvent.click(screen.getByRole("button", { name: "전달" }));
     await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1));
 
     const init = onReply.mock.calls[0][0] as {
@@ -215,10 +215,10 @@ describe("Reader forwarding", () => {
     renderReader(onReply);
 
     expect(screen.getByText("불러오는 중…")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "↪ 전달" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "전달" })).toBeNull();
     await act(async () => rejectThread(new Error("thread unavailable")));
     expect(await screen.findByText("thread unavailable")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "↪ 전달" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "전달" })).toBeNull();
     expect(onReply).not.toHaveBeenCalled();
   });
 
@@ -242,8 +242,8 @@ describe("Reader forwarding", () => {
     const onReply = vi.fn();
     renderReader(onReply);
 
-    await screen.findByRole("button", { name: "↪ 전달" });
-    fireEvent.click(screen.getByRole("button", { name: "↪ 전달" }));
+    await screen.findByRole("button", { name: "전달" });
+    fireEvent.click(screen.getByRole("button", { name: "전달" }));
     await waitFor(() => expect(downloadAttachmentMock).toHaveBeenCalled());
     expect(onReply).not.toHaveBeenCalled();
   });
