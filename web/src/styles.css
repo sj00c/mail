@@ -656,10 +656,18 @@ body {
 
 /* Resize the content tracks immediately; animating layout moves hit targets
    and repeats layout work while zooming or resizing a window. */
+/* 사이드바와 메일 목록은 하나의 배율(--pane-scale)을 공유한다. 넓은 화면에서는
+   고정 px라 브라우저 줌(⌘+/⌘−)에 다른 UI와 똑같이 커지고 작아지며, CSS 폭이
+   1320px 아래로 좁아질 때(창을 줄이거나 크게 줌인했을 때)만 두 패널이 같은 비율로
+   함께 줄어든다. 패널마다 따로 clamp/vw를 두면 한쪽만 하한에 걸려 비율이 깨진다. */
 .body {
+  /* 배율 = clamp(0.6, (100vw - 480px) / 840px, 1). 두 식은 같은 배율에 212px·380px을
+     곱한 것이라 항상 같은 폭에서 함께 꺾인다(1320px에서 최대, 984px에서 최소). */
+  --nav-w: clamp(127.2px, (100vw - 480px) * 0.252381, 212px);
+  --list-w: clamp(228px, (100vw - 480px) * 0.452381, 380px);
   flex: 1;
   display: grid;
-  grid-template-columns: 200px 360px 1fr;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
   gap: 12px;
@@ -681,7 +689,7 @@ body {
 /* 접힌 상태: 첫 칼럼을 0으로 접고, 사이드바가 먹던 gap(12px)까지 회수해
    왼쪽 여백이 오른쪽과 같은 16px로 맞는다. */
 .body.nav-collapsed {
-  grid-template-columns: 0 360px 1fr;
+  grid-template-columns: 0 minmax(0, 1fr);
   padding-left: 4px;
 }
 
@@ -689,16 +697,10 @@ body {
    목록이 실제로 있는 경우에만 유동 트랙을 적용해 다른 모드의 칼럼을
    바꾸지 않는다. */
 .body:not(.calendar-mode):has(.list) {
-  grid-template-columns:
-    minmax(0, clamp(160px, 14vw, 212px))
-    minmax(0, clamp(240px, 26vw, 380px))
-    minmax(0, 1fr);
+  grid-template-columns: var(--nav-w) var(--list-w) minmax(0, 1fr);
 }
 .body.nav-collapsed:not(.calendar-mode):has(.list) {
-  grid-template-columns:
-    0
-    minmax(0, clamp(240px, 26vw, 380px))
-    minmax(0, 1fr);
+  grid-template-columns: 0 var(--list-w) minmax(0, 1fr);
 }
 
 /* 셀 개의 주 판(사이드바·목록·리더)은 같은 판유리 재질을 공유한다.
@@ -720,15 +722,12 @@ body {
   overflow: hidden;
 }
 .sidebar-inner {
-  width: 200px;
+  width: var(--nav-w);
   min-width: 0;
   height: 100%;
   padding: 14px 10px;
   overflow-y: auto;
   transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-.body:not(.calendar-mode):has(.list) .sidebar-inner {
-  width: 100%;
 }
 .body.nav-collapsed .sidebar-inner {
   opacity: 0;
@@ -2518,7 +2517,7 @@ body {
 /* 리더가 들어갈 자리가 없는 폭 — 목록만 남기고 리더는 팝업으로. */
 @media (max-width: 900px) {
   .body.reader-overlay:not(.calendar-mode) {
-    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-columns: var(--nav-w) minmax(0, 1fr);
   }
   .body.reader-overlay.nav-collapsed:not(.calendar-mode) {
     grid-template-columns: 0 minmax(0, 1fr);
