@@ -311,6 +311,9 @@ export async function installAppMocks(
     labels?: Label[];
     profile?: MailProfile;
     messages?: unknown[];
+    totalEstimate?: number;
+    bulkCount?: number;
+    bulkConfirmError?: boolean;
   } = {},
 ) {
   const ledger = ledgers.get(page.context());
@@ -377,7 +380,8 @@ export async function installAppMocks(
     if (url.pathname === "/api/messages")
       return json({
         messages: options.messages ?? [],
-        resultSizeEstimate: (options.messages ?? []).length,
+        resultSizeEstimate:
+          options.totalEstimate ?? (options.messages ?? []).length,
       });
     if (url.pathname.startsWith("/api/threads/")) {
       // 스레드 응답은 threadId로 거른다 — 전부 돌려주면 j/k 이동 스펙이
@@ -391,6 +395,36 @@ export async function installAppMocks(
     }
     if (url.pathname.endsWith("/modify")) return json({ ok: true });
     if (url.pathname.endsWith("/trash")) return json({ ok: true });
+    if (
+      url.pathname === "/api/messages/batchModify" ||
+      url.pathname === "/api/messages/batchTrash"
+    )
+      return json({ ok: true });
+    if (
+      options.bulkCount !== undefined &&
+      url.pathname === "/api/messages/bulkAll/prepare"
+    ) {
+      return json({
+        operationId: "synthetic-operation",
+        count: options.bulkCount,
+        expiresAt: Date.now() + 60000,
+      });
+    }
+    if (
+      options.bulkCount !== undefined &&
+      url.pathname === "/api/messages/bulkAll/confirm"
+    ) {
+      if (options.bulkConfirmError)
+        return route.fulfill({
+          status: 503,
+          json: { error: "Synthetic bulk failure" },
+        });
+      return json({
+        matched: options.bulkCount,
+        succeeded: options.bulkCount,
+        failed: 0,
+      });
+    }
     if (url.pathname === "/api/calendar/calendars")
       return json([primaryCalendar, secondaryCalendar]);
     if (url.pathname === "/api/calendar/events") return json([]);

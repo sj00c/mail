@@ -25,6 +25,18 @@ export function Icon({
   );
 }
 
+export const LinkIcon = () => (
+  <Icon>
+    <path d="m10 13 4-4M8 16l-1 1a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0M16 8l1-1a4 4 0 0 1 6 6l-5 5a4 4 0 0 1-6 0" />
+  </Icon>
+);
+export const ImageIcon = () => (
+  <Icon>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8" cy="8" r="1.5" />
+    <path d="m3 17 5-5 4 4 4-6 5 7" />
+  </Icon>
+);
 export const AlertIcon = () => (
   <Icon>
     <path d="M10.3 3.5 2.4 17.2A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.8L13.7 3.5a2 2 0 0 0-3.4 0Z" />

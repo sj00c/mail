@@ -3,11 +3,11 @@
    서식 편집기와 메일 원본 보기는 테마와 독립된 "종이"(--paper) 위에 그린다. */
 :root {
   color-scheme: light;
-  --bg: #eef1f6;
+  --bg: #edf0f5;
   --panel: #ffffff;
-  --panel-glass: rgba(255, 255, 255, 0.86);
-  --panel-glass-2: rgba(255, 255, 255, 0.7);
-  --panel-glass-3: rgba(255, 255, 255, 0.46);
+  --panel-glass: #ffffff;
+  --panel-glass-2: #f6f8fb;
+  --panel-glass-3: #f0f3f8;
   /* 패널 위에 살짝 가라앉은 면: 행 hover, 요일 헤더, 섹션 카드 → 트랙/배지 → 그리드 선 */
   --surface-1: #f6f8fb;
   --surface-2: #f0f3f8;
@@ -21,12 +21,12 @@
   --fill-1: rgba(16, 24, 40, 0.045);
   --fill-2: rgba(16, 24, 40, 0.06);
   --fill-3: rgba(16, 24, 40, 0.08);
-  --text: #1b1f27;
-  --text-2: #3c4453;
-  --muted: #647082;
+  --text: #17243b;
+  --text-2: #40516b;
+  --muted: #63718a;
   --faint: #9aa3b2;
-  --accent: #2160d8;
-  --accent-strong: #1a51b8;
+  --accent: #2859dc;
+  --accent-strong: #204abf;
   --accent-bg: #e9f0fd;
   --accent-bg-strong: #dce8ff;
   --accent-border: #bcd3f7;
@@ -60,18 +60,14 @@
   /* 패널 윗변 1px 하이라이트 — 유리판에 빛이 닿는 느낌. 라이트에서는 흰 패널이라 거의 안 보이고 다크에서 살아난다 */
   --edge: rgba(255, 255, 255, 0.7);
   --edge-highlight: inset 0 1px 0 var(--edge);
-  /* 캔버스 오로라 블럭 — body::before */
-  --glow-1: rgba(120, 158, 255, 0.2);
-  --glow-2: rgba(94, 197, 255, 0.14);
-  --grain-opacity: 0.045;
   --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
   --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1.15);
-  --radius-s: 9px;
-  --radius-m: 13px;
-  --radius-l: 18px;
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 14px;
   --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-2: 0 2px 6px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.08);
-  --shadow-3: 0 8px 20px rgba(16, 24, 40, 0.1), 0 24px 64px rgba(16, 24, 40, 0.18);
+  --shadow-2: 0 4px 16px rgba(16, 24, 40, 0.08);
+  --shadow-3: 0 20px 60px rgba(16, 24, 40, 0.22);
   --ring: 0 0 0 3px rgba(33, 96, 216, 0.14);
 }
 
@@ -80,10 +76,10 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0f1218;
-  --panel: #171b23;
-  --panel-glass: rgba(23, 27, 35, 0.86);
-  --panel-glass-2: rgba(23, 27, 35, 0.7);
-  --panel-glass-3: rgba(23, 27, 35, 0.46);
+  --panel: #171f2e;
+  --panel-glass: #171f2e;
+  --panel-glass-2: #1c2637;
+  --panel-glass-3: #202c3e;
   --surface-1: #1d222c;
   --surface-2: #232935;
   --surface-3: #2b323f;
@@ -129,9 +125,6 @@
   --scrollbar-hover: rgba(255, 255, 255, 0.26);
   --scrollbar-active: rgba(255, 255, 255, 0.42);
   --edge: rgba(255, 255, 255, 0.07);
-  --glow-1: rgba(96, 138, 255, 0.16);
-  --glow-2: rgba(70, 170, 255, 0.1);
-  --grain-opacity: 0.06;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.4), 0 24px 64px rgba(0, 0, 0, 0.55);
@@ -152,61 +145,24 @@ body,
 body {
   font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
   color: var(--text);
-  /* 캔버스: 좌상단의 옅은 블루 글로우 + 쿨그레이 그라데이션 — 패널이
-     "떠 보이는" 바탕. 채도는 낮게 유지(과한 보라/네온 금지). */
-  background:
-    radial-gradient(1100px 700px at 6% -8%, rgba(120, 158, 255, 0.16) 0%, rgba(120, 158, 255, 0) 55%),
-    radial-gradient(900px 600px at 104% 112%, rgba(94, 197, 255, 0.1) 0%, rgba(94, 197, 255, 0) 50%),
-    linear-gradient(180deg, #f2f4f9 0%, #e8ecf4 100%);
-  background-attachment: fixed;
+  background: var(--bg);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-:root[data-theme="dark"] body {
-  background:
-    radial-gradient(1100px 700px at 6% -8%, rgba(96, 138, 255, 0.14) 0%, rgba(96, 138, 255, 0) 55%),
-    radial-gradient(900px 600px at 104% 112%, rgba(70, 170, 255, 0.08) 0%, rgba(70, 170, 255, 0) 50%),
-    linear-gradient(180deg, #13171f 0%, #0d1015 100%);
-  background-attachment: fixed;
-}
-/* 캔버스 위 두 격: 오로라(큰 블러 원 둘) + 그레인. 둘 다 패널 뒤(z -1)에 깔리므로
-   패널은 깨끗하고 여백만 질감을 갖는다. 둘 다 정적 레이어다 — 화면 전체 크기의 레이어를
-   움직이거나 블렌드하면 컴포지터가 매 프레임 일하게 되고, 그건 월간 리사이클러 같은
-   스크롤 민감 화면의 프레임을 빼앗는다. 움직임은 작은 요소들에게 맡긴다. */
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-}
-body::before {
-  background:
-    radial-gradient(640px 640px at 18% 12%, var(--glow-1) 0%, transparent 62%),
-    radial-gradient(720px 520px at 84% 92%, var(--glow-2) 0%, transparent 60%);
-}
-body::after {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 180px 180px;
-  opacity: var(--grain-opacity);
-}
 
 /* 테마 전환: JS가 400ms 동안 클래스를 달아 색이 퉁 바뀜지 않고 서서히 건너간다 */
 @media (prefers-reduced-motion: no-preference) {
-  html.theme-fade,
-  html.theme-fade *,
-  html.theme-fade *::before,
-  html.theme-fade *::after {
+  html.theme-fade body,
+  html.theme-fade .topbar,
+  html.theme-fade .sidebar,
+  html.theme-fade .list,
+  html.theme-fade .reader,
+  html.theme-fade .modal {
     transition:
-      background-color 0.4s ease,
-      background 0.4s ease,
-      color 0.4s ease,
-      border-color 0.4s ease,
-      box-shadow 0.4s ease,
-      fill 0.4s ease,
-      stroke 0.4s ease !important;
+      background-color 0.18s ease,
+      color 0.18s ease,
+      border-color 0.18s ease !important;
   }
 }
 
@@ -271,9 +227,6 @@ body::after {
   .theme-toggle svg,
   .empty-art {
     animation: none !important;
-  }
-  .btn.primary::after {
-    display: none;
   }
   .btn,
   .btn:active {
@@ -393,8 +346,7 @@ body::after {
 .btn:hover {
   background: var(--surface-1);
   border-color: var(--border-strong);
-  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.09);
-  transform: translateY(-0.5px);
+  box-shadow: var(--shadow-1);
 }
 .btn:active {
   transform: translateY(0) scale(0.98);
@@ -406,37 +358,13 @@ body::after {
 }
 /* 주 버튼은 테마와 무관하게 같은 브랜드 블루 — 다크의 밝은 --accent가 새지 않게 상수로 */
 .btn.primary {
-  background: linear-gradient(180deg, #3674e6 0%, #2160d8 100%);
-  border-color: #1a51b8;
+  background: #2859dc;
+  border-color: #204abf;
   color: #fff;
-  box-shadow:
-    0 1px 2px rgba(16, 24, 40, 0.1),
-    0 3px 10px rgba(33, 96, 216, 0.28);
+  box-shadow: var(--shadow-1);
 }
 .btn.primary:hover {
-  background: linear-gradient(180deg, #2f6adc 0%, #1a51b8 100%);
-  box-shadow:
-    0 2px 4px rgba(16, 24, 40, 0.12),
-    0 6px 16px rgba(33, 96, 216, 0.34);
-}
-/* 호버 시 빛 한 줄기가 왼쪽에서 오른쪽으로 쓸고 지나간다 */
-.btn.primary {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-}
-.btn.primary::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.3) 50%, transparent 68%);
-  transform: translateX(-130%);
-  transition: transform 0.7s var(--ease-out);
-  pointer-events: none;
-}
-.btn.primary:hover::after {
-  transform: translateX(130%);
+  background: #204abf;
 }
 .btn.primary:disabled {
   opacity: 0.5;
@@ -461,10 +389,9 @@ body::after {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 18px;
-  background: var(--panel-glass);
-  backdrop-filter: blur(16px) saturate(1.5);
-  -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  min-height: 64px;
+  padding: 12px 20px;
+  background: var(--panel);
   border-bottom: 1px solid var(--hairline);
   position: relative;
   z-index: 10;
@@ -474,22 +401,20 @@ body::after {
   align-items: center;
   gap: 9px;
   font-weight: 700;
-  font-size: 17px;
+  font-size: 19px;
   white-space: nowrap;
   letter-spacing: -0.3px;
 }
 .brand-mark {
   width: 28px;
   height: 28px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #3b76e6 0%, #1d4fc4 100%);
+  border-radius: 7px;
+  background: #2859dc;
   color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 2px 8px rgba(33, 96, 216, 0.35);
+  box-shadow: var(--shadow-1);
 }
 .brand-mark svg {
   width: 14px;
@@ -545,11 +470,12 @@ body::after {
 }
 .search {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   background: var(--fill-1);
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--radius-s);
   padding: 0 12px;
   max-width: 560px;
   transition:
@@ -568,6 +494,7 @@ body::after {
 }
 .search input {
   flex: 1;
+  min-width: 0;
   border: none;
   background: transparent;
   padding: 10px 4px;
@@ -582,6 +509,19 @@ body::after {
 .account .email {
   color: var(--muted);
   font-size: 12px;
+}
+@media (max-width: 1100px) {
+  .account .email { display: none; }
+  .topbar { gap: 10px; }
+  .topbar-spacer { display: none; }
+}
+@media (max-width: 700px) {
+  .topbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+  .topbar .search { order: 1; flex: 1 0 100%; max-width: none; }
+  .topbar .brand { flex: 1; }
+  .account { gap: 2px; }
+  .account .avatar { display: none; }
+  .compose-btn { padding: 7px 9px; }
 }
 .clear {
   border: none;
@@ -665,17 +605,16 @@ body::after {
   font-size: 12.5px;
 }
 
-/* 플로팅 패널: 칼럼들이 1px 선으로 붙어 있는 대신 캔버스 위에 라운드
-   카드로 떠 있다. 그리드 구조(3칼럼)는 그대로. */
+/* Resize the content tracks immediately; animating layout moves hit targets
+   and repeats layout work while zooming or resizing a window. */
 .body {
   flex: 1;
   display: grid;
   grid-template-columns: 200px 360px 1fr;
   min-height: 0;
+  min-width: 0;
   gap: 14px;
   padding: 14px 16px 16px;
-  transition: grid-template-columns 0.26s cubic-bezier(0.2, 0.7, 0.3, 1),
-    padding-left 0.26s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 .body.calendar-mode {
   grid-template-columns: 240px minmax(0, 1fr);
@@ -697,18 +636,55 @@ body::after {
   padding-left: 2px;
 }
 
+/* 메일만 리더에 폭을 우선 배분한다. .body는 드라이브에서도 공유하므로
+   목록이 실제로 있는 경우에만 유동 트랙을 적용해 다른 모드의 칼럼을
+   바꾸지 않는다. */
+.body:not(.calendar-mode):has(.list) {
+  grid-template-columns:
+    minmax(0, clamp(150px, 14vw, 200px))
+    minmax(0, clamp(220px, 25vw, 360px))
+    minmax(0, 1fr);
+}
+.body.nav-collapsed:not(.calendar-mode):has(.list) {
+  grid-template-columns:
+    0
+    minmax(0, clamp(220px, 25vw, 360px))
+    minmax(0, 1fr);
+}
+
 .sidebar {
-  background: transparent;
+  --panel: #111e35;
+  --panel-glass-3: #182840;
+  --text: #edf3ff;
+  --text-2: #c3cee2;
+  --muted: #a3b3cf;
+  --faint: #91a2bf;
+  --accent: #a8c4ff;
+  --accent-strong: #d5e2ff;
+  --accent-bg: #263e63;
+  --accent-bg-strong: #304d78;
+  --accent-border: #44618e;
+  --border: #2a3a55;
+  --hairline: #2a3a55;
+  --fill-1: #1c2e49;
+  --fill-3: #243754;
+  background: var(--panel);
+  color: var(--text);
+  border-radius: var(--radius-m);
   min-width: 0;
   /* 트랙이 줄어드는 동안 안쪽 200px 패널이 찌그러지지 않게 잘라 낸다 */
   overflow: hidden;
 }
 .sidebar-inner {
   width: 200px;
+  min-width: 0;
   height: 100%;
-  padding: 4px 2px;
+  padding: 16px 8px;
   overflow-y: auto;
   transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.body:not(.calendar-mode):has(.list) .sidebar-inner {
+  width: 100%;
 }
 .body.nav-collapsed .sidebar-inner {
   opacity: 0;
@@ -729,30 +705,25 @@ body::after {
 }
 .workspace-switcher {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
-  margin: 0 0 10px;
-  padding: 4px;
-  border: 1px solid var(--hairline);
-  border-radius: 16px;
-  background: var(--panel-glass-2);
-  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.04), var(--edge-highlight);
+  margin: 0 0 20px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .workspace-tab {
   min-width: 0;
-  min-height: 60px;
+  min-height: 42px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 7px 3px 6px;
+  gap: 10px;
+  padding: 8px 10px;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 650;
   line-height: 1;
   white-space: nowrap;
@@ -766,23 +737,29 @@ body::after {
   background: var(--fill-1);
 }
 
+.workspace-tab > span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workspace-tab:active {
   transform: translateY(1px);
 }
 
 .workspace-tab.active {
   color: var(--accent-strong);
-  background: var(--panel);
-  box-shadow: 0 3px 12px rgba(16, 24, 40, 0.1);
+  background: var(--accent-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .workspace-tab-icon {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
+  flex: none;
   display: grid;
   place-items: center;
-  border-radius: 9px;
-  background: var(--fill-3);
 }
 
 .workspace-tab-icon svg {
@@ -792,7 +769,6 @@ body::after {
 
 .workspace-tab.active .workspace-tab-icon {
   color: var(--accent);
-  background: var(--accent-a10);
 }
 
 .workspace-tab:focus-visible {
@@ -802,10 +778,7 @@ body::after {
 
 .nav-sub {
   margin: 0 0 12px;
-  padding: 4px;
-  border-radius: 14px;
-  background: var(--panel-glass-3);
-  border: 1px solid var(--hairline);
+  padding: 0;
 }
 
 .workspace-panel {
@@ -827,7 +800,7 @@ body::after {
   gap: 10px;
   padding: 14px 12px;
   border: 1px solid var(--hairline);
-  border-radius: 14px;
+  border-radius: var(--radius-m);
   background: var(--panel-glass-3);
   animation: workspace-panel-in 0.18s ease-out;
 }
@@ -1037,6 +1010,7 @@ body::after {
   width: 100%;
   min-width: 0;
   display: flex;
+  gap: 6px;
   justify-content: space-between;
   align-items: center;
   gap: 4px;
@@ -1064,12 +1038,14 @@ body::after {
   min-width: 0;
   flex: 1 1 auto;
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+<<<<<<< HEAD
 .label-row.system .label-name {
   flex: 0 1 auto;
 }
@@ -1092,6 +1068,13 @@ body::after {
 .label-counts.badge {
   padding: 1px 3px;
   font-size: 10px;
+=======
+.label-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+>>>>>>> c51b3e2 (Stabilize mail selection toolbar and harden reader and Windows lifecycle)
 }
 .label-ic {
   width: 17px;
@@ -1181,6 +1164,8 @@ body::after {
 .list {
   background: var(--panel);
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1), var(--edge-highlight);
@@ -1191,11 +1176,11 @@ body::after {
   border: none;
   border-bottom: 1px solid var(--border-weak);
   background: transparent;
-  padding: 13px 14px;
+  padding: 16px 14px;
   cursor: pointer;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
   min-height: 62px;
   transition: background 0.13s ease;
   font-family: inherit;
@@ -1204,21 +1189,21 @@ body::after {
      목록 스크롤 비용을 크게 줄인다. intrinsic-size는 한 행의 대략 높이로
      스크롤바 점프를 최소화. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 66px;
+  contain-intrinsic-size: auto 86px;
 }
 .msg-row:hover {
   background: var(--surface-1);
 }
 .msg-row.active {
   background: var(--accent-bg);
-  box-shadow: inset 2.5px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .msg-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 .msg-row.unread .msg-from,
 .msg-row.unread .msg-subject {
@@ -1261,7 +1246,7 @@ body::after {
 }
 .msg-from {
   font-size: 13px;
-  font-weight: 600; /* 발신자는 항상 강하게 — 행의 시각적 앵커 */
+  font-weight: 500;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1342,16 +1327,7 @@ body::after {
   }
 }
 
-/* 키보드 단축키 안내 — 목록 헤더의 ? 팝오버가 보여 준다 */
-.kbd-hints {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px 16px;
-  margin-top: 14px;
-  font-size: 12px;
-}
-.kbd-hints kbd {
+.kbd-grid kbd {
   display: inline-block;
   min-width: 18px;
   padding: 1px 5px;
@@ -1363,17 +1339,13 @@ body::after {
   color: var(--text-2);
   text-align: center;
 }
-/* 목록 헤더의 ? 버튼 + 팝오버 */
-.kbd-help-wrap {
-  position: relative;
-  margin-left: auto;
-}
 .kbd-help-btn {
   width: 22px;
   height: 22px;
   line-height: 1;
   border-radius: 50%;
   border: 1px solid var(--border);
+  background: var(--panel);
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
@@ -1382,38 +1354,28 @@ body::after {
   background: var(--surface-2);
   color: var(--text);
 }
-.kbd-help-pop {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 40;
-  width: max-content;
-  max-width: 300px;
-  padding: 12px 14px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow-3);
-}
-.kbd-help-pop .kbd-hints {
-  margin-top: 0;
-  justify-content: flex-start;
-}
 
 .reader {
   overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-1), var(--edge-highlight);
 }
 .reader-inner {
+  min-width: 0;
   padding: 24px 32px;
-  animation: rise-in 0.28s var(--ease-out) both;
+  animation: fadein 0.16s var(--ease-out);
+}
+.reader-head,
+.reader-meta {
+  min-width: 0;
 }
 .reader-head h2 {
   margin: 0 0 14px;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.4px;
   line-height: 1.35;
@@ -1421,11 +1383,122 @@ body::after {
 .reader-meta {
   font-size: 13px;
   margin-bottom: 12px;
+  overflow-wrap: anywhere;
 }
 .muted {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* 수신자 헤더: 요약은 한 줄에서 안전하게 줄이고, 펼친 목록은 리더 안에서
+   독립적으로 스크롤한다. 주소·이름은 메일 데이터이므로 어느 쪽도 그리드의
+   최소폭을 되살리지 않게 한다. */
+.recipient-summary,
+.recipient-details,
+.recipient-row {
+  min-width: 0;
+  max-width: 100%;
+}
+.recipient-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 2px;
+}
+.recipient-summary .recipient-row {
+  flex: 1 1 auto;
+}
+.recipient-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+.recipient-address {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  border: none;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+.recipient-toggle {
+  flex: none;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  overflow: hidden;
+  background: var(--surface-1);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recipient-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--surface-2);
+}
+.recipient-toggle:focus-visible,
+.recipient-address:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.recipient-details {
+  max-height: min(16rem, 40vh);
+  margin-top: 6px;
+  padding: 6px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-1);
+}
+.recipient-details .recipient-row {
+  padding: 5px 6px;
+}
+.recipient-details .recipient-address {
+  flex: 1 1 auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.recipient-self {
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-s);
+  padding: 3px 6px;
+  background: var(--accent-bg);
+}
+.recipient-self .recipient-address {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+.recipient-self-label {
+  flex: none;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  padding: 1px 5px;
+  background: var(--accent-bg-strong);
+  color: var(--accent-strong);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
 /* 액션 바: 버튼 무더기 대신 고스트 툴바 */
 .reader-actions {
   display: flex;
@@ -1535,8 +1608,6 @@ body::after {
   position: fixed;
   inset: 0;
   background: var(--scrim);
-  backdrop-filter: blur(5px);
-  -webkit-backdrop-filter: blur(5px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1625,7 +1696,7 @@ body::after {
   align-items: center;
 }
 .modal-head strong {
-  font-size: 15px;
+  font-size: 18px;
   letter-spacing: -0.2px;
 }
 /* 작성창 필드: 박스 대신 헤어라인 언더라인 — Gmail식의 정돈된 결 */
@@ -1719,8 +1790,8 @@ body::after {
   padding: 24px 26px 30px;
   background: var(--panel);
   border: 1px solid var(--hairline);
-  border-radius: 18px;
-  box-shadow: 0 12px 38px rgba(16, 24, 40, 0.07), var(--edge-highlight);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
   scrollbar-gutter: stable;
   /* 페이드만 — 월간 리사이클러가 마운트 직후 셀 좌표를 재므로 transform으로 기하를 흔들면 안 된다 */
   animation: fadein 0.24s var(--ease-out) both;
@@ -2238,7 +2309,6 @@ body::after {
   font-weight: 750;
   text-align: left;
   cursor: pointer;
-  backdrop-filter: blur(8px);
 }
 
 .cal-event {
@@ -2331,31 +2401,22 @@ body::after {
 }
 
 /* ---- 메일 3분할 반응형 ----
-   목록이 360px 고정이면 창을 줄일 때 줄어드는 폭을 리더가 전부 뒤집어쓴다.
-   실측: 600px에서 리더가 2px로 붕괴하고 문서가 가로로 298px 넘쳤다.
+   사이드바·목록은 clamp로 1440px의 200/360px에서 1000px의
+   150/250px까지 먼저 줄어들고, 남은 폭을 리더가 사용한다.
+   고정 트랙이면 실측처럼 600px에서 리더가 2px로 붕괴하고 문서가 가로로
+   298px 넘칠 수 있다.
    목록을 먼저 줄이고, 그래도 리더가 못 버티는 폭(<=900px)에서는 3분할을
    포기하고 리더를 팝업으로 띄운다(.body.reader-overlay). */
 @media (max-width: 1240px) {
   .body:not(.calendar-mode) {
-    grid-template-columns: 200px minmax(260px, 320px) minmax(0, 1fr);
     gap: 12px;
     padding: 12px 12px 14px;
-  }
-  .body.nav-collapsed:not(.calendar-mode) {
-    grid-template-columns: 0 minmax(260px, 320px) minmax(0, 1fr);
   }
 }
 
 @media (max-width: 1040px) {
   .body:not(.calendar-mode) {
-    grid-template-columns: 180px minmax(240px, 288px) minmax(0, 1fr);
     gap: 10px;
-  }
-  .body.nav-collapsed:not(.calendar-mode) {
-    grid-template-columns: 0 minmax(240px, 288px) minmax(0, 1fr);
-  }
-  .body:not(.calendar-mode) .sidebar-inner {
-    width: 180px;
   }
   .reader-inner {
     padding: 18px 20px;
@@ -2831,7 +2892,6 @@ textarea.ev-input {
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
   background: var(--panel-glass);
-  backdrop-filter: saturate(1.4) blur(8px);
   box-shadow: var(--shadow-1);
 }
 .thread-bar-title {
@@ -3330,13 +3390,13 @@ mark {
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) 24px 32px 24px;
+  grid-template-rows: 28px;
   align-items: center;
-  gap: 8px 10px;
-  padding: 9px 12px;
-  background: var(--panel-glass);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  height: 48px;
+  gap: 4px;
+  padding: 9px 10px 10px;
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 .bulk-bar > input[type="checkbox"] {
@@ -3363,49 +3423,9 @@ mark {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 선택이 없을 때 전체선택 체크박스 옆 안내 — 눌러도 전체 토글 */
 .bulk-hint {
-  border: none;
-  background: transparent;
-  font-family: inherit;
   font-size: 12.5px;
   color: var(--muted);
-  cursor: pointer;
-  padding: 0;
-  user-select: none;
-}
-.bulk-hint:hover {
-  color: var(--text);
-}
-.bulk-all-link {
-  grid-column: 1 / -1;
-  width: 100%;
-  text-align: center;
-  flex: none;
-  border: none;
-  border-radius: 7px;
-  background: var(--accent-bg);
-  color: var(--accent);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 8px;
-  cursor: pointer;
-}
-.bulk-all-link:hover {
-  background: var(--accent-bg-strong);
-}
-.bulk-actions {
-  grid-column: 1 / -1;
-  min-width: 0;
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 5px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-.bulk-actions .btn {
-  flex: none;
   white-space: nowrap;
 }
 .btn.sm {
@@ -3413,23 +3433,78 @@ mark {
   padding: 5px 10px;
   font-size: 12px;
 }
-.bulk-clear {
-  flex: none;
+.bulk-clear,
+.bulk-menu-trigger {
   border: none;
   background: transparent;
   cursor: pointer;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 20px;
   line-height: 1;
-  padding: 5px 8px;
-  grid-column: 3;
-  grid-row: 1;
-  border-radius: 6px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-s);
 }
-.bulk-clear:hover {
+.bulk-clear:hover,
+.bulk-menu-trigger:hover {
   background: var(--fill-2);
   color: var(--text);
 }
+.bulk-clear:disabled,
+.bulk-menu-trigger:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.bulk-menu {
+  position: fixed;
+  z-index: 180;
+  width: min(280px, calc(100vw - 16px));
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-3);
+}
+.bulk-menu-caption {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.bulk-menu [role="menuitem"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.bulk-menu [role="menuitem"] svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.bulk-menu [role="menuitem"].danger { color: var(--danger); }
+.bulk-menu [role="menuitem"]:hover,
+.bulk-menu [role="menuitem"]:focus-visible { background: var(--accent-bg); }
+.bulk-menu [role="menuitem"]:disabled { opacity: 0.45; cursor: default; }
+.bulk-bar button:focus-visible,
+.bulk-menu:focus-visible,
+.bulk-menu [role="menuitem"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.kbd-grid { display: grid; gap: 10px; padding: 8px 10px 12px; font-size: 12px; }
 
 /* 일정 카드 날짜 박스 */
 .ev-datebox {
@@ -3494,8 +3569,6 @@ mark {
   position: fixed;
   inset: 0;
   background: var(--scrim-weak);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
   z-index: 150;
   animation: fadein 0.16s ease;
   display: flex;

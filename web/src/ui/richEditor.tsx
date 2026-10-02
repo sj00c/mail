@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { fileToBase64 } from "../lib/attachments.ts";
 import { FONT_FAMILIES } from "../lib/settings.ts";
+import { ImageIcon, LinkIcon } from "./icons.tsx";
 
 // 서식 작성 에디터 — contentEditable + 툴바. 외부 라이브러리 없이
 // document.execCommand로 굵게/기울임/밑줄/목록/링크를 처리한다. 본문은
@@ -96,6 +97,7 @@ export function RichEditor({
       type="button"
       className="rich-tool"
       title={title}
+      aria-label={title}
       onMouseDown={(e) => e.preventDefault()}
       onClick={action}
     >
@@ -159,10 +161,10 @@ export function RichEditor({
         {tool("• 목록", () => cmd("insertUnorderedList"), "글머리 목록")}
         {tool("1. 목록", () => cmd("insertOrderedList"), "번호 목록")}
         <span className="rich-sep" />
-        {tool("🔗", makeLink, "링크")}
+        {tool(<LinkIcon />, makeLink, "링크")}
         {rich &&
           tool(
-            "🖼",
+            <ImageIcon />,
             () => {
               saveSel();
               imgInputRef.current?.click();

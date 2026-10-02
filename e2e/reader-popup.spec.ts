@@ -51,6 +51,28 @@ const message2 = {
   bodyText: "Second body.",
 };
 
+const longRecipientMessage = {
+  ...baseMessage,
+  id: "message-long-recipient",
+  threadId: "thread-long-recipient",
+  from: "Sender <sender@example.com>",
+  to: [
+    "A Recipient Name That Is Deliberately Long For Responsive Header Coverage <recipient-with-an-extremely-long-address-local-part-that-must-wrap@example.com>",
+    "Another Recipient With A Long Display Name <another-recipient-with-a-long-address@example.com>",
+    ...Array.from(
+      { length: 150 },
+      (_, index) => `Recipient ${index} <recipient-${index}@example.com>`,
+    ),
+    "My Primary Account <test@example.com>",
+  ].join(", "),
+  subject: "Long recipient header",
+  snippet: "Long recipient header",
+  date: "2026-08-17T00:00:00.000Z",
+  labelIds: ["INBOX"],
+  rfc822MsgId: "<message-long-recipient@example.com>",
+  bodyText: "Long recipient body.",
+};
+
 // popin 애니메이션(180ms) 동안 좌표가 움직인다 — boundingBox를 재기 전에
 // 애니메이션이 끝난 걸 보장한다.
 async function settle(page: import("@playwright/test").Page) {
@@ -66,6 +88,30 @@ async function openSearchReader(page: import("@playwright/test").Page) {
   await page.locator(".mail-card").filter({ hasText: "TICKET CONFIRMATION" }).click();
   await expect(page.locator(".reader-popup")).toBeVisible();
   await settle(page);
+}
+
+async function settleLayout(page: import("@playwright/test").Page) {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      }),
+  );
+}
+
+async function mailColumns(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const width = (selector: string) =>
+      document.querySelector<HTMLElement>(selector)?.getBoundingClientRect()
+        .width ?? 0;
+    return {
+      sidebar: width(".body:not(.calendar-mode) .sidebar"),
+      list: width(".body:not(.calendar-mode) .list"),
+      reader: width(".body:not(.calendar-mode) .reader"),
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    };
+  });
 }
 
 test("attachment chip icons stay icon-sized inside the chip link", async ({ page }) => {
@@ -269,4 +315,94 @@ test("modal surfaces stack above the popup and their backdrop clicks stay theirs
   await modal.click({ position: { x: 8, y: 8 } });
   await expect(modal).toHaveCount(0);
   await expect(panel).toBeVisible();
+});
+
+test("mail side panes yield width to the reader before the popup breakpoint", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installAppMocks(page, { messages: [message1, message2] });
+  await openMailbox(page);
+
+  const wide = await mailColumns(page);
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await settleLayout(page);
+  const medium = await mailColumns(page);
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await settleLayout(page);
+  const compact = await mailColumns(page);
+
+  expect(medium.sidebar).toBeLessThan(wide.sidebar);
+  expect(compact.sidebar).toBeLessThan(medium.sidebar);
+  expect(medium.list).toBeLessThan(wide.list);
+  expect(compact.list).toBeLessThan(medium.list);
+  // At 1000px the reader still owns most of the usable row, rather than
+  // forcing a horizontal page scroll before the <=900px popup mode.
+  expect(compact.reader).toBeGreaterThan(compact.list);
+  expect(compact.reader).toBeGreaterThanOrEqual(compact.viewportWidth * 0.5);
+  expect(compact.documentWidth).toBeLessThanOrEqual(compact.viewportWidth + 1);
+});
+
+test("long recipient headers stay bounded and mark the own address", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await installAppMocks(page, {
+    profile: {
+      email: "test@example.com",
+      historyId: "1",
+      messagesTotal: 1,
+    },
+    messages: [longRecipientMessage],
+  });
+  await openMailbox(page);
+  await page.locator(".msg-row").click();
+  await expect(page.locator(".reader")).toContainText("Long recipient header");
+  const toSummary = page.locator(
+    '.recipient-summary[data-recipient-kind="받는사람"]',
+  );
+  await expect(toSummary).toBeVisible();
+  await expect(toSummary.locator(".recipient-toggle")).toBeVisible();
+  await expect(page.getByText("Long recipient body.", { exact: true })).toBeInViewport();
+  await expect(toSummary.locator(".recipient-self")).toBeVisible();
+
+  expect(
+    await toSummary.evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("recipient-summary.png"),
+    animations: "disabled",
+  });
+
+  await toSummary.locator(".recipient-toggle").click();
+  const details = page.getByRole("region", {
+    name: "받는사람 전체 주소",
+  });
+  await expect(details).toBeVisible();
+  expect(await details.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  expect((await details.boundingBox())!.height).toBeLessThanOrEqual(280);
+  await expect(page.getByText("Long recipient body.", { exact: true })).toBeInViewport();
+  expect(
+    await details.evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true);
+  expect(
+    (await details.boundingBox())!.width,
+  ).toBeLessThanOrEqual((await page.locator(".reader").boundingBox())!.width);
+  await expect(toSummary.locator(".recipient-self")).toBeVisible();
+  await expect(toSummary.locator(".recipient-self-label")).toContainText("나");
+  await expect(details.locator(".recipient-self-label")).toContainText("나");
+  await test.info().attach("long-recipient-header", {
+    body: await page.screenshot({
+      path: test.info().outputPath("recipient-details.png"),
+      fullPage: false,
+      animations: "disabled",
+    }),
+    contentType: "image/png",
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    page.viewportSize()!.width + 1,
+  );
+  await toSummary.locator(".recipient-toggle").click();
+  await expect(details).toBeHidden();
+  await expect(page.getByText("Long recipient body.", { exact: true })).toBeInViewport();
 });

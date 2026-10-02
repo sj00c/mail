@@ -29,7 +29,8 @@ import {
   SIGNATURE_KEY,
   SIGNATURE_SYNC_KEY,
 } from "./lib/settings.ts";
-import { MoreSentinel, ReaderPopup, TriCheck } from "./ui/dialog.tsx";
+import { MoreSentinel, ReaderPopup } from "./ui/dialog.tsx";
+import { MailSelectionToolbar } from "./ui/mailSelectionToolbar.tsx";
 import {
   AlertIcon,
   ArchiveIcon,
@@ -304,7 +305,6 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     id: string;
     threadId: string;
   } | null>(null);
-  const [kbdHelpOpen, setKbdHelpOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const composeOpenRef = useRef(composeOpen);
   composeOpenRef.current = composeOpen;
@@ -561,10 +561,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     setAllResultsSelected(false);
     const list = getMessages();
     const idx = list.findIndex((m) => m.id === id);
+    // React may defer the updater until after the ref below has advanced.
+    const anchor = lastCheckedIdx.current;
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (shiftKey && lastCheckedIdx.current != null && idx >= 0) {
-        const [a, b] = [lastCheckedIdx.current, idx].sort((x, y) => x - y);
+      if (shiftKey && anchor != null && idx >= 0) {
+        const [a, b] = [anchor, idx].sort((x, y) => x - y);
         const turnOn = !prev.has(id); // 클릭 행의 '다음 상태'를 범위 전체에 적용
         for (let i = a; i <= b; i++) {
           if (turnOn) next.add(list[i].id);
@@ -865,7 +867,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       if (viewRef.current !== "mail") return;
       if (isTyping(e.target)) return;
       // 모달(작성창/설정/일정)이 열려 있으면 목록 단축키는 쉰다.
-      if (document.querySelector(".modal-backdrop")) return;
+      if (document.querySelector(".modal-backdrop, .bulk-menu")) return;
       const list = getMessages();
       const cur = selectedRef.current;
       const curMsg = cur ? list.find((m) => m.id === cur.id) : undefined;
@@ -960,31 +962,17 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       ?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  // 목록 헤더 ? 팝오버 — 바깥 클릭/Esc로 닫는다.
-  useEffect(() => {
-    if (!kbdHelpOpen) return;
-    const close = () => setKbdHelpOpen(false);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setKbdHelpOpen(false);
-    };
-    document.addEventListener("click", close);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("click", close);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [kbdHelpOpen]);
-
   // 넓은 화면은 오른쪽 리더 패널에, 검색 결과·좁은 화면은 팝업에 같은 리더를 렌더한다.
+  const ownAddresses = useMemo(
+    () => [email, ...(acctSettings?.sendAs ?? []).map((s) => s.email)],
+    [email, acctSettings?.sendAs],
+  );
   const readerEl = selected ? (
     <Reader
       id={selected.id}
       threadId={selected.threadId}
       onCreateEvent={createEventFromMail}
-      ownAddresses={[
-        email,
-        ...(acctSettings?.sendAs ?? []).map((s) => s.email),
-      ]}
+      ownAddresses={ownAddresses}
       inTrash={!query && activeLabel === "TRASH"}
       guard={guard}
       onPatched={(id, patch) => {
@@ -1327,143 +1315,83 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
           <>
             <section className="list">
               {messages.length > 0 && (
-                <div className="bulk-bar">
-                  <TriCheck
-                    checked={allChecked}
-                    indeterminate={checkedIds.length > 0}
-                    onChange={toggleAll}
-                    ariaLabel="전체 선택"
-                  />
-                  {checkedIds.length > 0 ? (
-                    <>
-                      <span className="bulk-count">
-                        {allResultsSelected
-                          ? `${bulkScope} 전체 선택`
-                          : `${checkedIds.length}개 선택`}
-                      </span>
-                      {!allResultsSelected &&
-                        allChecked &&
-                        !inTrashView &&
-                        (nextToken || totalEstimate > messages.length) && (
-                          <button
-                            type="button"
-                            className="bulk-all-link"
-                            onClick={() => setAllResultsSelected(true)}
-                          >
-                            {bulkScope}의 모든 메일 선택
-                          </button>
-                        )}
-                      <span className="bulk-actions">
-                        {inTrashView ? (
-                          <button className="btn sm" onClick={bulkRestore}>
-                            <RestoreIcon />
-                            복원
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              className="btn sm"
-                              disabled={bulkAllBusy}
-                              onClick={() => bulkRead(true)}
-                            >
-                              <MailIcon />
-                              읽음
-                            </button>
-                            <button
-                              className="btn sm"
-                              disabled={bulkAllBusy}
-                              onClick={() => bulkRead(false)}
-                            >
-                              <MailIcon />
-                              안읽음
-                            </button>
-                            {!allResultsSelected && (
-                              <>
-                                <button className="btn sm" onClick={bulkStar}>
-                                  {allStarred ? "★ 별표 해제" : "☆ 별표"}
-                                </button>
-                                {isInboxView && (
-                                  <button
-                                    className="btn sm"
-                                    onClick={bulkArchive}
-                                  >
-                                    <ArchiveIcon />
-                                    보관
-                                  </button>
-                                )}
-                              </>
-                            )}
-                            <button
-                              className="btn sm danger"
-                              disabled={bulkAllBusy}
-                              onClick={bulkTrash}
-                            >
-                              <TrashIcon />
-                              휴지통
-                            </button>
-                          </>
-                        )}
-                      </span>
-                      <button
-                        className="bulk-clear"
-                        onClick={clearSelection}
-                        aria-label="선택 해제"
-                      >
-                        ✕
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className="bulk-hint"
-                      onClick={toggleAll}
-                    >
-                      전체 선택
-                    </button>
-                  )}
-                  <span className="kbd-help-wrap">
-                    <button
-                      type="button"
-                      className="clear kbd-help-btn"
-                      title="키보드 단축키"
-                      aria-label="키보드 단축키"
-                      aria-expanded={kbdHelpOpen}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setKbdHelpOpen((v) => !v);
-                      }}
-                    >
-                      ?
-                    </button>
-                    {kbdHelpOpen && (
-                      <div
-                        className="kbd-help-pop"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="kbd-hints">
-                          <span>
-                            <kbd>j</kbd>/<kbd>k</kbd> 이전·다음
-                          </span>
-                          <span>
-                            <kbd>e</kbd> 보관
-                          </span>
-                          <span>
-                            <kbd>#</kbd> 삭제
-                          </span>
-                          <span>
-                            <kbd>c</kbd> 새 메일
-                          </span>
-                          <span>
-                            <kbd>/</kbd> 검색
-                          </span>
-                          <span>
-                            <kbd>u</kbd> 목록으로
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </span>
-                </div>
+                <MailSelectionToolbar
+                  key={`${activeLabel}/${query}`}
+                  checked={allChecked}
+                  count={checkedIds.length}
+                  summary={
+                    allResultsSelected
+                      ? `${bulkScope} 전체 선택`
+                      : `${checkedIds.length}개 선택`
+                  }
+                  busy={bulkAllBusy}
+                  onToggleAll={toggleAll}
+                  onClear={clearSelection}
+                  actions={[
+                    ...(!allResultsSelected &&
+                    allChecked &&
+                    !inTrashView &&
+                    (nextToken || totalEstimate > messages.length)
+                      ? [
+                          {
+                            id: "all-results",
+                            label: `${bulkScope}의 모든 메일 선택`,
+                            run: () => setAllResultsSelected(true),
+                          },
+                        ]
+                      : []),
+                    ...(inTrashView
+                      ? [
+                          {
+                            id: "restore",
+                            label: "복원",
+                            icon: <RestoreIcon />,
+                            run: bulkRestore,
+                          },
+                        ]
+                      : [
+                          {
+                            id: "read",
+                            label: "읽음",
+                            icon: <MailIcon />,
+                            run: () => bulkRead(true),
+                          },
+                          {
+                            id: "unread",
+                            label: "안읽음",
+                            icon: <MailIcon />,
+                            run: () => bulkRead(false),
+                          },
+                          ...(!allResultsSelected
+                            ? [
+                                {
+                                  id: "star",
+                                  label: allStarred ? "별표 해제" : "별표",
+                                  icon: <StarIcon />,
+                                  run: bulkStar,
+                                },
+                                ...(isInboxView
+                                  ? [
+                                      {
+                                        id: "archive",
+                                        label: "보관",
+                                        icon: <ArchiveIcon />,
+                                        run: bulkArchive,
+                                      },
+                                    ]
+                                  : []),
+                              ]
+                            : []),
+                          {
+                            id: "trash",
+                            label: "휴지통",
+                            icon: <TrashIcon />,
+                            run: bulkTrash,
+                            danger: true,
+                          },
+                        ]),
+                  ]}
+                />
               )}
               {messages.length === 0 && !loading && (
                 <div className="empty">
@@ -1631,7 +1559,7 @@ function LabelRow({
         <span className="label-ic">
           <LabelIcon />
         </span>
-        {name}
+        <span className="label-title">{name}</span>
       </span>
       {visibleCount !== undefined && countTitle && (
         <span

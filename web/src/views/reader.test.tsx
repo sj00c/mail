@@ -69,7 +69,11 @@ const makeMessage = (
   ...overrides,
 });
 
-const renderReader = (onReply: (init: ComposeInit) => void, id = "new") => {
+const renderReader = (
+  onReply: (init: ComposeInit) => void,
+  id = "new",
+  ownAddresses: string[] = [],
+) => {
   const guard = async (task: () => Promise<void>): Promise<void> => {
     try {
       await task();
@@ -81,7 +85,7 @@ const renderReader = (onReply: (init: ComposeInit) => void, id = "new") => {
     <Reader
       id={id}
       threadId="thread-1"
-      ownAddresses={[]}
+      ownAddresses={ownAddresses}
       inTrash={false}
       guard={guard}
       onPatched={vi.fn()}
@@ -257,5 +261,164 @@ describe("forward quote sanitization", () => {
 
     const replied = buildQuotedHtml({ quoteHtml: hostile });
     expect(replied).not.toContain("cid:keep");
+  });
+});
+
+describe("recipient headers", () => {
+  it("keeps hundreds of recipients compact, exposes the late self address, and expands To/Cc independently", async () => {
+    const to = [
+      "First Recipient <first@example.com>",
+      "Second Recipient <second@example.com>",
+      ...Array.from(
+        { length: 197 },
+        (_unused, index) =>
+          `Recipient ${index} <recipient-${index}@example.com>`,
+      ),
+      "Alias Person <AlIaS@Example.com>",
+    ].join(", ");
+    const cc = [
+      "Copy One <copy-one@example.com>",
+      "Copy Two <copy-two@example.com>",
+      "Copy Three <copy-three@example.com>",
+    ].join(", ");
+    threadMock.mockResolvedValue([
+      makeMessage("new", {
+        from: "Primary Person <PRIMARY@Example.com>",
+        to,
+        cc,
+        bodyHtml: null,
+        bodyText: "body stays visible",
+      }),
+    ]);
+    renderReader(vi.fn(), "new", ["primary@example.com", "alias@example.com"]);
+
+    expect(await screen.findByText("body stays visible")).toBeInTheDocument();
+    const toSummary = document.querySelector(
+      '[data-recipient-kind="받는사람"]',
+    ) as HTMLElement;
+    const ccSummary = document.querySelector(
+      '[data-recipient-kind="참조"]',
+    ) as HTMLElement;
+    expect(toSummary).toHaveTextContent("First Recipient");
+    expect(toSummary).toHaveTextContent("Second Recipient");
+    expect(toSummary).toHaveTextContent("Alias Person");
+    expect(toSummary).toHaveTextContent("외 197명");
+    expect(ccSummary).toHaveTextContent("외 1명");
+    expect(
+      (
+        document.querySelector(
+          '[aria-label="받는사람 전체 주소"]',
+        ) as HTMLElement
+      ).hidden,
+    ).toBe(true);
+
+    expect(
+      document.querySelectorAll(".recipient-details .recipient-address"),
+    ).toHaveLength(0);
+    fireEvent.click(
+      toSummary.querySelector(".recipient-toggle") as HTMLButtonElement,
+    );
+    expect(screen.getByText("body stays visible")).toBeInTheDocument();
+    const toDetails = screen.getByRole("region", {
+      name: "받는사람 전체 주소",
+    });
+    expect(toDetails).toHaveTextContent("Alias Person <AlIaS@Example.com>");
+    const toRows = Array.from(
+      toDetails.querySelectorAll(".recipient-address"),
+    ).map((address) => address.textContent);
+    expect(toRows[0]).toBe("First Recipient <first@example.com>");
+    expect(toRows.at(-1)).toBe("Alias Person <AlIaS@Example.com>");
+    expect(
+      (
+        ccSummary.querySelector(".recipient-toggle") as HTMLButtonElement
+      ).getAttribute("aria-expanded"),
+    ).toBe("false");
+
+    fireEvent.click(
+      ccSummary.querySelector(".recipient-toggle") as HTMLButtonElement,
+    );
+    expect(
+      screen.getByRole("region", { name: "참조 전체 주소" }),
+    ).toHaveTextContent("Copy Three <copy-three@example.com>");
+    fireEvent.click(
+      toSummary.querySelector(".recipient-toggle") as HTMLButtonElement,
+    );
+    expect(toDetails.querySelectorAll(".recipient-address")).toHaveLength(0);
+    expect(screen.getByText("body stays visible")).toBeInTheDocument();
+  });
+
+  it("highlights primary and send-as identities by exact case-insensitive email only", async () => {
+    threadMock.mockResolvedValue([
+      makeMessage("new", {
+        from: "Primary Person <PRIMARY@Example.com>",
+        to: [
+          "Same Name <other@example.com>",
+          "Alias Person <ALIAS@Example.com>",
+        ].join(", "),
+        cc: "Same Name <different@example.com>",
+        bodyHtml: null,
+        bodyText: "identity body",
+      }),
+    ]);
+    renderReader(vi.fn(), "new", ["primary@example.com", "alias@example.com"]);
+
+    expect(await screen.findByText("identity body")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Primary Person <PRIMARY@Example.com> (나)",
+      }),
+    ).toBeInTheDocument();
+    const alias = screen.getByRole("button", {
+      name: "Alias Person <ALIAS@Example.com> (나)",
+    });
+    expect(alias).toBeInTheDocument();
+    expect(alias.closest(".recipient-self")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("button", {
+          name: "Same Name <other@example.com>",
+        })
+        .closest(".recipient-self"),
+    ).toBeNull();
+    expect(
+      screen
+        .getByRole("button", {
+          name: "Same Name <different@example.com>",
+        })
+        .closest(".recipient-self"),
+    ).toBeNull();
+    expect(screen.getAllByText("나").length).toBe(2);
+  });
+});
+
+describe("thread folding", () => {
+  it("allows a single message to fold independently from recipient details", async () => {
+    threadMock.mockResolvedValue([
+      makeMessage("only", {
+        to: [
+          "First <first@example.com>",
+          "Second <second@example.com>",
+          "Third <third@example.com>",
+        ].join(", "),
+        bodyHtml: null,
+        bodyText: "single body",
+      }),
+    ]);
+    renderReader(vi.fn(), "only");
+
+    expect(await screen.findByText("single body")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("이 메일 접기"));
+    expect(screen.queryByText("single body")).toBeNull();
+    const peek = screen.getByRole("button", { name: /only direct/ });
+    fireEvent.click(peek);
+    expect(screen.getByText("single body")).toBeInTheDocument();
+
+    const toSummary = document.querySelector(
+      '[data-recipient-kind="받는사람"]',
+    ) as HTMLElement;
+    fireEvent.click(
+      toSummary.querySelector(".recipient-toggle") as HTMLButtonElement,
+    );
+    expect(screen.getByText("single body")).toBeInTheDocument();
   });
 });

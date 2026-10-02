@@ -19,8 +19,12 @@ export const DIALOG_SIZE_KEY = "mail.dialog.size";
 
 export function readDialogSizes(): Record<string, DialogSize> {
   try {
-    const raw = JSON.parse(localStorage.getItem(DIALOG_SIZE_KEY) ?? "{}") as unknown;
-    return raw && typeof raw === "object" ? (raw as Record<string, DialogSize>) : {};
+    const raw = JSON.parse(
+      localStorage.getItem(DIALOG_SIZE_KEY) ?? "{}",
+    ) as unknown;
+    return raw && typeof raw === "object"
+      ? (raw as Record<string, DialogSize>)
+      : {};
   } catch {
     return {};
   }
@@ -28,7 +32,9 @@ export function readDialogSizes(): Record<string, DialogSize> {
 
 export function useResizableDialog(key: string, minW: number, minH: number) {
   const ref = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState<DialogSize | null>(() => readDialogSizes()[key] ?? null);
+  const [size, setSize] = useState<DialogSize | null>(
+    () => readDialogSizes()[key] ?? null,
+  );
   const [maximized, setMaximized] = useState(false);
 
   const persist = useCallback(
@@ -68,7 +74,10 @@ export function useResizableDialog(key: string, minW: number, minH: number) {
       const move = (ev: globalThis.PointerEvent) => {
         // 팝업은 화면 정중앙 고정이라, 커서를 그대로 따라오게 하려면
         // 커서 이동량의 두 배만큼 커져야 한다(양쪽으로 반씩 자란다).
-        last = clampSize({ w: w0 + (ev.clientX - x0) * 2, h: h0 + (ev.clientY - y0) * 2 });
+        last = clampSize({
+          w: w0 + (ev.clientX - x0) * 2,
+          h: h0 + (ev.clientY - y0) * 2,
+        });
         setSize(last);
       };
       const up = () => {
@@ -103,7 +112,12 @@ export function useResizableDialog(key: string, minW: number, minH: number) {
   }, [persist]);
 
   const style: CSSProperties = maximized
-    ? { width: "calc(100vw - 24px)", height: "calc(100vh - 24px)", maxWidth: "none", maxHeight: "none" }
+    ? {
+        width: "calc(100vw - 24px)",
+        height: "calc(100vh - 24px)",
+        maxWidth: "none",
+        maxHeight: "none",
+      }
     : size
       ? { width: size.w, height: size.h, maxWidth: "none", maxHeight: "none" }
       : {};
@@ -161,11 +175,13 @@ export function DialogGrip({
 export function TriCheck({
   checked,
   indeterminate,
+  disabled,
   onChange,
   ariaLabel,
 }: {
   checked: boolean;
   indeterminate?: boolean;
+  disabled: boolean;
   onChange: () => void;
   ariaLabel?: string;
 }) {
@@ -178,6 +194,7 @@ export function TriCheck({
       ref={ref}
       type="checkbox"
       checked={checked}
+      disabled={disabled}
       onChange={onChange}
       aria-label={ariaLabel}
     />

@@ -81,7 +81,7 @@ test("app theme changes without recoloring or reloading received mail", async ({
   // 전환 직후 400ms는 색이 크로스페이드 중이다 — 끝 값으로 수렴할 때까지 기다린다.
   await expect(page.locator(".list").first()).toHaveCSS(
     "background-color",
-    "rgb(23, 27, 35)",
+    "rgb(23, 31, 46)",
   );
   expect(await bg(page, ".list")).not.toBe(lightList);
   await expect(page.locator("html")).not.toHaveClass(/theme-fade/);

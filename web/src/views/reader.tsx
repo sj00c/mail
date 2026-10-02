@@ -1,5 +1,13 @@
 // 읽기 화면: 목록 행, 대화 스레드, HTML/평문 본문 렌더러, 답장 대상 계산.
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   api,
   AuthError,
@@ -487,10 +495,11 @@ export function Reader({
           total={msgs.length}
           // 열어 본 메일 + 마지막 메일만 펼친 채 시작한다 (대화 하나가
           // 통째로 쏟아지지 않게). 나머지는 한 줄 요약 → 눌러서 확인.
-          collapsed={msgs.length > 1 && !expanded.has(tm.id)}
+          collapsed={!expanded.has(tm.id)}
           onToggle={toggleExpanded}
           guard={guard}
           onComposeTo={composeTo}
+          ownAddresses={ownAddresses}
         />
       ))}
     </div>
@@ -606,6 +615,131 @@ export function replyDepths(msgs: MessageFull[]): Map<string, number> {
   return out;
 }
 
+const RECIPIENT_SUMMARY_LIMIT = 2;
+
+function normalizedAddress(raw: string): string {
+  return parseAddr(raw).email.trim().toLowerCase();
+}
+
+function addressLabel(name: string, email: string): string {
+  return name && name !== email ? `${name} <${email}>` : email;
+}
+
+function RecipientAddress({
+  address,
+  self,
+  onComposeTo,
+}: {
+  address: { name: string; email: string };
+  self: boolean;
+  onComposeTo: (email: string) => void;
+}) {
+  const { name, email } = address;
+  const label = addressLabel(name, email);
+  return (
+    <span className={`recipient-row${self ? " recipient-self" : ""}`}>
+      {self && (
+        <span className="recipient-self-label" aria-label="내 주소">
+          나
+        </span>
+      )}
+      <button
+        type="button"
+        className="recipient-address"
+        title={`${label} · 이 주소로 새 메일`}
+        aria-label={self ? `${label} (나)` : label}
+        onClick={() => onComposeTo(email)}
+      >
+        {label}
+      </button>
+    </span>
+  );
+}
+
+export function RecipientHeader({
+  label,
+  value,
+  compact,
+  ownAddresses,
+  onComposeTo,
+}: {
+  label: string;
+  value: string;
+  compact: boolean;
+  ownAddresses: string[];
+  onComposeTo: (email: string) => void;
+}) {
+  const addresses = useMemo(() => splitAddrList(value), [value]);
+  const own = useMemo(
+    () => new Set(ownAddresses.map(normalizedAddress).filter(Boolean)),
+    [ownAddresses],
+  );
+  const parsed = useMemo(() => addresses.map(parseAddr), [addresses]);
+  const selfIndex = parsed.findIndex((addr) =>
+    own.has(addr.email.trim().toLowerCase()),
+  );
+  const summaryIndexes = useMemo(() => {
+    if (!compact || addresses.length <= RECIPIENT_SUMMARY_LIMIT) {
+      return addresses.map((_address, index) => index);
+    }
+    const indexes = Array.from(
+      { length: RECIPIENT_SUMMARY_LIMIT },
+      (_unused, index) => index,
+    );
+    if (selfIndex >= RECIPIENT_SUMMARY_LIMIT) indexes.push(selfIndex);
+    return indexes;
+  }, [addresses, compact, selfIndex]);
+  const omittedCount = compact ? addresses.length - summaryIndexes.length : 0;
+  const canExpand = compact && omittedCount > 0;
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = `${useId()}-recipient-details`;
+  const renderAddress = (index: number) => (
+    <RecipientAddress
+      key={`${index}-${addresses[index]}`}
+      address={parsed[index]}
+      self={own.has(parsed[index].email.trim().toLowerCase())}
+      onComposeTo={onComposeTo}
+    />
+  );
+
+  return (
+    <>
+      <div className="recipient-summary" data-recipient-kind={label}>
+        <span className="muted recipient-label">{label}:</span>
+        {summaryIndexes.map((index) => renderAddress(index))}
+        {addresses.length === 0 && (
+          <span className="recipient-row">(주소 없음)</span>
+        )}
+        {omittedCount > 0 && (
+          <span className="recipient-count">외 {omittedCount}명</span>
+        )}
+        {canExpand && (
+          <button
+            type="button"
+            className="recipient-toggle"
+            aria-expanded={expanded}
+            aria-controls={detailsId}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? "주소 접기" : `전체 주소 ${omittedCount}명 더 보기`}
+          </button>
+        )}
+      </div>
+      {canExpand && (
+        <div
+          id={detailsId}
+          className="recipient-details"
+          role="region"
+          aria-label={`${label} 전체 주소`}
+          hidden={!expanded}
+        >
+          {expanded && addresses.map((_address, index) => renderAddress(index))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export const ThreadMessage = memo(function ThreadMessage({
   m,
   depth,
@@ -615,6 +749,7 @@ export const ThreadMessage = memo(function ThreadMessage({
   onToggle,
   guard,
   onComposeTo,
+  ownAddresses,
 }: {
   m: MessageFull;
   depth: number;
@@ -624,6 +759,7 @@ export const ThreadMessage = memo(function ThreadMessage({
   onToggle: (id: string) => void;
   guard: (fn: () => Promise<void>) => Promise<void>;
   onComposeTo: (email: string) => void;
+  ownAddresses: string[];
 }) {
   // Inline (cid:) image parts → attachment URLs for the HTML body.
   const cidUrls = useMemo(() => {
@@ -707,18 +843,30 @@ export const ThreadMessage = memo(function ThreadMessage({
           <span className="thread-last">최신</span>
         )}
         <div className="thread-from">
-          <strong>{who.name}</strong>{" "}
-          <button
-            type="button"
-            className="addr-link muted"
-            title="이 주소로 새 메일"
-            onClick={() => onComposeTo(who.email)}
-          >
-            &lt;{who.email}&gt;
-          </button>
+          <RecipientHeader
+            label="보낸사람"
+            value={m.from}
+            compact={false}
+            ownAddresses={ownAddresses}
+            onComposeTo={onComposeTo}
+          />
         </div>
-        <div className="muted">받는사람: {m.to}</div>
-        {m.cc && <div className="muted">참조: {m.cc}</div>}
+        <RecipientHeader
+          label="받는사람"
+          value={m.to}
+          compact
+          ownAddresses={ownAddresses}
+          onComposeTo={onComposeTo}
+        />
+        {m.cc && (
+          <RecipientHeader
+            label="참조"
+            value={m.cc}
+            compact
+            ownAddresses={ownAddresses}
+            onComposeTo={onComposeTo}
+          />
+        )}
         <div className="muted">{DATETIME_FMT.format(new Date(m.date))}</div>
         <span className={`thread-read-state ${m.unread ? "unread" : "read"}`}>
           {m.unread ? "● 안읽음" : "○ 읽음"}

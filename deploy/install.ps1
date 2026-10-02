@@ -1,4 +1,4 @@
-﻿# Windows 원클릭 설치: 설정 확인 -> Bun/의존성 설치 -> 빌드 -> 자동 실행 등록.
+# Windows 원클릭 설치: 설정 확인 -> Bun/의존성 설치 -> 빌드 -> 자동 실행 등록.
 $ErrorActionPreference = "Stop"
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -9,6 +9,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
 $dir = (Resolve-Path "$PSScriptRoot\..").Path
 $run = Join-Path $dir "deploy\run.ps1"
 $task = "MailLocal"
+$taskPath = "\"
 $envFile = Join-Path $dir ".env"
 $logDir = Join-Path $env:LOCALAPPDATA "MailLocal"
 $log = Join-Path $logDir "mail.local.log"
@@ -18,7 +19,9 @@ $stage = "설정 확인"
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $stageStarted = 0.0
 $secrets = @()
-$serverStarted = $false
+$taskMutationStarted = $false
+$taskReplacementAttempted = $false
+$recoverySnapshot = $null
 
 function Write-InstallLog([string]$Message) {
   foreach ($secret in $script:secrets) {
@@ -147,40 +150,46 @@ try {
 
   Set-InstallStage "[4/5] 로그인 시 자동 실행 등록"
   # Use the same absolute Bun path as installation, not the scheduler's PATH.
-  $action = New-ScheduledTaskAction -Execute $powershell -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`"" -WorkingDirectory $dir
+  if (-not (Test-Path -LiteralPath $run -PathType Leaf)) { Stop-Install "deploy/run.ps1을 찾지 못했습니다. 설치 폴더를 확인하세요." }
+  $action = New-ScheduledTaskAction -Execute $powershell -Argument "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`"" -WorkingDirectory $dir
   $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+  $atLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+  # Omitting RepetitionDuration is the Task Scheduler representation of an
+  # indefinite repetition. The first trigger is intentionally immediate; the
+  # explicit Start-ScheduledTask below remains idempotent via IgnoreNew.
+  $periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
+  $triggers = @($atLogonTrigger, $periodicTrigger)
   $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-  # Windows Task Scheduler requires a restart interval of at least one minute.
   $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -MultipleInstances IgnoreNew -StartWhenAvailable `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
-  $existing = Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+  # Validate the exact root task and save its definition before any mutation.
+  # A task belonging to another checkout must never be overwritten silently.
+  $existing = Get-MailTask
   if ($existing) {
-    Stop-ScheduledTask -TaskName $task
-    $stopClock = [System.Diagnostics.Stopwatch]::StartNew()
-    while ((Get-ScheduledTask -TaskName $task).State -eq "Running") {
-      if ($stopClock.Elapsed.TotalSeconds -ge 10) { Stop-Install "기존 자동 실행을 종료하지 못했습니다." }
-      Start-Sleep -Milliseconds 250
-    }
+    Assert-MailTaskOwnership -Task $existing -RunPath $run
+    $recoverySnapshot = Export-MailTaskRecovery -Task $existing
+    $taskMutationStarted = $true
+    Stop-MailTask -RunPath $run -WaitTimeoutSeconds 10 -PollMilliseconds 250 | Out-Null
   }
   $occupant = Get-PortOccupant $port
   if ($occupant) {
     Stop-Install "$port 포트 점유: $occupant. 해당 프로그램을 확인하세요 (bun이라는 이름만으로 Mail이라고 단정할 수 없습니다). 다른 프로그램이라면 .env의 PORT와 OAUTH_REDIRECT를 함께 바꾸고 같은 주소를 Google Cloud 콘솔에 등록하세요."
   }
-  Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  $taskMutationStarted = $true
+  $taskReplacementAttempted = $true
+  Register-ScheduledTask -TaskName $task -TaskPath $taskPath -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
   # A fresh server log avoids showing errors from a previous installation.
   Set-Content -LiteralPath $log -Value "Mail server launch $(Get-Date -Format o)" -Encoding UTF8
   $startedAt = Get-Date
-  Start-ScheduledTask -TaskName $task
-  $serverStarted = $true
+  Start-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop
 
   Set-InstallStage "[5/5] 서버 응답 확인"
   $ready = Wait-MailServer -Url "http://127.0.0.1:$port/auth/status" -TaskName $task -StartedAt $startedAt -TimeoutSeconds $readyTimeout
   Write-InstallLog "응답 확인: $($ready.Reason), $($ready.ElapsedSeconds)초; 작업 상태=$($ready.TaskState); 결과=$($ready.TaskResult); $($ready.LastProbe)"
-  if ($ready.Reason -eq "exited") { Stop-Install "서버 작업이 종료됐거나 비활성화됐습니다. 아래 서버 로그를 확인하세요." }
+  if ($ready.Reason -eq "missing" -or $ready.Reason -eq "exited") { Stop-Install "서버 작업이 종료됐거나 비활성화됐습니다. 아래 서버 로그를 확인하세요." }
   if ($ready.Reason -ne "ready") { Stop-Install "서버 응답 확인 시간 초과 (${readyTimeout}초). 자동 실행이 늦은 것인지, 서버 오류인지 아래 작업 상태와 로그로 확인해야 합니다." }
   Set-InstallStage "설치 완료"
   Write-InstallLog "설치가 끝났습니다. 주소: $appUrl"
@@ -192,15 +201,31 @@ try {
 catch {
   $failure = $_.Exception.Message
   try {
+    if ($taskMutationStarted) {
+      if ($null -ne $recoverySnapshot) {
+        $restored = Restore-MailTaskRecovery -Snapshot $recoverySnapshot -RunPath $run -StateOnly:(-not $taskReplacementAttempted)
+        Write-InstallLog $restored.Message
+      }
+      else {
+        # There was no prior task to restore. Remove only an owned task that
+        # may have been partially registered, never an unrelated task.
+        try {
+          $fresh = Get-MailTask
+          if ($fresh -and (Test-MailTaskOwnership -Task $fresh -RunPath $run)) {
+            Stop-MailTask -RunPath $run -WaitTimeoutSeconds 10 -PollMilliseconds 250 | Out-Null
+            Unregister-ScheduledTask -TaskName $task -TaskPath $taskPath -Confirm:$false -ErrorAction Stop
+          }
+        }
+        catch { Write-InstallLog "새 작업 정리 실패: $($_.Exception.Message)" }
+      }
+    }
     Write-InstallLog "설치 실패 단계: $stage"
     Write-InstallLog $failure
-    if ($serverStarted) {
-      $info = Get-ScheduledTaskInfo -TaskName $task -ErrorAction SilentlyContinue
-      if ($info) { Write-InstallLog ("작업 종료 코드: {0} (0x{0:X8}); 마지막 실행: {1:o}" -f [long]$info.LastTaskResult, $info.LastRunTime) }
-      if (Test-Path -LiteralPath $log) {
-        Write-InstallLog "---- 서버 로그 마지막 25줄 ----"
-        Get-Content -LiteralPath $log -Encoding UTF8 -Tail 25 | ForEach-Object { Write-InstallLog $_ }
-      }
+    $info = Get-ScheduledTaskInfo -TaskName $task -TaskPath $taskPath -ErrorAction SilentlyContinue
+    if ($info) { Write-InstallLog ("작업 종료 코드: {0} (0x{0:X8}); 마지막 실행: {1:o}" -f [long]$info.LastTaskResult, $info.LastRunTime) }
+    if (Test-Path -LiteralPath $log) {
+      Write-InstallLog "---- 서버 로그 마지막 25줄 ----"
+      Get-Content -LiteralPath $log -Encoding UTF8 -Tail 25 | ForEach-Object { Write-InstallLog $_ }
     }
   }
   catch { Write-Host "진단 로그 기록에도 실패했습니다. 설치 폴더와 로그 폴더 권한을 확인하세요." -ForegroundColor Red }
