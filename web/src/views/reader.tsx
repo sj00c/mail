@@ -43,6 +43,7 @@ import {
   StarIcon,
   TrashIcon,
 } from "../ui/icons.tsx";
+import { loadThread, peekThread, prefetchThread } from "../lib/threadCache.ts";
 import type { ComposeInit } from "./compose.tsx";
 
 // 목록/카드에 표시할 상대방: 보낸함·임시보관함(내가 보낸 것)은 받는사람을,
@@ -60,6 +61,19 @@ export function listParty(m: MessageSummary): { name: string; email: string } {
   const name =
     toks.length > 1 ? `${first.name} 외 ${toks.length - 1}명` : first.name;
   return { name, email: first.email };
+}
+
+// Hovering a row long enough to read it starts loading the thread, so the
+// click usually finds it already cached. Brief passes while moving the
+// pointer across the list do not fire requests.
+const PREFETCH_DWELL_MS = 90;
+let prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+function schedulePrefetch(threadId: string) {
+  clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(() => prefetchThread(threadId), PREFETCH_DWELL_MS);
+}
+function cancelPrefetch() {
+  clearTimeout(prefetchTimer);
 }
 
 export const MessageRow = memo(function MessageRow({
@@ -86,6 +100,9 @@ export const MessageRow = memo(function MessageRow({
       }`}
       role="button"
       tabIndex={0}
+      onPointerEnter={() => schedulePrefetch(m.threadId)}
+      onPointerLeave={cancelPrefetch}
+      onFocus={() => schedulePrefetch(m.threadId)}
       onClick={() => onSelect(m.id, m.threadId)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -189,14 +206,26 @@ export function Reader({
     // view while the action buttons still target the new `id` — 삭제/보관
     // would silently operate on a different mail than the one displayed.
     let cancelled = false;
-    setMsg(null);
-    setThread(null);
     setLoadErr(null);
+    // A thread seen or prefetched before renders immediately; the request
+    // below (cached while fresh) then confirms or replaces it.
+    const shown = peekThread(threadId);
+    const shownMsg = shown?.find((x) => x.id === id);
+    const show = (msgs: MessageFull[], m: MessageFull) => {
+      setMsg(m);
+      setThread(msgs);
+      setExpanded(new Set([m.id, msgs[msgs.length - 1].id]));
+    };
+    if (shown && shownMsg) show(shown, shownMsg);
+    else {
+      setMsg(null);
+      setThread(null);
+    }
     void (async () => {
       try {
         // One round-trip: the thread already contains the opened message
         // (previously message + thread were fetched, duplicating the payload).
-        const msgs = await api.thread(threadId);
+        const msgs = await loadThread(threadId);
         if (cancelled) return;
         const m = msgs.find((x) => x.id === id);
         if (!m) {
@@ -204,9 +233,8 @@ export function Reader({
           setLoadErr("메시지를 찾을 수 없습니다. 목록을 새로고침하세요.");
           return;
         }
-        setMsg(m);
-        setThread(msgs);
-        setExpanded(new Set([m.id, msgs[msgs.length - 1].id]));
+        // Same messages already on screen: keep the rendered iframes as-is.
+        if (msgs !== shown) show(msgs, m);
         if (m.unread) {
           try {
             await api.modify(m.id, { remove: ["UNREAD"] });

@@ -151,6 +151,46 @@ describe("useMailList", () => {
     expect(result.current.messages.map((item) => item.id)).toEqual(["replacement"]);
   });
 
+  it("shows a revisited view's last rows instantly and replaces them with the refetch", async () => {
+    const refetch = deferred<ReturnType<typeof response>>();
+    messages
+      .mockResolvedValueOnce(response([message("inbox-1"), message("inbox-2")], "in-2"))
+      .mockResolvedValueOnce(response([message("star-1")]))
+      .mockReturnValueOnce(refetch.promise);
+    const guard = (task: () => Promise<void>) => void task();
+    const { result, rerender } = renderHook(
+      ({ label }) => useMailList(label, "", guard),
+      { initialProps: { label: "INBOX" } },
+    );
+    // App's label effect: reset, then load the first page.
+    const open = async () => {
+      act(() => result.current.reset());
+      await act(async () => result.current.load(true));
+    };
+
+    await open();
+    act(() => result.current.removeMessage("inbox-2"));
+    rerender({ label: "STARRED" });
+    // The STARRED view never inherits INBOX rows, even before its fetch lands.
+    act(() => result.current.reset());
+    expect(result.current.messages).toEqual([]);
+    await act(async () => result.current.load(true));
+    expect(result.current.messages.map((m) => m.id)).toEqual(["star-1"]);
+
+    rerender({ label: "INBOX" });
+    act(() => result.current.reset());
+    // Snapshot reflects the optimistic removal made while it was on screen.
+    expect(result.current.messages.map((m) => m.id)).toEqual(["inbox-1"]);
+    expect(result.current.nextToken).toBe("in-2");
+    act(() => result.current.load(true));
+    expect(result.current.loading).toBe(true);
+    expect(result.current.messages.map((m) => m.id)).toEqual(["inbox-1"]);
+
+    await act(async () => refetch.resolve(response([message("inbox-new"), message("inbox-1")])));
+    expect(result.current.messages.map((m) => m.id)).toEqual(["inbox-new", "inbox-1"]);
+    expect(result.current.nextToken).toBeUndefined();
+  });
+
   it("does not let an append supersede a pending reset", async () => {
     const reset = deferred<ReturnType<typeof response>>();
     messages

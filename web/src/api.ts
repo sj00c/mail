@@ -123,6 +123,24 @@ export class HttpError extends Error {
   }
 }
 
+// Confirmed mail mutations, for client caches (lib/threadCache.ts) that must
+// not serve stale threads. Published only after the server accepted the call.
+export type MailMutation =
+  | { kind: "labels"; ids: string[]; add?: string[]; remove?: string[] }
+  | { kind: "removed"; ids: string[] }
+  | { kind: "unknown" };
+const mutationListeners = new Set<(m: MailMutation) => void>();
+export function onMailMutation(listener: (m: MailMutation) => void): () => void {
+  mutationListeners.add(listener);
+  return () => mutationListeners.delete(listener);
+}
+function after<T>(p: Promise<T>, mutation: MailMutation): Promise<T> {
+  return p.then((value) => {
+    for (const listener of mutationListeners) listener(mutation);
+    return value;
+  });
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -149,7 +167,10 @@ export type Contact = { name: string; email: string };
 
 export const api = {
   authStatus: () => req<{ authed: boolean }>("/auth/status"),
-  logout: () => req<{ ok: boolean }>("/auth/logout", { method: "POST" }),
+  logout: () =>
+    after(req<{ ok: boolean }>("/auth/logout", { method: "POST" }), {
+      kind: "unknown",
+    }),
   profile: () => req<MailProfile>("/api/profile"),
   labels: () => req<Label[]>("/api/labels"),
   contacts: () => req<Contact[]>("/api/contacts"),
@@ -205,22 +226,34 @@ export const api = {
   },
   thread: (id: string) => req<MessageFull[]>(`/api/threads/${id}`),
   modify: (id: string, body: { add?: string[]; remove?: string[] }) =>
-    req<{ ok: boolean }>(`/api/messages/${id}/modify`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    after(
+      req<{ ok: boolean }>(`/api/messages/${id}/modify`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      { kind: "labels", ids: [id], ...body },
+    ),
   trash: (id: string) =>
-    req<{ ok: boolean }>(`/api/messages/${id}/trash`, { method: "POST" }),
+    after(
+      req<{ ok: boolean }>(`/api/messages/${id}/trash`, { method: "POST" }),
+      { kind: "removed", ids: [id] },
+    ),
   batchModify: (ids: string[], body: { add?: string[]; remove?: string[] }) =>
-    req<{ ok: boolean }>("/api/messages/batchModify", {
-      method: "POST",
-      body: JSON.stringify({ ids, ...body }),
-    }),
+    after(
+      req<{ ok: boolean }>("/api/messages/batchModify", {
+        method: "POST",
+        body: JSON.stringify({ ids, ...body }),
+      }),
+      { kind: "labels", ids, ...body },
+    ),
   batchTrash: (ids: string[]) =>
-    req<{ ok: boolean }>("/api/messages/batchTrash", {
-      method: "POST",
-      body: JSON.stringify({ ids }),
-    }),
+    after(
+      req<{ ok: boolean }>("/api/messages/batchTrash", {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      }),
+      { kind: "removed", ids },
+    ),
   prepareBulkAll: (body: {
     q?: string;
     label?: string;
@@ -234,12 +267,15 @@ export const api = {
       },
     ),
   confirmBulkAll: (operationId: string) =>
-    req<{ matched: number; succeeded: number; failed: number }>(
-      "/api/messages/bulkAll/confirm",
-      {
-        method: "POST",
-        body: JSON.stringify({ operationId }),
-      },
+    after(
+      req<{ matched: number; succeeded: number; failed: number }>(
+        "/api/messages/bulkAll/confirm",
+        {
+          method: "POST",
+          body: JSON.stringify({ operationId }),
+        },
+      ),
+      { kind: "unknown" },
     ),
   send: (body: {
     to: string;
@@ -256,10 +292,13 @@ export const api = {
     attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
     driveAttachments?: { filename: string; mimeType: string; data: string }[];
   }) =>
-    req<{ id: string; threadId: string }>("/api/send", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    after(
+      req<{ id: string; threadId: string }>("/api/send", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      { kind: "unknown" },
+    ),
   saveDraft: (body: {
     to: string;
     cc?: string;
@@ -274,10 +313,13 @@ export const api = {
     references?: string;
     attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
   }) =>
-    req<{ id: string }>("/api/draft", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    after(
+      req<{ id: string }>("/api/draft", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      { kind: "unknown" },
+    ),
   draftByMessage: (messageId: string) =>
     req<{ draftId: string }>(`/api/drafts/by-message/${messageId}`),
   updateDraft: (
@@ -297,14 +339,20 @@ export const api = {
       attachments?: { filename: string; mimeType: string; data: string; contentId?: string }[];
     },
   ) =>
-    req<{ id: string }>(`/api/drafts/${encodeURIComponent(draftId)}`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
+    after(
+      req<{ id: string }>(`/api/drafts/${encodeURIComponent(draftId)}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+      { kind: "unknown" },
+    ),
   deleteDraft: (draftId: string) =>
-    req<{ ok: boolean }>(`/api/drafts/${encodeURIComponent(draftId)}/delete`, {
-      method: "POST",
-    }),
+    after(
+      req<{ ok: boolean }>(`/api/drafts/${encodeURIComponent(draftId)}/delete`, {
+        method: "POST",
+      }),
+      { kind: "unknown" },
+    ),
   signature: () => req<{ html: string }>("/api/signature"),
   accountSettings: () => req<AccountSettings>("/api/settings/account"),
   attachmentUrl: (id: string, aid: string, filename: string) =>

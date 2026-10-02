@@ -1,10 +1,20 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, AuthError, type MessageSummary } from "../api.ts";
 
 type Guard = (fn: () => Promise<void>) => void;
 export function shouldRemoveArchivedMessage(activeLabel: string, query: string) {
   return activeLabel === "INBOX" && query.length === 0;
 }
+
+// Last loaded page per mailbox view. Returning to a label shows these rows at
+// once while the first page is refetched; the fetch then replaces them.
+type ListSnapshot = {
+  messages: MessageSummary[];
+  nextToken?: string;
+  totalEstimate: number;
+};
+const MAX_VIEWS = 12;
+const viewKey = (label: string, query: string) => `${label}\u0000${query}`;
 
 export function useMailList(activeLabel: string, query: string, guard: Guard) {
   const [messages, setMessages] = useState<MessageSummary[]>([]);
@@ -18,6 +28,11 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
   const loadSeq = useRef(0);
   const appendInFlight = useRef(new Map<string, number>());
   const resetInFlight = useRef<number | null>(null);
+  const snapshots = useRef(new Map<string, ListSnapshot>());
+  // The view the rows in `messages` belong to. labelRef switches during the
+  // render that changes labels, before reset() swaps the rows, so it cannot
+  // be used to file a snapshot.
+  const ownerKey = useRef(viewKey(activeLabel, query));
 
   messagesRef.current = messages;
   labelRef.current = activeLabel;
@@ -53,6 +68,7 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
               pageToken,
             });
             if (seq !== loadSeq.current) return;
+            ownerKey.current = viewKey(label, query);
             const nextMessages = reset
               ? res.messages
               : (() => {
@@ -89,11 +105,26 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
     ++loadSeq.current;
     resetInFlight.current = null;
     appendInFlight.current.clear();
-    messagesRef.current = [];
-    nextTokenRef.current = undefined;
-    setMessages([]);
-    setNextToken(undefined);
+    ownerKey.current = viewKey(labelRef.current, queryRef.current);
+    const hit = snapshots.current.get(ownerKey.current);
+    messagesRef.current = hit?.messages ?? [];
+    nextTokenRef.current = hit?.nextToken;
+    setMessages(messagesRef.current);
+    setNextToken(nextTokenRef.current);
+    setTotalEstimate(hit?.totalEstimate ?? 0);
   }, []);
+
+  // Keep the snapshot of the current view in step with every confirmed
+  // change (pages, optimistic patches, removals). While a reset is in flight
+  // the rows on screen are a snapshot themselves, so nothing is written back.
+  useEffect(() => {
+    if (resetInFlight.current !== null) return;
+    const key = ownerKey.current;
+    const map = snapshots.current;
+    map.delete(key);
+    map.set(key, { messages, nextToken, totalEstimate });
+    while (map.size > MAX_VIEWS) map.delete(map.keys().next().value!);
+  }, [messages, nextToken, totalEstimate]);
   const patchMessage = useCallback((id: string, patch: Partial<MessageSummary>) => {
     setMessages((prev) => prev.map((message) => (message.id === id ? { ...message, ...patch } : message)));
   }, []);

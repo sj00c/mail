@@ -23,6 +23,7 @@ import {
 import { downloadAttachment } from "./lib/attachments.ts";
 import { avatarColor, DATETIME_FMT } from "./lib/format.tsx";
 import { htmlToText, textToHtml } from "./lib/mailHtml.ts";
+import { prefetchThread } from "./lib/threadCache.ts";
 import {
   ACCOUNT_KEY,
   SIGNATURE_HTML_KEY,
@@ -881,6 +882,10 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             // 드래프트 행은 건너뛴다 — 선택이 곧 편집기 오픈이라 순회를 끊는다.
             if (list[i].labelIds.includes("DRAFT")) continue;
             setSelected({ id: list[i].id, threadId: list[i].threadId });
+            // Load the following mail in the same direction ahead of the next key.
+            const ahead = list[i + dir];
+            if (ahead && !ahead.labelIds.includes("DRAFT"))
+              prefetchThread(ahead.threadId);
             return;
           }
           // 마지막 행에서 j: 다음 페이지를 이어서 불러온다 (무한 스크롤과 동일).

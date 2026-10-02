@@ -42,6 +42,7 @@ vi.mock("../lib/attachments.ts", async () => {
 
 import { buildQuotedHtml, type ComposeInit } from "./compose.tsx";
 import { Reader } from "./reader.tsx";
+import { dropCachedThreads } from "../lib/threadCache.ts";
 
 const makeMessage = (
   id: string,
@@ -111,7 +112,11 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // Fixtures reuse thread ids across tests; each test starts uncached.
+  dropCachedThreads();
+});
 
 describe("Reader forwarding", () => {
   it("forwards every message newest-first with flat boundaries and namespaced CIDs", async () => {
