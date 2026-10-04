@@ -1,4 +1,4 @@
-﻿# Shared by the Windows installer, manual control entrypoint, and regression
+# Shared by the Windows installer, manual control entrypoint, and regression
 # tests (PowerShell 5.1+).
 
 $script:MailTaskName = "MailLocal"
@@ -20,12 +20,12 @@ function Get-MailTaskInfo {
 function Get-MailTaskEnabled([object]$Task) {
   if ($null -eq $Task -or $null -eq $Task.Settings -or
     $null -eq $Task.Settings.PSObject.Properties["Enabled"]) {
-    throw "작업의 Enabled 상태를 읽지 못했습니다."
+    throw "Could not read the task's Enabled state."
   }
   if ($Task.Settings.Enabled -is [bool]) { return [bool]$Task.Settings.Enabled }
   $parsed = $false
   if ([bool]::TryParse([string]$Task.Settings.Enabled, [ref]$parsed)) { return $parsed }
-  throw "작업의 Enabled 상태를 해석하지 못했습니다."
+  throw "Could not parse the task's Enabled state."
 }
 
 function ConvertTo-MailFullPath([string]$Path) {
@@ -65,7 +65,7 @@ function Assert-MailTaskOwnership {
     [Parameter(Mandatory = $true)][string]$RunPath
   )
   if (-not (Test-MailTaskOwnership -Task $Task -RunPath $RunPath)) {
-    throw "루트 MailLocal 작업이 다른 deploy/run.ps1을 가리킵니다. 기존 설치 폴더에서 deploy\uninstall.ps1을 실행한 뒤 이 폴더에서 다시 설치하세요."
+    throw "MailLocal points to another deploy/run.ps1. Run deploy\uninstall.ps1 from the previous installation folder before installing here."
   }
 }
 
@@ -80,11 +80,11 @@ function Export-MailTaskRecovery {
   try {
     $snapshot.Definition = [string](Export-ScheduledTask -TaskName $script:MailTaskName -TaskPath $script:MailTaskPath -ErrorAction Stop)
     if ([string]::IsNullOrWhiteSpace($snapshot.Definition)) {
-      throw "빈 작업 정의"
+      throw "Empty task definition."
     }
   }
   catch {
-    throw "기존 작업 정의를 저장하지 못해 안전하게 교체할 수 없습니다."
+    throw "Could not save the existing task definition. Replacement stopped to protect the existing installation."
   }
   return [pscustomobject]$snapshot
 }
@@ -96,7 +96,7 @@ function Restore-MailTaskRecovery {
     [switch]$StateOnly
   )
   if ([string]::IsNullOrWhiteSpace([string]$Snapshot.Definition)) {
-    return [pscustomobject]@{ Succeeded = $false; Message = "기존 작업 정의가 없어 복구를 시도하지 않았습니다." }
+    return [pscustomobject]@{ Succeeded = $false; Message = "Recovery skipped: no previous task definition is available." }
   }
   try {
     $current = Get-MailTask
@@ -123,17 +123,17 @@ function Restore-MailTaskRecovery {
         Start-ScheduledTask -TaskName $script:MailTaskName -TaskPath $script:MailTaskPath -ErrorAction Stop
       }
     }
-    $message = "기존 작업 정의와 Enabled 상태를 복구하고 이전 실행 재시작을 요청했습니다."
+    $message = "Restored the previous task definition and Enabled state; restart requested."
     if (-not $Snapshot.Active) {
-      $message = "기존 작업 정의와 Enabled 상태를 복구했습니다. 이전 실행은 활성 상태로 관찰되지 않았습니다."
+      $message = "Restored the previous task definition and Enabled state. The previous task was not active."
     }
     elseif (-not $Snapshot.Enabled) {
-      $message = "기존 작업 정의와 비활성 Enabled 상태를 복구했습니다. 의도적으로 비활성화된 이전 실행은 재시작하지 않았습니다."
+      $message = "Restored the previous task definition and disabled state. The intentionally disabled task was not restarted."
     }
     return [pscustomobject]@{ Succeeded = $true; Message = $message }
   }
   catch {
-    return [pscustomobject]@{ Succeeded = $false; Message = "기존 작업 복구 실패: $($_.Exception.Message)" }
+    return [pscustomobject]@{ Succeeded = $false; Message = "Previous task recovery failed: $($_.Exception.Message)" }
   }
 }
 
@@ -175,10 +175,10 @@ function Stop-MailTask {
   if ([double]::IsNaN($WaitTimeoutSeconds) -or
     [double]::IsInfinity($WaitTimeoutSeconds) -or
     $WaitTimeoutSeconds -le 0) {
-    throw "작업 종료 대기 시간은 0보다 큰 유한한 숫자여야 합니다."
+    throw "WaitTimeoutSeconds must be a finite number greater than zero."
   }
   if ($PollMilliseconds -lt 1) {
-    throw "작업 상태 확인 간격은 1밀리초 이상이어야 합니다."
+    throw "PollMilliseconds must be at least one."
   }
   $current = Get-MailTask
   if ($null -eq $current) {
@@ -208,7 +208,7 @@ function Stop-MailTask {
     }
   }
   finally { $clock.Stop() }
-  throw "자동 실행 작업이 종료되지 않았습니다 (${WaitTimeoutSeconds}초 대기 후에도 인스턴스가 활성입니다)."
+  throw "Scheduled task did not stop: instances remain active after ${WaitTimeoutSeconds}s."
 }
 
 function Wait-MailServer {

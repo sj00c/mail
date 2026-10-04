@@ -1,5 +1,6 @@
-param([switch]$Integration)
+param([switch]$Integration, [switch]$LoggingOnly)
 $ErrorActionPreference = "Stop"
+if ($Integration -and $LoggingOnly) { throw "Integration and LoggingOnly cannot be combined." }
 . (Join-Path $PSScriptRoot "windows-readiness.ps1")
 
 function Assert($Condition, [string]$Message) {
@@ -10,10 +11,8 @@ function Assert($Condition, [string]$Message) {
 # Parse all deployment scripts, including the real entrypoints, on PS 5.1/7.
 foreach ($file in Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.ps1) {
   $bytes = [IO.File]::ReadAllBytes($file.FullName)
-  if ([Text.Encoding]::UTF8.GetString($bytes) -match '[^\x00-\x7F]') {
-    # PowerShell 5.1 otherwise reads UTF-8 Korean strings as the ANSI codepage.
-    Assert ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) "Non-ASCII PowerShell script has a UTF-8 BOM: $($file.Name)"
-  }
+  $text = [Text.Encoding]::UTF8.GetString($bytes)
+  Assert ($text -notmatch '[^\x00-\x7F]') "Deployment script stays codepage-independent: $($file.Name)"
   $tokens = $null
   $errors = $null
   $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
@@ -91,18 +90,12 @@ Assert ($actionCommands.Count -eq 1) "Production installer has one scheduler act
 if ($actionCommands.Count -eq 1) {
   Assert ($actionCommands[0].Extent.Text -match '-WindowStyle\s+Hidden') "Scheduled login action hides the PowerShell window"
 }
-$triggerCommands = @($installerAst.FindAll({
-    param($node)
-    $node -is [System.Management.Automation.Language.CommandAst] -and
-      $node.GetCommandName() -eq "New-ScheduledTaskTrigger"
-  }, $true))
-Assert ($triggerCommands.Count -eq 1) "Production installer has one scheduler trigger command"
-if ($triggerCommands.Count -eq 1) {
-  $atLogOn = @($triggerCommands[0].CommandElements | Where-Object {
-      $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq "AtLogOn"
-    })
-  Assert ($atLogOn.Count -eq 1) "Scheduled login action triggers at user logon"
-}
+$atLogOn = @($triggerCommands | Where-Object {
+    @($_.CommandElements | Where-Object {
+        $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq "AtLogOn"
+      }).Count -eq 1
+  })
+Assert ($atLogOn.Count -eq 1) "Scheduled login action triggers at user logon"
 $principalCommands = @($installerAst.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.CommandAst] -and
@@ -122,7 +115,7 @@ try {
   $tokens = $null
   $errors = $null
   $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot "install.ps1"), [ref]$tokens, [ref]$errors)
-  foreach ($name in @("Write-InstallLog", "Stop-Install", "Invoke-InstallCommand", "Get-PortOccupant")) {
+  foreach ($name in @("Write-InstallLog", "Set-InstallStage", "Stop-Install", "Invoke-InstallCommand", "Get-PortOccupant")) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     . ([scriptblock]::Create($definition.Extent.Text))
   }
@@ -130,10 +123,38 @@ try {
   $script:clock = [Diagnostics.Stopwatch]::StartNew()
   $script:secrets = @("test-client-secret")
   $script:bun = (Get-Process -Id $PID).Path
-  Invoke-InstallCommand -Executable $bun -CommandArgs @("-NoProfile", "-Command", "[Console]::Error.WriteLine('normal progress test-client-secret'); exit 0")
+  $consoleOutput = @(Invoke-InstallCommand -Executable $bun -CommandArgs @("-NoProfile", "-Command", "[Console]::Error.WriteLine('normal progress test-client-secret'); exit 0") 6>&1)
+  Assert ($consoleOutput.Count -eq 0) "Verbose native output stays in the log, not the console"
   $logged = Get-Content -LiteralPath $installLog -Raw
   Assert ($logged.Contains("normal progress [REDACTED]")) "Native stderr is logged and credentials are redacted"
   Assert (-not $logged.Contains("test-client-secret")) "Secret is absent from install log"
+  $failureOutput = @(Write-InstallLog "Failed test-client-secret" -Level FAIL 6>&1)
+  Assert (($failureOutput -join "`n") -match 'FAIL\s+Failed \[REDACTED\]') "Console failures have a level and redact credentials"
+  $escape = [char]27
+  Write-InstallLog "${escape}[31mNative warning${escape}[0m" -Level DETAIL
+  $logged = Get-Content -LiteralPath $installLog -Raw
+  Assert (-not $logged.Contains([string]$escape) -and $logged.Contains("Native warning")) "File logs remove ANSI controls without dropping warnings"
+  $script:stage = "[1/6] Configuration"
+  $script:stageStarted = 0.0
+  $stageOutput = @(Set-InstallStage "[2/6] Runtime" 6>&1)
+  Assert (($stageOutput -join "`n") -match 'OK\s+\[1/6\] Configuration \([\d.,]+s\)') "Completed stages report duration"
+  Assert (($stageOutput -join "`n") -match 'RUN\s+\[2/6\] Runtime') "The current stage is visible before work starts"
+  Assert ($script:stage -eq "[2/6] Runtime") "Failure context tracks the current stage"
+  # Exercise the actual placeholder regex constants, including the Korean
+  # prefix represented by ASCII regex escapes in the production script.
+  $patterns = @($ast.FindAll({
+      param($node)
+      $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+        $node.Value.StartsWith("^(your-")
+    }, $true))
+  Assert ($patterns.Count -eq 2) "Both OAuth values are checked for placeholders"
+  $localizedPlaceholder = ([string][char]0xC5EC) + [char]0xAE30 + [char]0xC5D0 + "_value"
+  foreach ($pattern in $patterns) {
+    Assert ("your-client" -match $pattern.Value) "English placeholders are rejected"
+    Assert ($localizedPlaceholder -match $pattern.Value) "Localized placeholders are rejected without codepage dependence"
+    Assert ("PLACEHOLDER" -match $pattern.Value) "Explicit placeholders are rejected"
+    Assert ("real-client.apps.googleusercontent.com" -notmatch $pattern.Value) "Non-placeholder credentials pass this check"
+  }
   $failed = $false
   try { Invoke-InstallCommand -Executable $bun -CommandArgs @("-NoProfile", "-Command", "exit 7") } catch { $failed = $_.Exception.Message.Contains("7") }
   Assert $failed "Nonzero native exit fails the installation"
@@ -141,6 +162,49 @@ try {
   $failed = $false
   try { Invoke-InstallCommand -Executable $bun -CommandArgs @("--version") } catch { $failed = $true }
   Assert $failed "Missing executable cannot reuse a previous successful exit code"
+
+  # Exercise early failure reporting with the real installer body. Only the
+  # OS entry guard is removed in this temporary fixture; invalid configuration
+  # must exit before any Windows scheduler/runtime operation can be reached.
+  $configRoot = Join-Path $temp "configuration-fixture"
+  $configDeploy = Join-Path $configRoot "deploy"
+  $configLogs = Join-Path $configRoot "local"
+  New-Item -ItemType Directory -Force -Path $configDeploy, (Join-Path $configLogs "MailLocal") | Out-Null
+  $installerSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot "install.ps1") -Raw
+  $guard = @($ast.EndBlock.Statements | Where-Object {
+      $_ -is [System.Management.Automation.Language.IfStatementAst] -and
+      $_.Extent.Text -match 'OSVersion.Platform'
+    })
+  Assert ($guard.Count -eq 1) "Configuration fixture bypasses only the OS entry guard"
+  $installerSource.Replace($guard[0].Extent.Text, "") |
+    Set-Content -LiteralPath (Join-Path $configDeploy "install.ps1") -Encoding UTF8
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot "windows-readiness.ps1") -Destination $configDeploy
+  $staleLog = Join-Path $configLogs "MailLocal/mail.local.log"
+  Set-Content -LiteralPath $staleLog -Value "OLD SERVER 403 -- unrelated to this install" -Encoding UTF8
+  $oldLocalAppData = $env:LOCALAPPDATA
+  try {
+    $env:LOCALAPPDATA = $configLogs
+    $hostExecutable = (Get-Process -Id $PID).Path
+    $configOutput = @(& $hostExecutable -NoProfile -File (Join-Path $configDeploy "install.ps1"))
+    Assert ($LASTEXITCODE -eq 1) "Missing configuration fails the real installer"
+    $configText = $configOutput -join "`n"
+    Assert ($configText -match 'FAIL\s+\[1/6\] Configuration') "Failure summary names the actual stage"
+    Assert ($configText -match '\.env is missing') "Failure includes actionable configuration guidance"
+    $configLog = Get-Content -LiteralPath (Join-Path $configLogs "MailLocal/install.log") -Raw
+    Assert ($configText -notmatch 'OLD SERVER|403|Server log:' -and $configLog -notmatch 'OLD SERVER|403') "Early failures do not surface stale server errors"
+    Assert ((Get-Content -LiteralPath $staleLog -Raw) -match 'OLD SERVER') "Early failures leave the previous server log intact"
+  }
+  finally {
+    if ($null -eq $oldLocalAppData) { Remove-Item Env:LOCALAPPDATA -ErrorAction SilentlyContinue }
+    else { $env:LOCALAPPDATA = $oldLocalAppData }
+  }
+
+  # Focused portable coverage; the default suite still executes all Windows
+  # job-object and scheduler tests unchanged.
+  if ($LoggingOnly) {
+    Write-Host "PASS: Portable installer logging checks complete (Windows lifecycle not exercised)"
+    exit 0
+  }
 
   $hostExecutable = (Get-Process -Id $PID).Path
   $launchLog = Join-Path $temp "server.log"
@@ -511,7 +575,7 @@ await new Promise(() => {});
       Active = $true
     }) -RunPath $script:uninstallRunPath
   Assert ($restoreResult.Succeeded -and $script:restoreRegisterCalls -eq 1 -and $script:restoreObservedStopped) "Rollback stops the owned replacement before restoring XML"
-  Assert ($script:restoreStartCalls -eq 0 -and $restoreResult.Message -match "비활성") "Rollback preserves an intentionally disabled task"
+  Assert ($script:restoreStartCalls -eq 0 -and $restoreResult.Message -match "disabled") "Rollback preserves an intentionally disabled task"
 
   # A failed stop before replacement must restore Enabled, not retry the
   # same failing stop and leave the original task permanently disabled.
@@ -587,7 +651,7 @@ await new Promise(() => {});
   $script:uninstallState = "Disabled"
   $script:lingeringInstance = $true
   $failed = $false
-  try { Restart-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "종료되지 않았습니다" }
+  try { Restart-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "did not stop" }
   Assert ($failed -and $script:controlDisabled -and $script:restoreStartCalls -eq 1) "Restart refuses to overlap an instance hidden by Disabled state"
   $script:lingeringInstance = $false
   Restart-ControlTask -Port 8787
@@ -619,7 +683,7 @@ await new Promise(() => {});
     $discoveryBefore = $script:uninstallDiscoveryCalls
     $errorText = ""
     try { & $uninstallScript -WaitTimeoutSeconds $timeout } catch { $errorText = $_.Exception.Message }
-    Assert ($errorText -match "유한한 숫자") "Invalid uninstall timeout is rejected"
+    Assert ($errorText -match "finite number") "Invalid uninstall timeout is rejected"
     Assert ($script:uninstallDiscoveryCalls -eq $discoveryBefore) "Invalid timeout cannot mutate or inspect scheduled tasks"
   }
 
@@ -646,7 +710,7 @@ await new Promise(() => {});
   $script:uninstallUnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
-  Assert ($errorText -match "다른 deploy/run\.ps1") "Uninstaller rejects unrelated root task ownership"
+  Assert ($errorText -match "another deploy/run\.ps1") "Uninstaller rejects unrelated root task ownership"
   Assert ($script:uninstallDisableCalls -eq 0 -and $script:uninstallStopCalls -eq 0 -and $script:uninstallUnregisterCalls -eq 0) "Unrelated root task is not mutated"
   $script:uninstallRunPath = Join-Path $PSScriptRoot "run.ps1"
 
@@ -676,7 +740,7 @@ await new Promise(() => {});
   $script:uninstallUnregisterRemovesTask = $true
   $disabledOutput = @(& $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 6>&1)
   Assert (-not $script:uninstallTaskPresent -and $script:uninstallStopCalls -eq 1) "Disabled task still receives an explicit stop request"
-  Assert (($disabledOutput -join "`n") -match "수동으로 따로 실행한 서버") "Uninstall distinguishes managed instances from foreground servers"
+  Assert (($disabledOutput -join "`n") -match "Manually started servers") "Uninstall distinguishes managed instances from foreground servers"
 
   # Queued work is active too and must be stopped before unregistering.
   $script:uninstallTaskPresent = $true
@@ -728,7 +792,7 @@ await new Promise(() => {});
   $script:uninstallUnregisterCalls = 0
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.05 -PollMilliseconds 5 } catch { $errorText = $_.Exception.Message }
-  Assert ($errorText -match "종료되지 않았습니다") "Active task wait has a bounded timeout"
+  Assert ($errorText -match "did not stop") "Active task wait has a bounded timeout"
   Assert ($script:uninstallStopCalls -eq 1 -and $script:uninstallUnregisterCalls -eq 0 -and $script:uninstallTaskPresent) "Wait timeout leaves the active task registered"
 
   # Unregister failures and a no-op unregister cannot report success.
@@ -746,7 +810,7 @@ await new Promise(() => {});
   $script:uninstallUnregisterRemovesTask = $false
   $errorText = ""
   try { & $uninstallScript -WaitTimeoutSeconds 0.1 -PollMilliseconds 1 } catch { $errorText = $_.Exception.Message }
-  Assert ($errorText -match "제거하지 못했습니다") "Surviving task fails removal verification"
+  Assert ($errorText -match "Could not remove") "Surviving task fails removal verification"
   Assert $script:uninstallTaskPresent "Removal verification observes a surviving task"
   foreach ($sentinel in $sentinels) {
     Assert (Test-Path -LiteralPath $sentinel) "Uninstaller preserves $([IO.Path]::GetFileName($sentinel))"

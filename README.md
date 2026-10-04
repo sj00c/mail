@@ -115,6 +115,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1
 
 설치 완료 시 브라우저가 열리며, 이후 로그인할 때는 `MailLocal` 예약 작업이 서버를 숨김 실행합니다.
 
+설치 화면은 영문으로 `Configuration → Runtime → Dependencies → Production build → Automatic startup → Health check`의 6단계를 표시합니다. `RUN`은 진행 중, `OK`는 단계 완료, `FAIL`은 실패이며 완료 단계에는 소요 시간이 표시됩니다. 마지막 `OK Ready in ...`은 서버 응답까지 확인했다는 뜻입니다. 빌드·의존성 명령의 상세 출력은 `%LOCALAPPDATA%\MailLocal\install.log`에 저장됩니다. 설정 단계에서 실패하면 이전 서버의 오류 로그를 섞어 표시하지 않습니다.
+
+로그·인코딩 회귀 검사는 `pwsh -NoProfile -File deploy/windows-install.test.ps1 -LoggingOnly`로 실행할 수 있습니다. Windows 예약 작업과 프로세스 수명 검증은 이 옵션 없이 Windows에서 실행해야 합니다.
+
 ### macOS
 
 앱 루트의 Terminal에서 실행합니다.
