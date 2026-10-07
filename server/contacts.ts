@@ -1,4 +1,5 @@
 import { people as peopleApi, type people_v1 } from "@googleapis/people";
+import { isApiDisabled } from "./apiErrors.ts";
 import { getAuthedClient } from "./auth.ts";
 
 async function api(): Promise<people_v1.People> {
@@ -35,9 +36,24 @@ function collect(
   }
 }
 
-/** 내 연락처 + "자주 주고받은 주소"(otherContacts)를 이메일 기준으로 병합. */
+/**
+ * 내 연락처 + "자주 주고받은 주소"(otherContacts)를 이메일 기준으로 병합.
+ * Contacts are optional: without the People API enabled in the user's Google
+ * Cloud project, suggestions are simply empty for the cache period.
+ */
 export async function listContacts(): Promise<Contact[]> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.items;
+  try {
+    cache = { items: await fetchContacts(), at: Date.now() };
+  } catch (err) {
+    if (!isApiDisabled(err)) throw err;
+    console.warn("[contacts] People API is not enabled in the Google Cloud project; contact suggestions are off.");
+    cache = { items: [], at: Date.now() };
+  }
+  return cache.items;
+}
+
+async function fetchContacts(): Promise<Contact[]> {
   const p = await api();
   const out = new Map<string, Contact>();
 
@@ -68,9 +84,7 @@ export async function listContacts(): Promise<Contact[]> {
     pageToken = res.data.nextPageToken ?? undefined;
   } while (pageToken);
 
-  const items = [...out.values()].sort((a, b) =>
+  return [...out.values()].sort((a, b) =>
     (a.name || a.email).localeCompare(b.name || b.email, "ko"),
   );
-  cache = { items, at: Date.now() };
-  return items;
 }

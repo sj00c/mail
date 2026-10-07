@@ -162,7 +162,8 @@ const EXPORT_MAP: Record<string, { mime: string; ext: string }> = {
 };
 
 export type DownloadResult = {
-  buffer: Buffer;
+  /** Streamed from Google: a file is never held in server memory whole. */
+  body: ReadableStream<Uint8Array>;
   filename: string;
   mimeType: string;
 };
@@ -187,17 +188,22 @@ export async function downloadFile(fileId: string): Promise<DownloadResult> {
   if (exp) {
     const res = await d.files.export(
       { fileId, mimeType: exp.mime },
-      { responseType: "arraybuffer" },
+      { responseType: "stream" },
     );
     const filename = name.toLowerCase().endsWith(exp.ext) ? name : name + exp.ext;
-    return { buffer: Buffer.from(res.data as ArrayBuffer), filename, mimeType: exp.mime };
+    // node:stream/web and DOM ReadableStream are one runtime class with two TS declarations.
+    return { body: Readable.toWeb(res.data as Readable) as unknown as ReadableStream<Uint8Array>, filename, mimeType: exp.mime };
   }
 
   const res = await d.files.get(
     { fileId, alt: "media", supportsAllDrives: true },
-    { responseType: "arraybuffer" },
+    { responseType: "stream" },
   );
-  return { buffer: Buffer.from(res.data as ArrayBuffer), filename: name, mimeType: mime };
+  return {
+    body: Readable.toWeb(res.data as Readable) as unknown as ReadableStream<Uint8Array>,
+    filename: name,
+    mimeType: mime,
+  };
 }
 
 export async function createFolder(

@@ -4,6 +4,41 @@
 $script:MailTaskName = "MailLocal"
 $script:MailTaskPath = "\"
 
+# `stop` pauses the server only until the user signs in again. The flag is a
+# volatile HKCU key: Windows discards it when the user's registry hive
+# unloads (sign-out, restart, shutdown), so a stop can never outlive the
+# session and automatic startup cannot stay off by accident. The task itself
+# stays enabled; deploy/run.ps1 exits immediately while the key exists.
+# Keep in sync with the -PauseKey default in deploy/run.ps1.
+$script:MailPauseKey = "Software\MailLocalPaused"
+
+function Test-MailPaused {
+  return Test-Path -LiteralPath "HKCU:\$script:MailPauseKey"
+}
+
+function Set-MailPaused {
+  $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(
+    $script:MailPauseKey,
+    [Microsoft.Win32.RegistryKeyPermissionCheck]::Default,
+    [Microsoft.Win32.RegistryOptions]::Volatile)
+  if ($null -eq $key) { throw "Could not record the stop request in HKCU\$script:MailPauseKey." }
+  $key.Close()
+}
+
+function Clear-MailPaused {
+  [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($script:MailPauseKey, $false)
+}
+
+function Get-MailLastEvent([string]$LogPath) {
+  # deploy/run.ps1 records every launch and exit; the scheduler's
+  # LastTaskResult is overwritten each minute by ignored duplicate triggers.
+  if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) { return $null }
+  $events = @(Get-Content -LiteralPath $LogPath -Encoding UTF8 -Tail 500 |
+    Where-Object { $_ -match '^(Starting Mail|Mail exited|Mail launch failed)' })
+  if ($events.Count -eq 0) { return $null }
+  return $events[-1]
+}
+
 function Get-MailTask {
   # Always query the root path explicitly. A same-name task in another folder
   # belongs to somebody else and must not be controlled by this application.

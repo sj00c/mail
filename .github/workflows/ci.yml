@@ -57,7 +57,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate shell and launchd syntax
         run: |
-          for script in deploy/install.sh deploy/run.sh deploy/uninstall.sh deploy/macos-deploy.test.sh; do
+          for script in deploy/install.sh deploy/run.sh deploy/uninstall.sh deploy/bootstrap.sh deploy/macos-deploy.test.sh; do
             bash -n "$script"
           done
           plutil -lint deploy/com.mail.local.plist
@@ -157,3 +157,43 @@ jobs:
           path: artifact
       - name: Run packaged smoke test
         run: node scripts/package-smoke.mjs artifact/sj-mail.tgz
+
+  bootstrap:
+    # The one-line installers must work with nothing installed: no Bun setup
+    # step here, so the bootstrap installs Bun itself when the runner lacks it.
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-sj-mail-package
+          path: artifact
+      - name: Windows one-line bootstrap reaches the credentials step
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:SJ_MAIL_PACKAGE_SPEC = "file:" + ((Resolve-Path artifact\sj-mail.tgz).Path -replace '\\', '/')
+          $workspace = Join-Path $env:RUNNER_TEMP "sj-mail-bootstrap"
+          $output = & ([scriptblock]::Create((Get-Content -Raw deploy\bootstrap.ps1))) --dir $workspace --no-autostart *>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch 'credentials are still needed') { throw "The bootstrap did not reach the credentials step." }
+          if (-not (Test-Path (Join-Path $workspace "node_modules\@sj00c\mail\dist\index.html"))) { throw "The bootstrap did not install the app." }
+      - name: macOS one-line bootstrap reaches the credentials step
+        if: runner.os == 'macOS'
+        run: |
+          export SJ_MAIL_PACKAGE_SPEC="file:$PWD/artifact/sj-mail.tgz"
+          workspace="$RUNNER_TEMP/sj-mail-bootstrap"
+          output="$(bash deploy/bootstrap.sh --dir "$workspace" --no-autostart 2>&1)"
+          echo "$output"
+          grep -q "credentials are still needed" <<<"$output"
+          test -f "$workspace/node_modules/@sj00c/mail/dist/index.html"

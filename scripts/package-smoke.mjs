@@ -293,7 +293,8 @@ async function readJson(path) {
 }
 
 // Every CLI call runs with an isolated home so setup never reads or replaces
-// the runner's real autostart entry, logs or default workspace.
+// the runner's logs or default workspace. Automatic startup is not isolated
+// by HOME; see assertNoRealAutostart.
 function isolatedEnv(home, extra = {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, ...extra };
   if (process.platform === "win32") env.LOCALAPPDATA = join(home, "AppData", "Local");
@@ -335,8 +336,26 @@ function runtimeEnv(port) {
 
 const tokenContents = `${JSON.stringify({ refresh_token: fakeRefreshToken }, null, 2)}\n`;
 
+// Task Scheduler and launchd entries belong to the OS user, not to HOME. With
+// a real Mail entry present, setup would treat it as the previous install,
+// copy its .env and sign-in into the fixture and take the entry over.
+function assertNoRealAutostart() {
+  const probe =
+    process.platform === "win32"
+      ? spawnSync("schtasks.exe", ["/Query", "/TN", "\\MailLocal"], { windowsHide: true, encoding: "utf8", timeout: 10_000 })
+      : process.platform === "darwin"
+        ? spawnSync("launchctl", ["print", `gui/${process.getuid()}/com.mail.local`], { encoding: "utf8", timeout: 10_000 })
+        : null;
+  if (probe?.error) throw probe.error;
+  assert(
+    probe === null || probe.status !== 0,
+    "refusing to run on a machine with Mail automatic startup installed; setup would migrate its .env and sign-in and take it over. Run on CI or after `npm run uninstall`.",
+  );
+}
+
 async function smoke(tarball) {
   assert(await isFile(tarball), `tarball does not exist: ${tarball}`);
+  assertNoRealAutostart();
 
   const root = await mkdtemp(join(tmpdir(), "sj-mail-package-smoke-"));
   let server;
@@ -367,6 +386,7 @@ async function smoke(tarball) {
     assert(manifest.private === true, "workspace package is not private");
     assert(manifest.dependencies?.[PACKAGE_NAME] === `file:${tarball}`, "workspace dependency is not the package spec");
     assert(manifest.scripts?.serve === "sj-mail run", "workspace has no serve script");
+    assert(manifest.scripts?.doctor === "sj-mail doctor", "workspace has no doctor script");
     const app = join(workspace, "node_modules", "@sj00c", "mail");
     for (const file of ["dist/index.html", "server/index.ts", "deploy/run.sh", "deploy/run.ps1", "deploy/install.ps1"]) {
       assert(await isFile(join(app, file)), `installed package is missing ${file}`);
@@ -405,6 +425,14 @@ async function smoke(tarball) {
     for (const asset of assets) {
       assert((await fetch(`${baseUrl}${asset}`)).status === 200, `asset failed to load: ${asset}`);
     }
+    // Doctor checks the running install. The fixture client cannot reach
+    // Google, so it must fail overall while never printing a credential.
+    const diagnosis = await runProcess(process.execPath, [cliPath, "doctor", "--dir", workspace], { cwd: consumer, env }).done;
+    const report = diagnosis.output;
+    assert(diagnosis.code !== 0, "doctor passed although Google access cannot work with fixture credentials");
+    assert(/OK\s+Google client settings/.test(report), `doctor did not accept the workspace .env:\n${redact(report)}`);
+    assert(new RegExp(`OK\\s+Server responding at http://localhost:${port}`).test(report), `doctor did not see the server:\n${redact(report)}`);
+    assert(!sensitiveValues.some((value) => report.includes(value)), "doctor printed a credential");
     await stopProcess(server);
     server = undefined;
 

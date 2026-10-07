@@ -62,7 +62,7 @@ describe("mounted Drive HTTP contracts", () => {
 
   it("preserves download bytes, MIME type and encoded filename", async () => {
     vi.mocked(drive.downloadFile).mockResolvedValue({
-      buffer: Buffer.from([0, 127, 255]),
+      body: new Blob([new Uint8Array([0, 127, 255])]).stream(),
       filename: file.name,
       mimeType: file.mimeType,
     });

@@ -75,12 +75,18 @@ function Get-ControlReadiness([int]$Port, [datetime]$StartedAt, [double]$Timeout
     -TaskName $task -StartedAt $StartedAt -TimeoutSeconds $TimeoutSeconds -ProbeDisabled:$ProbeDisabled
 }
 
-function Start-ControlTask([int]$Port) {
+function Enable-ControlTask {
   $current = Get-ControlTask
   if (-not (Get-MailTaskEnabled $current)) {
     Enable-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop | Out-Null
-    $current = Get-ControlTask
   }
+}
+
+function Start-ControlTask([int]$Port) {
+  # Start also resumes a stop and re-enables a task disabled by older versions.
+  Clear-MailPaused
+  Enable-ControlTask
+  $current = Get-ControlTask
   $state = [string]$current.State
   if ($state -eq "Running" -or $state -eq "Queued") {
     $startedAt = Get-Date
@@ -90,33 +96,46 @@ function Start-ControlTask([int]$Port) {
       return
     }
     if ($state -eq "Queued") {
-      throw "MailLocal is queued and no duplicate start was submitted. Readiness timed out; run -Action Restart."
+      throw "MailLocal is queued and no duplicate start was submitted. Readiness timed out; run: npm run restart"
     }
-    throw "MailLocal is running but unresponsive. No process was killed; run -Action Restart."
+    throw "MailLocal is running but unresponsive. No process was killed; run: npm run restart"
   }
 
   $startedAt = Get-Date
   Start-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop
   $ready = Get-ControlReadiness -Port $Port -StartedAt $startedAt -TimeoutSeconds $WaitTimeoutSeconds
   if ($ready.Reason -ne "ready") {
-    throw "MailLocal did not become ready ($($ready.Reason)); run -Action Restart."
+    throw "MailLocal did not become ready ($($ready.Reason)); run: npm run restart"
   }
   Write-Host "MailLocal started and is ready."
 }
 
 function Stop-ControlTask {
   Get-ControlTask | Out-Null
-  # Stop-MailTask disables first, sends a stop request even from Ready, and
-  # verifies owned scheduler instances instead of inferring from Disabled.
-  Stop-MailTask -RunPath $run -WaitTimeoutSeconds $WaitTimeoutSeconds -PollMilliseconds $PollMilliseconds | Out-Null
-  Write-Host "MailLocal scheduled instances stopped; automatic startup and recovery disabled."
+  # Record the stop first so the watchdog trigger cannot relaunch meanwhile.
+  Set-MailPaused
+  try {
+    # Stop-MailTask disables first, sends a stop request even from Ready, and
+    # verifies owned scheduler instances instead of inferring from Disabled.
+    Stop-MailTask -RunPath $run -WaitTimeoutSeconds $WaitTimeoutSeconds -PollMilliseconds $PollMilliseconds | Out-Null
+  }
+  finally {
+    # The task stays armed: the pause flag ends at sign-out or restart, and
+    # the logon trigger then starts the server again.
+    Enable-ControlTask
+  }
+  Write-Host "MailLocal stopped until you sign out or restart Windows. Resume now with: npm run start"
 }
 
 function Restart-ControlTask([int]$Port) {
-  Stop-ControlTask
-  $current = Get-ControlTask
-  if (-not (Get-MailTaskEnabled $current)) {
-    Enable-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop | Out-Null
+  Get-ControlTask | Out-Null
+  try {
+    Stop-MailTask -RunPath $run -WaitTimeoutSeconds $WaitTimeoutSeconds -PollMilliseconds $PollMilliseconds | Out-Null
+  }
+  finally {
+    # Whatever happens, leave automatic startup and recovery armed.
+    Clear-MailPaused
+    Enable-ControlTask
   }
   $startedAt = Get-Date
   Start-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop
@@ -129,26 +148,28 @@ function Restart-ControlTask([int]$Port) {
 
 function Show-ControlStatus([int]$Port) {
   $current = Get-ControlTask
-  $state = [string]$current.State
   $enabled = Get-MailTaskEnabled $current
-  $info = Get-MailTaskInfo
+  $paused = Test-MailPaused
+  $last = Get-MailLastEvent $logPath
+  $lastText = if ($last) { $last } else { "no launch recorded" }
   $ready = Get-ControlReadiness -Port $Port -StartedAt (Get-Date) `
     -TimeoutSeconds ([Math]::Min($WaitTimeoutSeconds, 5)) -ProbeDisabled
+  $startup = if (-not $enabled) { "disabled" } elseif ($paused) { "paused until sign-out or restart" } else { "at sign-in, restarted within a minute if it exits" }
   if ($ready.Reason -eq "ready") {
-    if ($enabled) {
-      Write-Host "MailLocal status: state=$state; health=ready; taskResult=$($info.LastTaskResult)."
-    }
-    else {
-      Write-Host "MailLocal status: state=$state; health=ready; scheduler=disabled; taskResult=$($info.LastTaskResult)."
-    }
+    Write-Host "MailLocal: running at http://localhost:$Port. Automatic startup: $startup. Last event: $lastText"
     return
   }
-  if (-not $enabled) {
-    Write-Host "MailLocal status: state=$state; health=unhealthy; scheduler=disabled; taskResult=$($info.LastTaskResult); log=$logPath (an active process may still be stopping)." -ForegroundColor Yellow
+  if ($paused) {
+    Write-Host "MailLocal: stopped by 'npm run stop' until you sign out or restart Windows. Resume now with: npm run start" -ForegroundColor Yellow
+  }
+  elseif (-not $enabled) {
+    Write-Host "MailLocal: automatic startup is disabled. Turn it back on with: npm run start" -ForegroundColor Yellow
   }
   else {
-    Write-Host "MailLocal status: state=$state; health=unhealthy; taskResult=$($info.LastTaskResult); log=$logPath; run -Action Restart." -ForegroundColor Yellow
+    Write-Host "MailLocal: not responding (task $([string]$current.State)). Last event: $lastText. Log: $logPath. Try: npm run restart" -ForegroundColor Yellow
   }
+  # The explanation above is the whole report; the nonzero exit is the signal.
+  $script:statusReported = $true
   throw "MailLocal is not responding."
 }
 
@@ -167,13 +188,9 @@ try {
   }
 }
 catch {
-  $taskResult = "unknown"
-  try {
-    $taskInfo = Get-MailTaskInfo
-    if ($null -ne $taskInfo) { $taskResult = [string]$taskInfo.LastTaskResult }
+  if (-not $script:statusReported) {
+    Write-Host "MailLocal control failed: $($_.Exception.Message) Log: $logPath" -ForegroundColor Red
   }
-  catch { $taskResult = "unknown" }
-  Write-Host "MailLocal control failed: $($_.Exception.Message) taskResult=$taskResult log=$logPath" -ForegroundColor Red
   exit 1
 }
 

@@ -4,7 +4,10 @@ param(
   # sj-mail workspace holding .env and .data. Omitted by tasks registered from
   # a git checkout: .env stays in the checkout and sign-in data in server/.data
   # until `sj-mail setup` migrates them.
-  [string]$Workspace
+  [string]$Workspace,
+  # Volatile HKCU key set by `stop` until the next sign-in; see
+  # $script:MailPauseKey in deploy/windows-readiness.ps1.
+  [string]$PauseKey = "Software\MailLocalPaused"
 )
 
 # This entrypoint only runs the already-built app. Never build on login.
@@ -159,6 +162,9 @@ public static class MailWindowsJobObject
 }
 
 try {
+  # A stopped server stays down until sign-out or restart clears the flag.
+  # Exit quietly: the watchdog trigger re-runs this launcher every minute.
+  if (Test-Path -LiteralPath "HKCU:\$PauseKey") { exit 0 }
   $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
   if (-not (Test-Path -LiteralPath $BunPath -PathType Leaf)) { throw "Bun executable missing: $BunPath. Run sj-mail setup again." }
   if (-not (Test-Path -LiteralPath (Join-Path $app "dist/index.html"))) { throw "dist/index.html missing. Run sj-mail setup again." }
@@ -173,6 +179,12 @@ try {
   $jobHandle = New-MailJobObject
   $env:NODE_ENV = "production"
   $env:HOST = "127.0.0.1"
+  # Keep launch history across setups and restarts, bounded to about 10 MB.
+  try {
+    $existingLog = Get-Item -LiteralPath $LogPath -ErrorAction SilentlyContinue
+    if ($null -ne $existingLog -and $existingLog.Length -gt 5MB) { Move-Item -LiteralPath $LogPath -Destination "$LogPath.1" -Force }
+  }
+  catch { }
   Add-Content -LiteralPath $LogPath -Encoding UTF8 -Value "Starting Mail $(Get-Date -Format o)"
   # Native stderr includes normal Bun diagnostics on Windows PowerShell 5.1.
   $ErrorActionPreference = "Continue"

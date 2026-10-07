@@ -8,9 +8,10 @@ import {
   isAuthed,
   logout,
 } from "./auth.ts";
-import { apiErrorStatus, publicApiError } from "./apiErrors.ts";
+import { apiErrorStatus, logApiError, publicApiError } from "./apiErrors.ts";
 import { clearCalendarCache } from "./calendar.ts";
 import { clearContactsCache, listContacts } from "./contacts.ts";
+import { checkGoogleApis } from "./diagnostics.ts";
 import { createMailRoutes } from "./routes/mail.ts";
 import { createCalendarRoutes } from "./routes/calendar.ts";
 import { createDriveRoutes } from "./routes/drive.ts";
@@ -160,6 +161,9 @@ export function createApp(appUrl: string): Hono {
   // 받는사람 자동완성용 — 주소록 + 자주 주고받은 주소 (이메일 기준 병합).
   api.get("/contacts", async (c) => c.json(await listContacts()));
 
+  // Per-API access for `sj-mail doctor` (which features this account can use).
+  api.get("/diagnostics", async (c) => c.json(await checkGoogleApis()));
+
   api.route("/", createCalendarRoutes());
 
   api.route("/", createDriveRoutes());
@@ -167,7 +171,7 @@ export function createApp(appUrl: string): Hono {
   // Translate auth errors to 401 for all /api routes (sub-app handles its own errors).
   api.onError((e, c) => {
     const status = apiErrorStatus(e);
-    console.error("[api]", e);
+    logApiError("api", c.req.method, c.req.path, e);
     return c.json({ error: publicApiError(e) }, status);
   });
   app.route("/api", api);

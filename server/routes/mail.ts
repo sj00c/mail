@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { apiErrorStatus, httpStatusOf, publicApiError } from "../apiErrors.ts";
+import { apiErrorStatus, httpStatusOf, logApiError, publicApiError } from "../apiErrors.ts";
 import {
   createDraft,
   deleteDraft,
@@ -54,7 +54,7 @@ export function createMessageListApi(
   });
   messages.onError((e, c) => {
     const status = apiErrorStatus(e);
-    console.error("[api/messages]", e);
+    logApiError("api/messages", c.req.method, c.req.path, e);
     return c.json({ error: publicApiError(e) }, status);
   });
 

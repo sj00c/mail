@@ -213,15 +213,29 @@ try {
   $launchWorkspace = Join-Path $temp "launch-workspace"
   New-Item -ItemType Directory -Path $launchWorkspace | Out-Null
   Set-Content -LiteralPath (Join-Path $launchWorkspace ".env") -Value "PORT=8787" -Encoding ASCII
-  & $hostExecutable -NoProfile -File (Join-Path $PSScriptRoot "run.ps1") -BunPath $bun -LogPath $launchLog -Workspace $launchWorkspace
+  # Launcher fixtures never read the user's real stop flag.
+  $launchPauseKey = "Software\MailLocalPausedTest-" + [guid]::NewGuid().ToString("N")
+  & $hostExecutable -NoProfile -File (Join-Path $PSScriptRoot "run.ps1") -BunPath $bun -LogPath $launchLog -Workspace $launchWorkspace -PauseKey $launchPauseKey
   Assert ($LASTEXITCODE -ne 0) "Launcher reports missing executable with nonzero exit"
   Assert ((Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8).Contains("Bun executable missing")) "Launcher persists missing executable error"
   $fixtureDeploy = Join-Path $temp "deploy"
   New-Item -ItemType Directory -Path $fixtureDeploy | Out-Null
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run.ps1") -Destination $fixtureDeploy
-  & $hostExecutable -NoProfile -File (Join-Path $fixtureDeploy "run.ps1") -BunPath $hostExecutable -LogPath $launchLog -Workspace $launchWorkspace
+  & $hostExecutable -NoProfile -File (Join-Path $fixtureDeploy "run.ps1") -BunPath $hostExecutable -LogPath $launchLog -Workspace $launchWorkspace -PauseKey $launchPauseKey
   Assert ($LASTEXITCODE -ne 0) "Missing build fails without rebuilding at startup"
   Assert ((Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8).Contains("dist/index.html missing")) "Launcher explains missing build in log"
+
+  # While stopped, every watchdog launch exits successfully without starting
+  # anything or growing the log, even when the installation is broken.
+  $pausedKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($launchPauseKey, [Microsoft.Win32.RegistryKeyPermissionCheck]::Default, [Microsoft.Win32.RegistryOptions]::Volatile)
+  $pausedKey.Close()
+  try {
+    $logBefore = Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8
+    & $hostExecutable -NoProfile -File (Join-Path $fixtureDeploy "run.ps1") -BunPath $hostExecutable -LogPath $launchLog -Workspace $launchWorkspace -PauseKey $launchPauseKey
+    Assert ($LASTEXITCODE -eq 0) "Stopped launcher exits successfully"
+    Assert ((Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8) -eq $logBefore) "Stopped launcher leaves the log unchanged"
+  }
+  finally { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey($launchPauseKey, $false) }
 
   # A scheduler stop terminates the launcher before Bun can exit gracefully.
   # Run a real Bun fixture, kill only the launcher PID, and require both the
@@ -272,7 +286,8 @@ await new Promise(() => {});
       "-File", (& $quote (Join-Path $jobDeploy "run.ps1")),
       "-BunPath", (& $quote $bunCommand.Source),
       "-LogPath", (& $quote $jobLog),
-      "-Workspace", (& $quote $jobRoot)
+      "-Workspace", (& $quote $jobRoot),
+      "-PauseKey", $launchPauseKey
     )
     $jobLauncher = Start-Process -FilePath $hostExecutable -ArgumentList $jobArguments -WorkingDirectory $jobRoot -PassThru
     $startDeadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -631,50 +646,84 @@ await new Promise(() => {});
     $script:controlProbeDisabled = [bool]$ProbeDisabled
     return [pscustomobject]@{ Reason = $script:controlReadyReason }
   }
-  $script:controlReadyReason = "ready"
-  $script:uninstallState = "Running"
-  $script:restoreStartCalls = 0
-  Start-ControlTask -Port 8787
-  Assert ($script:restoreStartCalls -eq 0) "Start does not duplicate a healthy running task"
-  $script:uninstallState = "Queued"
-  Start-ControlTask -Port 8787
-  Assert ($script:restoreStartCalls -eq 0) "Start waits for queued work without submitting another start"
-  $script:controlReadyReason = "timeout"
-  $stopBefore = $script:uninstallStopCalls
-  $failed = $false
-  try { Start-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "queued" }
-  Assert ($failed -and $script:restoreStartCalls -eq 0) "Queued timeout reports failure without duplicate submission"
-  $script:uninstallState = "Running"
-  $failed = $false
-  try { Start-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "unresponsive" }
-  Assert ($failed -and $script:uninstallStopCalls -eq $stopBefore) "Start does not kill an unresponsive running server"
-  $script:uninstallState = "Disabled"
-  $script:controlDisabled = $true
-  $script:controlReadyReason = "ready"
-  Start-ControlTask -Port 8787
-  Assert (-not $script:controlDisabled -and $script:restoreStartCalls -eq 1) "Start re-enables an intentionally stopped task and requests launch"
-  Stop-ControlTask
-  Assert $script:controlDisabled "Stop disables future automatic recovery"
-  $script:uninstallState = "Disabled"
-  $script:lingeringInstance = $true
-  $failed = $false
-  try { Restart-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "did not stop" }
-  Assert ($failed -and $script:controlDisabled -and $script:restoreStartCalls -eq 1) "Restart refuses to overlap an instance hidden by Disabled state"
-  $script:lingeringInstance = $false
-  Restart-ControlTask -Port 8787
-  Assert (-not $script:controlDisabled -and $script:restoreStartCalls -eq 2) "Restart enables and starts only after owned instances are gone"
-  $script:uninstallState = "Disabled"
-  $script:controlDisabled = $true
-  Show-ControlStatus -Port 8787
-  Assert $script:controlProbeDisabled "Status probes HTTP even while scheduler is disabled"
-  $script:controlReadyReason = "timeout"
-  $failed = $false
-  try { Show-ControlStatus -Port 8787 } catch { $failed = $_.Exception.Message -match "not responding" }
-  Assert $failed "Unhealthy status returns failure rather than silent success"
-  $script:uninstallTaskPresent = $false
-  $failed = $false
-  try { Start-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "not installed" }
-  Assert $failed "Start reports missing installation"
+  # A unique volatile key keeps these cases away from the user's real stop flag.
+  $script:MailPauseKey = "Software\MailLocalPausedTest-" + [guid]::NewGuid().ToString("N")
+  try {
+    $script:controlReadyReason = "ready"
+    $script:uninstallState = "Running"
+    $script:restoreStartCalls = 0
+    Start-ControlTask -Port 8787
+    Assert ($script:restoreStartCalls -eq 0) "Start does not duplicate a healthy running task"
+    $script:uninstallState = "Queued"
+    Start-ControlTask -Port 8787
+    Assert ($script:restoreStartCalls -eq 0) "Start waits for queued work without submitting another start"
+    $script:controlReadyReason = "timeout"
+    $stopBefore = $script:uninstallStopCalls
+    $failed = $false
+    try { Start-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "queued" }
+    Assert ($failed -and $script:restoreStartCalls -eq 0) "Queued timeout reports failure without duplicate submission"
+    $script:uninstallState = "Running"
+    $failed = $false
+    try { Start-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "unresponsive" }
+    Assert ($failed -and $script:uninstallStopCalls -eq $stopBefore) "Start does not kill an unresponsive running server"
+    $script:uninstallState = "Disabled"
+    $script:controlDisabled = $true
+    $script:controlReadyReason = "ready"
+    Start-ControlTask -Port 8787
+    Assert (-not $script:controlDisabled -and $script:restoreStartCalls -eq 1) "Start re-enables a task disabled by an older stop and requests launch"
+
+    # Stop lasts until sign-out or restart: the task stays enabled so the
+    # logon trigger brings the server back, and the flag keeps the watchdog
+    # from relaunching it meanwhile.
+    $script:uninstallState = "Running"
+    Stop-ControlTask 6>&1 | Out-Null
+    Assert ((Test-MailPaused) -and -not $script:controlDisabled) "Stop pauses the server but leaves automatic startup armed"
+    $script:uninstallState = "Ready"
+    $script:controlReadyReason = "timeout"
+    $failed = $false
+    try { Show-ControlStatus -Port 8787 6>&1 | Out-Null } catch { $failed = $true }
+    Assert $failed "Status of a stopped server reports not running"
+    $script:controlReadyReason = "ready"
+    Start-ControlTask -Port 8787
+    Assert (-not (Test-MailPaused) -and $script:restoreStartCalls -eq 2) "Start ends a stop immediately and requests launch"
+
+    $script:uninstallStopFailure = $true
+    $script:uninstallState = "Running"
+    $failed = $false
+    try { Stop-ControlTask 6>&1 | Out-Null } catch { $failed = $_.Exception.Message -match "stop failed" }
+    Assert ($failed -and -not $script:controlDisabled) "A failed stop never leaves automatic startup disabled"
+    $script:uninstallStopFailure = $false
+
+    Set-MailPaused
+    $script:uninstallState = "Running"
+    $script:lingeringInstance = $true
+    $failed = $false
+    try { Restart-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "did not stop" }
+    Assert ($failed -and $script:restoreStartCalls -eq 2) "Restart refuses to overlap an instance that did not stop"
+    Assert (-not $script:controlDisabled -and -not (Test-MailPaused)) "A failed restart leaves automatic startup armed"
+    $script:lingeringInstance = $false
+    Restart-ControlTask -Port 8787
+    Assert (-not $script:controlDisabled -and $script:restoreStartCalls -eq 3) "Restart enables and starts only after owned instances are gone"
+
+    $script:uninstallState = "Disabled"
+    $script:controlDisabled = $true
+    Show-ControlStatus -Port 8787 6>&1 | Out-Null
+    Assert $script:controlProbeDisabled "Status probes HTTP even while scheduler is disabled"
+    $script:controlReadyReason = "timeout"
+    $failed = $false
+    try { Show-ControlStatus -Port 8787 6>&1 | Out-Null } catch { $failed = $_.Exception.Message -match "not responding" }
+    Assert $failed "Unhealthy status returns failure rather than silent success"
+
+    @("Starting Mail 2026-01-01T00:00:00", "server output", "Mail exited: 1 (2026-01-01T00:01:00)", "unrelated line") |
+      Set-Content -LiteralPath $logPath -Encoding UTF8
+    Assert ((Get-MailLastEvent $logPath) -eq "Mail exited: 1 (2026-01-01T00:01:00)") "Status reports the launcher's last recorded exit"
+
+    $script:uninstallTaskPresent = $false
+    $failed = $false
+    try { Start-ControlTask -Port 8787 } catch { $failed = $_.Exception.Message -match "not installed" }
+    Assert $failed "Start reports missing installation"
+  }
+  finally { Clear-MailPaused }
   # Restore the real readiness function before subsequent entrypoint tests.
   . (Join-Path $PSScriptRoot "windows-readiness.ps1")
   $script:controlDisabled = $false
@@ -880,6 +929,31 @@ if ($Integration) {
     Assert ($installedTask.Actions.Arguments.Contains("-Workspace `"$workspace`"")) "Scheduled launch passes the non-ASCII workspace intact"
     Assert ($installedTask.Actions.Arguments.Contains("-WindowStyle Hidden")) "Scheduled launch keeps the PowerShell window hidden"
 
+    # Lifecycle against the real scheduler. A crashed server is relaunched by
+    # the one-minute watchdog; stop pauses it while the task stays enabled for
+    # the next sign-in; start resumes it at once.
+    $control = Join-Path $PSScriptRoot "windows-control.ps1"
+    $crashedPid = (Get-NetTCPConnection -State Listen -LocalPort 18787 -ErrorAction Stop | Select-Object -First 1).OwningProcess
+    Stop-Process -Id $crashedPid -Force
+    $recovered = $false
+    $recoveryDeadline = [DateTime]::UtcNow.AddSeconds(90)
+    while ([DateTime]::UtcNow -lt $recoveryDeadline -and -not $recovered) {
+      Start-Sleep -Seconds 2
+      try { $recovered = (Invoke-RestMethod -Uri "http://127.0.0.1:18787/auth/status" -TimeoutSec 2).authed -is [bool] } catch { }
+    }
+    Assert $recovered "Watchdog trigger relaunches a crashed server"
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File $control Stop -Workspace $workspace
+    Assert ($LASTEXITCODE -eq 0) "Stop succeeds"
+    Assert ((Get-MailTaskEnabled (Get-MailTask)) -and (Test-MailPaused)) "Stop pauses the server and keeps the task enabled for the next sign-in"
+    Start-Sleep -Seconds 75
+    $relaunched = $true
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:18787/auth/status" -TimeoutSec 2 | Out-Null } catch { $relaunched = $false }
+    Assert (-not $relaunched) "Watchdog does not relaunch a stopped server"
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File $control Start -Workspace $workspace
+    Assert ($LASTEXITCODE -eq 0 -and -not (Test-MailPaused)) "Start resumes a stopped server"
+    $history = Get-Content -LiteralPath $log -Raw -Encoding UTF8
+    Assert (([regex]::Matches($history, '(?m)^Starting Mail')).Count -ge 3) "Server log keeps every launch"
+
     # Register a uniquely named, deliberately failing task and observe one
     # periodic trigger restart.
     $temporaryTaskName = "MailLocal-Test-" + [guid]::NewGuid().ToString("N")
@@ -948,6 +1022,7 @@ exit 1
     Stop-ScheduledTask -TaskName MailLocal -TaskPath "\" -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName MailLocal -TaskPath "\" -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
+    Clear-MailPaused
   }
 }
 

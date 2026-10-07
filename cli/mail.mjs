@@ -13,9 +13,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { copyFile, cp, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { homedir, platform as osPlatform, release } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -311,11 +313,32 @@ function parseEnv(text) {
   return values;
 }
 
-function needsCredentials(values) {
+// Mirrors deploy/install.ps1 so setup and doctor explain every problem before
+// any platform script runs. Values are never printed.
+function envProblems(values) {
   const placeholder = /^(your-|여기에_)|PLACEHOLDER/;
-  return [values.GOOGLE_CLIENT_ID, values.GOOGLE_CLIENT_SECRET].some(
-    (value) => !value || !value.trim() || placeholder.test(value),
-  );
+  const id = values.GOOGLE_CLIENT_ID ?? "";
+  const secret = values.GOOGLE_CLIENT_SECRET ?? "";
+  const problems = [];
+  if (!id.trim() || placeholder.test(id.trim())) {
+    problems.push("GOOGLE_CLIENT_ID is not set: enter the Client ID of your Google OAuth web client.");
+  } else if (!id.trim().endsWith(".apps.googleusercontent.com")) {
+    problems.push("GOOGLE_CLIENT_ID must end with .apps.googleusercontent.com.");
+  }
+  if (!secret.trim() || placeholder.test(secret.trim())) {
+    problems.push("GOOGLE_CLIENT_SECRET is not set: enter the Client Secret of the same OAuth client.");
+  }
+  if (/[\s"']/.test(id) || /[\s"']/.test(secret)) {
+    problems.push("Remove quotes and spaces around the Client ID and Client Secret.");
+  }
+  const portText = values.PORT || "8787";
+  const port = Number(portText);
+  if (!/^\d+$/.test(portText) || port < 1024 || port > 65535) {
+    problems.push("PORT must be a number from 1024 to 65535.");
+  } else if (values.OAUTH_REDIRECT && values.OAUTH_REDIRECT !== `http://localhost:${port}/auth/callback`) {
+    problems.push(`OAUTH_REDIRECT must be http://localhost:${port}/auth/callback to match PORT.`);
+  }
+  return problems;
 }
 
 async function envPort(workspace) {
@@ -394,6 +417,7 @@ async function writeWorkspaceManifest(workspace, spec) {
     restart: "sj-mail restart",
     serve: "sj-mail run",
     uninstall: "sj-mail uninstall",
+    doctor: "sj-mail doctor",
   };
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
@@ -599,7 +623,14 @@ async function setup(options) {
       if (!IS_WINDOWS) chmodSync(envPath, 0o600);
       log.info(`Created ${envPath}`);
     }
-    if (needsCredentials(parseEnv(await readFile(envPath, "utf8")))) {
+    let problems = envProblems(parseEnv(await readFile(envPath, "utf8")));
+    // A person at a terminal edits .env while setup waits; scripts and agents
+    // (no TTY) get the two-step flow: fill .env, run setup again.
+    if (problems.length > 0 && process.stdin.isTTY && process.stdout.isTTY) {
+      problems = await promptForCredentials(log, envPath, problems);
+    }
+    if (problems.length > 0) {
+      for (const problem of problems) log.warn(problem);
       log.done("Installed; Google credentials are still needed");
       log.info(`1. Put your Google Client ID and Secret into ${envPath}`);
       log.info(
@@ -640,7 +671,11 @@ async function setup(options) {
     }
     if (installCode !== 0) throw cliError(`Automatic startup failed (exit ${installCode}).`);
     log.done("Setup complete");
-    log.info(`Manage: cd "${workspace}" then npm run status | restart | stop | start | uninstall`);
+    log.info(`Manage: cd "${workspace}" then npm run status | restart | stop | start | doctor | uninstall`);
+    console.log("");
+    log.info("Checking the installation (npm run doctor shows this again):");
+    const failures = await reportDiagnosis(log, await diagnose(workspace));
+    if (failures > 0) log.warn(`Installed, but ${failures} problem(s) above still need attention.`);
   } catch (error) {
     const stage = log.current;
     log.failStage();
@@ -650,6 +685,214 @@ async function setup(options) {
     if (IS_WINDOWS) log.info(`Autostart log: ${join(logDirectory(), "install.log")}`);
     process.exitCode = 1;
   }
+}
+
+// Opens .env in the platform editor and waits for Enter, re-checking after
+// each save. Notepad's process lifetime is no signal (Windows 11 opens tabs
+// in an existing window), so the person confirms explicitly.
+async function promptForCredentials(log, envPath, initialProblems) {
+  const editor = IS_WINDOWS ? ["notepad.exe", [envPath]] : IS_MAC ? ["open", ["-e", envPath]] : null;
+  if (editor) {
+    try {
+      spawn(editor[0], editor[1], { detached: true, stdio: "ignore" }).unref();
+      log.info(`Opened ${envPath} in ${IS_WINDOWS ? "Notepad" : "TextEdit"}.`);
+    } catch {
+      log.info(`Open ${envPath} in a text editor.`);
+    }
+  }
+  let problems = initialProblems;
+  const input = createInterface({ input: process.stdin });
+  const lines = input[Symbol.asyncIterator]();
+  try {
+    while (problems.length > 0) {
+      for (const problem of problems) log.warn(problem);
+      log.info("Enter the values from Google Cloud, save the file, then press Enter here (Ctrl+C cancels).");
+      if ((await lines.next()).done) break;
+      problems = envProblems(parseEnv(await readFile(envPath, "utf8")));
+    }
+  } finally {
+    input.close();
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnosis: one pass over everything that differs between machines, shared
+// by `sj-mail doctor` and the end of setup. Secrets are never printed.
+
+function serverLogPath() {
+  if (IS_WINDOWS) return join(logDirectory(), "mail.local.log");
+  if (IS_MAC) return join(homedir(), "Library", "Logs", "mail.local.log");
+  return null;
+}
+
+/** Registered automatic startup: { supported, present, runPath, enabled, paused, lastEvent }. */
+async function autostartState() {
+  if (IS_WINDOWS) {
+    const readiness = join(PACKAGE_ROOT, "deploy", "windows-readiness.ps1").replaceAll("'", "''");
+    const log = serverLogPath().replaceAll("'", "''");
+    const { stdout } = await execFileAsync(
+      windowsPowerShell(),
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); . '${readiness}'; $t = Get-MailTask; if ($null -eq $t) { '{"present":false}' } else { [pscustomobject]@{ present = $true; runPath = (Get-MailRunPathFromTask $t); enabled = (Get-MailTaskEnabled $t); paused = (Test-MailPaused); lastEvent = (Get-MailLastEvent '${log}') } | ConvertTo-Json -Compress }`,
+      ],
+      { windowsHide: true, encoding: "utf8" },
+    );
+    return { supported: true, ...JSON.parse(String(stdout).trim().split(/\r?\n/).at(-1)) };
+  }
+  if (IS_MAC) {
+    const runPath = await registeredRunPath();
+    if (!runPath) return { supported: true, present: false };
+    // bootout (npm run stop) unloads the agent until the next login.
+    const loaded = await execFileAsync("launchctl", ["print", `gui/${process.getuid()}/${LAUNCHD_LABEL}`]).then(
+      () => true,
+      () => false,
+    );
+    return { supported: true, present: true, runPath, enabled: true, paused: !loaded };
+  }
+  return { supported: false };
+}
+
+function portInUse(port) {
+  return new Promise((done) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    socket.setTimeout(1000);
+    socket.once("connect", () => {
+      socket.destroy();
+      done(true);
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      done(false);
+    });
+    socket.once("error", () => done(false));
+  });
+}
+
+async function fetchJson(url, timeoutMs) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+const GOOGLE_APIS = [
+  ["gmail", "Gmail", true],
+  ["calendar", "Google Calendar", true],
+  ["drive", "Google Drive", true],
+  ["contacts", "Contacts (optional, recipient suggestions)", false],
+];
+
+/** Checks as [{ level: "ok" | "warn" | "fail" | "info", text }]. */
+async function diagnose(workspace) {
+  const checks = [];
+  const add = (level, text) => checks.push({ level, text });
+  add("info", `${osPlatform()} ${release()} ${process.arch}; workspace ${workspace}`);
+
+  const { bun, tooOld, required } = await probeBun();
+  if (bun) add("ok", `Bun ${bun.version}: ${bun.path}`);
+  else add("fail", `${tooOld ? `Bun ${tooOld} is older than ${required.join(".")}` : "Bun was not found"}. Run setup again.`);
+
+  const app = installedRoot(workspace);
+  const installed = await readJson(join(app, "package.json")).catch(() => null);
+  if (!installed) {
+    add("fail", `No app is installed in ${workspace}. Run setup.`);
+    return checks;
+  }
+  if (await isFile(join(app, "dist", "index.html"))) add("ok", `${PACKAGE_NAME} ${installed.version}`);
+  else add("fail", `${PACKAGE_NAME} ${installed.version} is incomplete. Run setup again.`);
+
+  const envPath = join(workspace, ".env");
+  let values = null;
+  try {
+    values = parseEnv(await readFile(envPath, "utf8"));
+  } catch {
+    add("fail", `${envPath} is missing. Run setup.`);
+  }
+  if (values) {
+    const problems = envProblems(values);
+    for (const problem of problems) add("fail", `${problem} (${envPath})`);
+    if (problems.length === 0) add("ok", `Google client settings in ${envPath} (values not shown)`);
+  }
+  const port = Number(values?.PORT || 8787);
+
+  let auto = { supported: false };
+  try {
+    auto = await autostartState();
+  } catch (error) {
+    add("warn", `Could not read the automatic startup entry: ${error.message}`);
+  }
+  if (auto.supported) {
+    const own = await realpath(join(app, "deploy", IS_WINDOWS ? "run.ps1" : "run.sh")).catch(() => "");
+    const registered = auto.runPath ? await realpath(auto.runPath).catch(() => auto.runPath) : "";
+    const root = registered ? dirname(dirname(registered)) : "";
+    if (!auto.present) add("warn", "Automatic startup is not registered. Run setup to register it.");
+    else if (!samePath(registered, own)) {
+      if (await isDirectory(root)) add("warn", `Automatic startup runs another installation (${root}). Run setup here to take it over.`);
+      else add("fail", `Automatic startup points to ${root}, which no longer exists. Run setup to repair it.`);
+    } else if (auto.paused) add("warn", "Stopped with npm run stop until the next sign-in. Resume now with: npm run start");
+    else if (auto.enabled === false) add("warn", "Automatic startup is disabled. Turn it back on with: npm run start");
+    else add("ok", "Automatic startup: at sign-in, relaunched if the server exits");
+  } else if (!IS_WINDOWS && !IS_MAC) {
+    add("info", "Automatic startup is available on Windows and macOS; here, start with npm run serve.");
+  }
+
+  const ready = await serverReady(port);
+  if (ready) add("ok", `Server responding at http://localhost:${port}`);
+  else if (await portInUse(port)) {
+    add("fail", `Port ${port} is used by another program. Close it, or change PORT and OAUTH_REDIRECT in .env and the redirect URI in Google Cloud.`);
+  } else {
+    add("fail", `Server is not running at http://localhost:${port}.${auto.lastEvent ? ` Last event: ${auto.lastEvent}.` : ""}${serverLogPath() ? ` Log: ${serverLogPath()}` : ""}`);
+  }
+
+  if (ready) {
+    const status = await fetchJson(`http://127.0.0.1:${port}/auth/status`, 5000);
+    if (!status?.authed) {
+      add("warn", `Not signed in to Google yet: open http://localhost:${port} and connect your account.`);
+    } else {
+      const apis = await fetchJson(`http://127.0.0.1:${port}/api/diagnostics`, 30_000);
+      if (!apis) add("fail", "Could not check Google API access. Run setup to update the app, then run npm run doctor again.");
+      else {
+        const hints = {
+          disabled: "enable this API in the same Google Cloud project",
+          client: "Google rejected the Client ID/Secret in .env; copy both from the same OAuth web client (regenerate the secret if unsure), then npm run restart",
+          auth: `sign in again at http://localhost:${port}`,
+          error: "request failed",
+        };
+        for (const [key, label, requiredApi] of GOOGLE_APIS) {
+          const check = apis[key];
+          if (check?.ok) {
+            add("ok", `${label}: available`);
+            continue;
+          }
+          add(requiredApi ? "fail" : "warn", `${label}: ${hints[check?.reason] ?? hints.error}. ${check?.message ?? ""}`.trim());
+        }
+      }
+    }
+  }
+
+  add("info", `Logs: ${join(logDirectory(), "setup.log")}${serverLogPath() ? `, ${serverLogPath()}` : ""}`);
+  return checks;
+}
+
+async function reportDiagnosis(log, checks) {
+  for (const { level, text } of checks) log[level](text);
+  return checks.filter((check) => check.level === "fail").length;
+}
+
+async function doctor(options) {
+  const workspace = await resolveWorkspace(options.dir);
+  console.log(`\n  SJ-MAIL DOCTOR ${(await ownManifest()).version}`);
+  console.log("  ----------------------------------------------");
+  const failures = await reportDiagnosis(createLogger(null), await diagnose(workspace));
+  if (failures > 0) process.exitCode = 1;
 }
 
 // launchd has one com.mail.local per user. Never stop or remove an entry
@@ -816,7 +1059,10 @@ const USAGE = `Usage: sj-mail <command> [--dir <workspace>]
         Manage the automatically started server.
   uninstall
         Remove automatic startup. Settings and sign-in are kept.
-  run   Run the server in this terminal (Ctrl+C to stop).`;
+  run   Run the server in this terminal (Ctrl+C to stop).
+  doctor
+        Check Bun, the installed app, .env, automatic startup, the server
+        and Google API access, with a fix for each problem.`;
 
 function parseArguments(argv) {
   const [command, ...rest] = argv;
@@ -829,6 +1075,7 @@ function parseArguments(argv) {
     stop: ["--dir"],
     restart: ["--dir"],
     run: ["--dir"],
+    doctor: ["--dir"],
   }[command];
   if (!allowed) return { command: null, options };
   for (let i = 0; i < rest.length; i++) {
@@ -850,6 +1097,7 @@ async function main() {
   if (command === "setup") return setup(options);
   if (command === "uninstall") return uninstall(options);
   if (command === "run") return runForeground(options);
+  if (command === "doctor") return doctor(options);
   if (["status", "start", "stop", "restart"].includes(command)) {
     return control(command, options);
   }

@@ -191,8 +191,11 @@ try {
   $taskMutationStarted = $true
   $taskReplacementAttempted = $true
   Register-ScheduledTask -TaskName $task -TaskPath $taskPath -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
-  # A fresh server log avoids showing errors from a previous installation.
-  Set-Content -LiteralPath $log -Value "Mail server launch $(Get-Date -Format o)" -Encoding UTF8
+  # Setup means "run now": a stop from earlier in this session no longer applies.
+  Clear-MailPaused
+  # Append, never truncate: launch history must survive setups for diagnosis.
+  $launchMarker = "---- Mail setup $(Get-Date -Format o) ----"
+  Add-Content -LiteralPath $log -Value $launchMarker -Encoding UTF8
   $startedAt = Get-Date
   $serverLaunchAttempted = $true
   Start-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop
@@ -232,10 +235,13 @@ catch {
     Write-InstallLog ("{0} ({1:N1}s)" -f $stage, ($clock.Elapsed.TotalSeconds - $stageStarted)) -Level FAIL
     Write-InstallLog $failure -Level FAIL
     if ($serverLaunchAttempted) {
-      # Configuration/build errors must not be confused with a previous run.
+      # Show only this launch, never errors from a previous run.
       if (Test-Path -LiteralPath $log) {
+        $lines = @(Get-Content -LiteralPath $log -Encoding UTF8)
+        $from = [Array]::LastIndexOf($lines, $launchMarker)
+        $current = if ($from -ge 0 -and $from -lt $lines.Count - 1) { $lines[($from + 1)..($lines.Count - 1)] } else { @() }
         Write-InstallLog "Current launch: last 25 server log lines" -Level DETAIL
-        Get-Content -LiteralPath $log -Encoding UTF8 -Tail 25 | ForEach-Object { Write-InstallLog $_ -Level DETAIL }
+        $current | Select-Object -Last 25 | ForEach-Object { Write-InstallLog $_ -Level DETAIL }
       }
     }
   }

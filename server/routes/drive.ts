@@ -31,7 +31,7 @@ export function createDriveRoutes(): Hono {
   });
 
   drive.get("/drive/files/:id/download", async (c) => {
-    const { buffer, filename, mimeType } = await downloadFile(
+    const { body, filename, mimeType } = await downloadFile(
       c.req.param("id"),
     );
     // Header-safe ASCII fallback + RFC 5987 encoded full name (Korean filenames etc.).
@@ -40,7 +40,7 @@ export function createDriveRoutes(): Hono {
       /['()*]/g,
       (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
     );
-    return new Response(new Uint8Array(buffer), {
+    return new Response(body, {
       headers: {
         "Content-Type": mimeType || "application/octet-stream",
         "Content-Disposition": `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
