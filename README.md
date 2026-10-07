@@ -11,31 +11,47 @@ Gmail·Google Calendar·Google Drive·Google Contacts를 한곳에서 사용하�
 
 아래 1~3단계는 OAuth 비밀값 없이 완료할 수 있습니다. 이 단계가 끝나면 의존성과 웹 화면이 설치·빌드된 상태이며, 아직 서버를 시작하거나 Google에 연결하지 않습니다.
 
-### 1. ZIP 다운로드·압축 해제
+### 1. 소스 받기
 
-[소스 ZIP 다운로드](https://github.com/sj00c/mail/archive/refs/heads/main.zip) → 압축 해제 → 계속 사용할 위치에 보관하세요. `package.json` 파일과 `deploy` 폴더가 있는 폴더를 엽니다. 폴더 이름은 바꿔도 됩니다.
+git·npm 없이 OS 기본 도구만 씁니다. 홈 폴더에 `mail` 폴더를 만들고 그 안으로 이동합니다. `mail`이 이미 있으면 덮어쓰지 않고 멈춥니다.
 
 **Windows (PowerShell)**
 
-파일 탐색기에서 해당 폴더를 연 뒤 주소 표시줄에 `powershell`을 입력하고 Enter를 누릅니다. 그 폴더에서 PowerShell이 열립니다.
+```powershell
+$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $ProgressPreference='SilentlyContinue'; $d="$HOME\mail"; if (Test-Path $d) { throw "$d already exists" }; $t="$HOME\mail-download"; New-Item -ItemType Directory $t -Force | Out-Null; Invoke-WebRequest https://github.com/sj00c/mail/archive/refs/heads/main.zip -OutFile "$t\mail.zip" -UseBasicParsing; Expand-Archive "$t\mail.zip" $t -Force; Move-Item "$t\mail-main" $d; Remove-Item $t -Recurse -Force; Get-ChildItem $d -Recurse | Unblock-File; Set-Location $d
+```
 
 **macOS (Terminal)**
 
-터미널을 열고 `cd `를 입력합니다(뒤에 공백 포함). Finder에서 압축을 푼 폴더를 터미널로 끌어 놓고 Enter를 누릅니다. 이후 명령은 모두 해당 폴더에서 실행합니다.
+```sh
+[ -e ~/mail ] && echo "~/mail already exists" || { t=$(mktemp -d) && curl -fL --retry 3 -o "$t/mail.zip" https://github.com/sj00c/mail/archive/refs/heads/main.zip && unzip -q "$t/mail.zip" -d "$t" && mv "$t/mail-main" ~/mail && rm -rf "$t" && cd ~/mail; }
+```
+
+이후 명령은 모두 이 폴더에서 실행합니다. 터미널을 새로 열었다면 `cd ~/mail`로 돌아옵니다. 브라우저로 받으려면 [소스 ZIP](https://github.com/sj00c/mail/archive/refs/heads/main.zip)을 풀고 `package.json`이 있는 폴더에서 터미널을 여세요.
 
 ### 2. Bun 설치
 
-[Bun 공식 설치 안내](https://bun.sh/docs/installation)의 Windows 또는 macOS 절차를 따라 Bun을 설치하세요. 설치 후 새 PowerShell/Terminal을 열고 다음으로 버전을 확인합니다.
+[Bun 공식 설치 명령](https://bun.sh/docs/installation)입니다.
+
+```powershell
+# Windows (PowerShell)
+powershell -c "irm bun.sh/install.ps1 | iex"
+```
+
+```sh
+# macOS (Terminal)
+curl -fsSL https://bun.sh/install | bash
+```
+
+새 PowerShell/Terminal을 열고 `cd ~/mail` 후 버전을 확인합니다. Bun **1.3.14 이상**이 필요합니다.
 
 ```sh
 bun --version
 ```
 
-소스 설치에는 Bun **1.3.14 이상**이 필요합니다. 공식 안내에 따라 설치했는데 `bun`을 찾지 못하면 터미널을 새로 열어 PATH를 갱신하세요. 새 터미널에서도 1단계 방법으로 앱 폴더를 다시 여세요.
-
 ### 3. 의존성 설치·빌드
 
-ZIP을 푼 최상위 폴더에서 다음을 순서대로 실행합니다.
+앱 폴더(`~/mail`)에서 실행합니다.
 
 ```sh
 bun install --frozen-lockfile
