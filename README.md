@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.sh
 bunx @sj00c/mail@latest setup --from "<이전 설치 폴더>"
 ```
 
-AI 에이전트로 설치했던 경우에는 에이전트에게 이 저장소 주소와 함께 "최신 버전으로 업데이트해줘"라고 하면 됩니다. Claude Code는 [CLAUDE.md](CLAUDE.md), Codex는 [AGENTS.md](AGENTS.md)를 읽고 같은 `setup` 절차를 따릅니다. Client ID·Secret은 채팅에 붙이지 마세요.
+AI 에이전트로 설치했던 경우에도 위 설치 명령을 직접 실행하면 됩니다. Client ID·Secret은 채팅에 붙이지 말고 `.env`에만 입력하세요.
 
 ### 상시 실행과 관리
 
@@ -194,13 +194,6 @@ open -e ~/sj-mail/.env             # macOS
 - 소스 빌드는 `bun install --frozen-lockfile` 후 `bun run build`입니다. 패키지는 `npm pack`으로 만들고 `bun run check:package`·`node scripts/package-smoke.mjs <tgz>`로 검증합니다. 자동 실행 항목은 사용자 단위라 격리할 수 없으므로, smoke 검사는 Mail 자동 실행이 설치된 PC에서는 실행을 거부합니다(CI나 `npm run uninstall` 후 실행). `SJ_MAIL_PACKAGE_SPEC=file:<tgz>`를 주면 `setup`이 레지스트리 대신 그 tarball을 설치합니다.
 - 배포: GitHub Release를 만들면 `.github/workflows/release.yml`이 npm trusted publishing으로 게시합니다(npmjs.com에서 trusted publisher 설정 필요).
 - 환경 변수 예시는 [`.env.example`](.env.example)에서 확인하세요. 개발 서버는 `bun run dev`(웹 `5173`, API `8787`), 운영 빌드는 `bun run build && bun run start`입니다.
-- 소스 구조와 설치 안전 지침은 [CLAUDE.md](CLAUDE.md)를 참고하세요.
-
-<a id="claude-code-install"></a>
-
-### Claude Code로 설치
-
-Claude Code에서 설치할 때도 이 README 순서를 따르고 [CLAUDE.md](CLAUDE.md)의 안전 지침을 먼저 읽으세요. Client ID·Client Secret은 채팅에 보내지 말고 로컬 `.env`에 직접 입력합니다.
 
 ## 라이선스
 
