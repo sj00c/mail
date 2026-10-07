@@ -112,11 +112,16 @@ const bar = (page: Page) => page.locator(".bulk-bar");
 const inline = (page: Page, name: string) =>
   bar(page).getByRole("button", { name, exact: true });
 
+// Label widths depend on the platform's Korean font, so tests that need
+// every action inline widen the list column instead of trusting a viewport.
+const WIDE_LIST = ".body { --list-w: 640px !important; }";
+
 test("actions render inline when they fit and overflow into the menu", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   const calls = await open(page);
+  await page.addStyleTag({ content: WIDE_LIST });
   await checks(page).first().click();
   for (const name of ["읽음", "안읽음", "별표", "보관", "휴지통"])
     await expect(inline(page, name)).toBeVisible();
@@ -145,12 +150,31 @@ test("actions render inline when they fit and overflow into the menu", async ({
 test("inline actions re-flow live as the toolbar resizes", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await open(page);
+  const wide = await page.addStyleTag({ content: WIDE_LIST });
   await checks(page).first().click();
   await expect(inline(page, "보관")).toBeVisible();
   await expect(actions(page)).toHaveCount(0);
+  await wide.evaluate((node) => node.remove());
   await page.setViewportSize({ width: 1000, height: 900 });
   await expect(actions(page)).toBeVisible();
-  await expect(inline(page, "휴지통")).toBeVisible();
+  // Whatever fits stays inline; everything else is in the menu, exactly once.
+  const shownNames = await bar(page)
+    .locator(".bulk-actions > button")
+    .evaluateAll((buttons) =>
+      buttons
+        .map((b) => b.getAttribute("aria-label") ?? b.textContent)
+        .filter((name) => name !== "선택한 메일 작업"),
+    );
+  await actions(page).click();
+  const overflow = await page
+    .getByRole("menu", { name: "선택한 메일 작업" })
+    .getByRole("menuitem")
+    .allTextContents();
+  await page.keyboard.press("Escape");
+  expect([...shownNames, ...overflow].sort()).toEqual(
+    ["읽음", "안읽음", "별표", "보관", "휴지통"].sort(),
+  );
+  expect(shownNames.length).toBeLessThan(5);
   // Inline buttons never spill past the strip they were measured against.
   const strip = (await page.locator(".bulk-actions").boundingBox())!;
   for (const button of await bar(page)
@@ -160,6 +184,7 @@ test("inline actions re-flow live as the toolbar resizes", async ({ page }) => {
     expect(box.x).toBeGreaterThanOrEqual(strip.x - 0.5);
     expect(box.x + box.width).toBeLessThanOrEqual(strip.x + strip.width + 0.5);
   }
+  await page.addStyleTag({ content: WIDE_LIST });
   await page.setViewportSize({ width: 1600, height: 900 });
   await expect(inline(page, "보관")).toBeVisible();
   await expect(actions(page)).toHaveCount(0);
@@ -169,6 +194,7 @@ test("action menu contains keyboard focus and preserves loaded-message API scope
   page,
 }) => {
   const calls = await open(page);
+  await page.addStyleTag({ content: WIDE_LIST });
   await page.locator(".msg-row").first().click();
   await page.getByRole("checkbox", { name: "전체 선택", exact: true }).check();
   await actions(page).focus();
@@ -202,6 +228,7 @@ test("all-results cancellation never executes and failure restores controls", as
   page,
 }) => {
   const calls = await open(page, { bulkConfirmError: true });
+  await page.addStyleTag({ content: WIDE_LIST });
   const selectAllResults = async () => {
     await page
       .getByRole("checkbox", { name: "전체 선택", exact: true })
@@ -262,6 +289,7 @@ test("all-results execution stays busy until confirmed response and sends frozen
   page,
 }) => {
   const calls = await open(page);
+  await page.addStyleTag({ content: WIDE_LIST });
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
