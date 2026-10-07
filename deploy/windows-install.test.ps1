@@ -936,9 +936,12 @@ exit 1
     Stop-ScheduledTask -TaskName MailLocal -TaskPath "\"
     Unregister-ScheduledTask -TaskName MailLocal -TaskPath "\" -Confirm:$false
     # Actual native launcher failure must propagate to Task Scheduler.
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run.ps1") -BunPath (Join-Path $root "missing-bun.exe") -LogPath $log -Workspace $workspace
+    # Unregistering does not wait for the old server, which may still hold
+    # mail.local.log open; use a separate log for this launcher check.
+    $launchFailureLog = Join-Path $workspace "launch-failure.log"
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run.ps1") -BunPath (Join-Path $root "missing-bun.exe") -LogPath $launchFailureLog -Workspace $workspace
     Assert ($LASTEXITCODE -ne 0) "Missing Bun produces a nonzero launcher exit"
-    Assert ((Get-Content -LiteralPath $log -Raw -Encoding UTF8).Contains("Bun executable missing")) "Launcher error is persisted"
+    Assert ((Get-Content -LiteralPath $launchFailureLog -Raw -Encoding UTF8).Contains("Bun executable missing")) "Launcher error is persisted"
   }
   finally {
     Disable-ScheduledTask -TaskName MailLocal -TaskPath "\" -ErrorAction SilentlyContinue
