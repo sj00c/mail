@@ -164,6 +164,9 @@ try {
   # indefinite repetition. The first trigger is intentionally immediate; the
   # explicit Start-ScheduledTask below remains idempotent via IgnoreNew.
   $periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
+  # New-ScheduledTaskTrigger sets StopAtDurationEnd even without a duration;
+  # clear it so a running server is never stopped by the repetition pattern.
+  $periodicTrigger.Repetition.StopAtDurationEnd = $false
   $triggers = @($atLogonTrigger, $periodicTrigger)
   $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
   $settings = New-ScheduledTaskSettingsSet `
