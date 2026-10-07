@@ -1,21 +1,33 @@
-# Windows installation: configuration, runtime, build, scheduled startup.
+# Windows automatic startup for the packaged app, called by `sj-mail setup`:
+# configuration check, runtime check, scheduled startup, health check.
+param(
+  [string]$Workspace,
+  [string]$BunPath,
+  # Run.ps1 of a previous (ZIP/source or other workspace) installation whose
+  # MailLocal task this installation takes over.
+  [string]$ReplaceRunPath
+)
 $ErrorActionPreference = "Stop"
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-  Write-Host "Windows only. On macOS, run: bash deploy/install.sh" -ForegroundColor Red
+  Write-Host "Windows only." -ForegroundColor Red
   exit 1
 }
+# Keep non-ASCII paths intact when sj-mail captures this output.
+if ([Console]::IsOutputRedirected) { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) }
 
-$dir = (Resolve-Path "$PSScriptRoot\..").Path
-$run = Join-Path $dir "deploy\run.ps1"
+$app = (Resolve-Path "$PSScriptRoot\..").Path
+$run = Join-Path $app "deploy\run.ps1"
+$owners = @($run)
+if (-not [string]::IsNullOrWhiteSpace($ReplaceRunPath)) { $owners += $ReplaceRunPath }
 $task = "MailLocal"
 $taskPath = "\"
-$envFile = Join-Path $dir ".env"
+$envFile = if ([string]::IsNullOrWhiteSpace($Workspace)) { $null } else { Join-Path $Workspace ".env" }
 $logDir = Join-Path $env:LOCALAPPDATA "MailLocal"
 $log = Join-Path $logDir "mail.local.log"
 $installLog = Join-Path $logDir "install.log"
 $readyTimeout = 60
-$stage = "[1/6] Configuration"
+$stage = "[1/4] Configuration"
 $clock = [System.Diagnostics.Stopwatch]::StartNew()
 $stageStarted = 0.0
 $secrets = @()
@@ -88,14 +100,16 @@ try {
   Set-Content -LiteralPath $installLog -Value "Mail Windows installation" -Encoding UTF8
   Write-Host "`n  MAIL / LOCAL DEPLOY" -ForegroundColor White
   Write-Host "  ----------------------------------------------" -ForegroundColor DarkGray
-  Write-InstallLog "Source: $dir"
+  Write-InstallLog "App: $app"
+  Write-InstallLog "Workspace: $Workspace"
   Write-InstallLog "Install log: $installLog"
   Write-InstallLog $stage -Level RUN
   Write-InstallLog "Windows: $([Environment]::OSVersion.VersionString); PowerShell: $($PSVersionTable.PSVersion); CPU: $env:PROCESSOR_ARCHITECTURE" -Level DETAIL
   . (Join-Path $PSScriptRoot "windows-readiness.ps1")
 
+  if ($null -eq $envFile) { Stop-Install "Workspace is required. Run: bunx @sj00c/mail@latest setup" }
   if (-not (Test-Path -LiteralPath $envFile)) {
-    Stop-Install ".env is missing. Copy .env.example to .env and enter your Google OAuth credentials."
+    Stop-Install ".env is missing in $Workspace. Run sj-mail setup and enter your Google OAuth credentials."
   }
   $values = @{}
   foreach ($rawLine in Get-Content -LiteralPath $envFile -Encoding UTF8) {
@@ -129,49 +143,21 @@ try {
   if ($redirect -ne $expectedRedirect) { Stop-Install "Set OAUTH_REDIRECT=$expectedRedirect in .env to match PORT=$port." }
   if ($port -ne 8787) { Write-InstallLog "Add $expectedRedirect to the authorized redirect URIs in Google Cloud Console." -Level WARN }
 
-  Set-InstallStage "[2/6] Runtime"
+  Set-InstallStage "[2/4] Runtime"
   $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-  $bunCommand = Get-Command bun -CommandType Application -ErrorAction SilentlyContinue
-  if (-not $bunCommand) {
-    $bunDir = Join-Path $env:USERPROFILE ".bun\bin"
-    $env:Path = "$bunDir;$env:Path"
-    $bunCommand = Get-Command bun -CommandType Application -ErrorAction SilentlyContinue
+  # sj-mail setup resolves and version-checks Bun; the task uses this exact
+  # absolute path, never the scheduler's PATH.
+  if ([string]::IsNullOrWhiteSpace($BunPath) -or -not (Test-Path -LiteralPath $BunPath -PathType Leaf)) {
+    Stop-Install "Bun executable not found: $BunPath. Run: bunx @sj00c/mail@latest setup"
   }
-  if (-not $bunCommand) {
-    $package = Get-Content -LiteralPath (Join-Path $dir "package.json") -Raw | ConvertFrom-Json
-    $bunVersion = $package.packageManager -replace '^bun@', ''
-    Write-InstallLog "Installing Bun $bunVersion using the official installer."
-    # Windows PowerShell 5.1 may otherwise negotiate obsolete TLS versions.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $bootstrap = Join-Path ([IO.Path]::GetTempPath()) ("mail-bun-" + [guid]::NewGuid() + ".ps1")
-    try {
-      Invoke-RestMethod "https://bun.sh/install.ps1" -OutFile $bootstrap
-      Invoke-InstallCommand -Executable $powershell -CommandArgs @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $bootstrap, "-Version", $bunVersion)
-    }
-    finally { Remove-Item -LiteralPath $bootstrap -ErrorAction SilentlyContinue }
-    $bunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { Join-Path $env:USERPROFILE ".bun" }
-    $env:Path = "$(Join-Path $bunRoot 'bin');$env:Path"
-    $bunCommand = Get-Command bun -CommandType Application -ErrorAction SilentlyContinue
-  }
-  if (-not $bunCommand) { Stop-Install "Bun was not found after installation. Reopen PowerShell and retry." }
-  $bun = $bunCommand.Source
+  $bun = (Resolve-Path -LiteralPath $BunPath).Path
   Write-InstallLog "Bun: $bun"
   Invoke-InstallCommand -Executable $bun -CommandArgs @("--version")
+  if (-not (Test-Path -LiteralPath (Join-Path $app "dist\index.html"))) { Stop-Install "The package has no dist/index.html. Rerun sj-mail setup." }
 
-  Push-Location $dir
-  try {
-    Set-InstallStage "[3/6] Dependencies"
-    Invoke-InstallCommand -Executable $bun -CommandArgs @("install", "--frozen-lockfile")
-    Set-InstallStage "[4/6] Production build"
-    Invoke-InstallCommand -Executable $bun -CommandArgs @("run", "build")
-    if (-not (Test-Path -LiteralPath (Join-Path $dir "dist\index.html"))) { Stop-Install "Build output dist/index.html is missing. See the install log." }
-  }
-  finally { Pop-Location }
-
-  Set-InstallStage "[5/6] Automatic startup"
-  # Use the same absolute Bun path as installation, not the scheduler's PATH.
-  if (-not (Test-Path -LiteralPath $run -PathType Leaf)) { Stop-Install "deploy/run.ps1 is missing. Check the source folder." }
-  $action = New-ScheduledTaskAction -Execute $powershell -Argument "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`"" -WorkingDirectory $dir
+  Set-InstallStage "[3/4] Automatic startup"
+  if (-not (Test-Path -LiteralPath $run -PathType Leaf)) { Stop-Install "deploy/run.ps1 is missing. Rerun sj-mail setup." }
+  $action = New-ScheduledTaskAction -Execute $powershell -Argument "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`" -Workspace `"$Workspace`"" -WorkingDirectory $Workspace
   $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
   $atLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $user
   # Omitting RepetitionDuration is the Task Scheduler representation of an
@@ -186,13 +172,14 @@ try {
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
   # Validate the exact root task and save its definition before any mutation.
-  # A task belonging to another checkout must never be overwritten silently.
+  # A task belonging to another installation is replaced only when setup
+  # named it explicitly (migration); otherwise it is never overwritten.
   $existing = Get-MailTask
   if ($existing) {
-    Assert-MailTaskOwnership -Task $existing -RunPath $run
+    Assert-MailTaskOwnership -Task $existing -RunPath $owners
     $recoverySnapshot = Export-MailTaskRecovery -Task $existing
     $taskMutationStarted = $true
-    Stop-MailTask -RunPath $run -WaitTimeoutSeconds 10 -PollMilliseconds 250 | Out-Null
+    Stop-MailTask -RunPath $owners -WaitTimeoutSeconds 10 -PollMilliseconds 250 | Out-Null
   }
   $occupant = Get-PortOccupant $port
   if ($occupant) {
@@ -207,7 +194,7 @@ try {
   $serverLaunchAttempted = $true
   Start-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop
 
-  Set-InstallStage "[6/6] Health check"
+  Set-InstallStage "[4/4] Health check"
   $ready = Wait-MailServer -Url "http://127.0.0.1:$port/auth/status" -TaskName $task -StartedAt $startedAt -TimeoutSeconds $readyTimeout
   Write-InstallLog "Health: $($ready.Reason); elapsed=$($ready.ElapsedSeconds)s; task=$($ready.TaskState); result=$($ready.TaskResult); $($ready.LastProbe)" -Level DETAIL
   if ($ready.Reason -eq "missing" -or $ready.Reason -eq "exited") { Stop-Install "The server task exited or was disabled. See the server log." }
@@ -215,7 +202,6 @@ try {
   Write-InstallLog ("{0} ({1:N1}s)" -f $stage, ($clock.Elapsed.TotalSeconds - $stageStarted)) -Level OK
   Write-Host ""
   Write-InstallLog ("Ready in {0:N1}s | {1}" -f $clock.Elapsed.TotalSeconds, $appUrl) -Level OK
-  Write-InstallLog "Manage: powershell -File deploy\windows-control.ps1 Status"
   # A missing browser association must not turn a healthy installation into failure.
   try { Start-Process $appUrl } catch { Write-InstallLog "Could not open the browser. Open $appUrl manually." -Level WARN }
 }
@@ -224,7 +210,7 @@ catch {
   try {
     if ($taskMutationStarted) {
       if ($null -ne $recoverySnapshot) {
-        $restored = Restore-MailTaskRecovery -Snapshot $recoverySnapshot -RunPath $run -StateOnly:(-not $taskReplacementAttempted)
+        $restored = Restore-MailTaskRecovery -Snapshot $recoverySnapshot -RunPath $owners -StateOnly:(-not $taskReplacementAttempted)
         Write-InstallLog $restored.Message
       }
       else {

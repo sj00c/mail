@@ -1,6 +1,10 @@
 param(
   [Parameter(Mandatory = $true)][string]$BunPath,
-  [Parameter(Mandatory = $true)][string]$LogPath
+  [Parameter(Mandatory = $true)][string]$LogPath,
+  # sj-mail workspace holding .env and .data. Omitted by tasks registered from
+  # a git checkout: .env stays in the checkout and sign-in data in server/.data
+  # until `sj-mail setup` migrates them.
+  [string]$Workspace
 )
 
 # This entrypoint only runs the already-built app. Never build on login.
@@ -155,9 +159,14 @@ public static class MailWindowsJobObject
 }
 
 try {
-  Set-Location -LiteralPath (Join-Path $PSScriptRoot "..")
-  if (-not (Test-Path -LiteralPath $BunPath -PathType Leaf)) { throw "Bun executable missing: $BunPath. Run deploy/install.ps1 again." }
-  if (-not (Test-Path -LiteralPath "dist/index.html")) { throw "dist/index.html missing. Run deploy/install.ps1 again." }
+  $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+  if (-not (Test-Path -LiteralPath $BunPath -PathType Leaf)) { throw "Bun executable missing: $BunPath. Run sj-mail setup again." }
+  if (-not (Test-Path -LiteralPath (Join-Path $app "dist/index.html"))) { throw "dist/index.html missing. Run sj-mail setup again." }
+  if ([string]::IsNullOrWhiteSpace($Workspace)) { $Workspace = $app }
+  else { $env:MAIL_DATA_DIR = Join-Path $Workspace ".data" }
+  $envFile = Join-Path $Workspace ".env"
+  if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) { throw ".env missing in $Workspace. Run sj-mail setup again." }
+  Set-Location -LiteralPath $Workspace
   # Keep the native job handle open until this launcher exits. Closing it
   # explicitly would also terminate the launcher, which would skip the exit
   # record below; process teardown closes it and kills any remaining Bun child.
@@ -168,7 +177,7 @@ try {
   # Native stderr includes normal Bun diagnostics on Windows PowerShell 5.1.
   $ErrorActionPreference = "Continue"
   $global:LASTEXITCODE = $null
-  & $BunPath --use-system-ca server/index.ts 2>&1 |
+  & $BunPath --use-system-ca "--env-file=$envFile" (Join-Path $app "server/index.ts") 2>&1 |
     ForEach-Object { [string]$_ } | Out-File -LiteralPath $LogPath -Append -Encoding UTF8
   $code = $global:LASTEXITCODE
   $ErrorActionPreference = "Stop"

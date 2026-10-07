@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/mail-macos-deploy.XXXXXX")"
+FIXTURE="$(cd "$FIXTURE" && pwd -P)"
 trap 'rm -rf "$FIXTURE"' EXIT
 
 fail() {
@@ -47,7 +48,9 @@ assert_missing() {
 }
 
 mkdir -p "$FIXTURE/bin" "$FIXTURE/deploy" "$FIXTURE/dist" "$FIXTURE/web" \
-  "$FIXTURE/home/Library/LaunchAgents"
+  "$FIXTURE/home/Library/LaunchAgents" "$FIXTURE/workspace"
+printf 'PORT=8787\n' > "$FIXTURE/workspace/.env"
+WORKSPACE="$FIXTURE/workspace"
 cp "$ROOT/deploy/run.sh" "$FIXTURE/deploy/run.sh"
 cp "$ROOT/deploy/uninstall.sh" "$FIXTURE/deploy/uninstall.sh"
 chmod +x "$FIXTURE/deploy/run.sh" "$FIXTURE/deploy/uninstall.sh"
@@ -66,6 +69,7 @@ for argument in "$@"; do
 done
 printf 'NODE_ENV=%s\n' "${NODE_ENV-}" >> "$FAKE_BUN_LOG"
 printf 'HOST=%s\n' "${HOST-}" >> "$FAKE_BUN_LOG"
+printf 'MAIL_DATA_DIR=%s\n' "${MAIL_DATA_DIR-}" >> "$FAKE_BUN_LOG"
 printf 'PWD=%s\n' "$PWD" >> "$FAKE_BUN_LOG"
 exit "${FAKE_BUN_EXIT:-0}"
 EOF
@@ -118,14 +122,17 @@ chmod +x "$LAUNCHCTL"
 touch "$FIXTURE/web/newer.ts"
 set +e
 LAUNCH_STATUS=0
-LAUNCH_OUTPUT="$(FAKE_BUN_LOG="$BUN_LOG" FAKE_BUN_EXIT=23 bash "$FIXTURE/deploy/run.sh" "$BUN" 2>&1)"
+LAUNCH_OUTPUT="$(FAKE_BUN_LOG="$BUN_LOG" FAKE_BUN_EXIT=23 bash "$FIXTURE/deploy/run.sh" "$BUN" "$WORKSPACE" 2>&1)"
 LAUNCH_STATUS=$?
 set -e
 assert_status "$LAUNCH_STATUS" 23 "launcher propagates Bun exit code"
 LAUNCH_LOG="$(<"$BUN_LOG")"
-assert_contains "$LAUNCH_LOG" "argc=2" "launcher passes exactly two Bun arguments"
+assert_contains "$LAUNCH_LOG" "argc=3" "launcher passes exactly three Bun arguments"
 assert_contains "$LAUNCH_LOG" "arg=--use-system-ca" "launcher enables the system CA store"
-assert_contains "$LAUNCH_LOG" "arg=server/index.ts" "launcher starts the production server entrypoint"
+assert_contains "$LAUNCH_LOG" "arg=--env-file=$WORKSPACE/.env" "launcher loads the workspace .env"
+assert_contains "$LAUNCH_LOG" "arg=$FIXTURE/server/index.ts" "launcher starts the packaged server entrypoint"
+assert_contains "$LAUNCH_LOG" "MAIL_DATA_DIR=$WORKSPACE/.data" "launcher keeps sign-in data in the workspace"
+assert_contains "$LAUNCH_LOG" "PWD=$WORKSPACE" "launcher runs inside the workspace"
 assert_contains "$LAUNCH_LOG" "NODE_ENV=production" "launcher sets production environment"
 assert_contains "$LAUNCH_LOG" "HOST=127.0.0.1" "launcher forces loopback binding"
 assert_not_contains "$LAUNCH_LOG" "arg=run" "launcher does not invoke a build command"
@@ -134,7 +141,7 @@ assert_not_contains "$LAUNCH_LOG" "arg=build" "launcher does not build when sour
 BEFORE_MISSING_BUILD="$LAUNCH_LOG"
 rm -f "$FIXTURE/dist/index.html"
 set +e
-LAUNCH_OUTPUT="$(FAKE_BUN_LOG="$BUN_LOG" FAKE_BUN_EXIT=0 bash "$FIXTURE/deploy/run.sh" "$BUN" 2>&1)"
+LAUNCH_OUTPUT="$(FAKE_BUN_LOG="$BUN_LOG" FAKE_BUN_EXIT=0 bash "$FIXTURE/deploy/run.sh" "$BUN" "$WORKSPACE" 2>&1)"
 LAUNCH_STATUS=$?
 set -e
 assert_status "$LAUNCH_STATUS" 1 "launcher rejects a missing build"
@@ -148,16 +155,39 @@ fi
 assert_status "$BUN_INVOKED" 0 "missing build does not invoke Bun"
 printf '<html></html>\n' > "$FIXTURE/dist/index.html"
 
+mv "$WORKSPACE/.env" "$WORKSPACE/.env.off"
+set +e
+LAUNCH_OUTPUT="$(FAKE_BUN_LOG="$BUN_LOG" bash "$FIXTURE/deploy/run.sh" "$BUN" "$WORKSPACE" 2>&1)"
+LAUNCH_STATUS=$?
+set -e
+assert_status "$LAUNCH_STATUS" 1 "launcher rejects a workspace without .env"
+assert_contains "$LAUNCH_OUTPUT" ".env" "missing .env error names the file"
+mv "$WORKSPACE/.env.off" "$WORKSPACE/.env"
+
+# A git checkout registered before sj-mail passes only Bun: .env stays in the
+# checkout and sign-in data uses the server default (server/.data).
+printf 'PORT=8787\n' > "$FIXTURE/.env"
+set +e
+LAUNCH_OUTPUT="$(FAKE_BUN_LOG="$BUN_LOG" FAKE_BUN_EXIT=0 bash "$FIXTURE/deploy/run.sh" "$BUN" 2>&1)"
+LAUNCH_STATUS=$?
+set -e
+assert_status "$LAUNCH_STATUS" 0 "checkout launcher keeps working with only the Bun argument"
+LAUNCH_LOG="$(<"$BUN_LOG")"
+assert_contains "$LAUNCH_LOG" "arg=--env-file=$FIXTURE/.env" "checkout launcher loads the checkout .env"
+assert_contains "$LAUNCH_LOG" "MAIL_DATA_DIR=" "checkout launcher leaves the data folder to the server default"
+assert_not_contains "$LAUNCH_LOG" "MAIL_DATA_DIR=/" "checkout launcher does not redirect sign-in data"
+rm "$FIXTURE/.env"
+
 MISSING_BUN="$FIXTURE/bin/missing-bun"
 set +e
-LAUNCH_OUTPUT="$(bash "$FIXTURE/deploy/run.sh" "$MISSING_BUN" 2>&1)"
+LAUNCH_OUTPUT="$(bash "$FIXTURE/deploy/run.sh" "$MISSING_BUN" "$WORKSPACE" 2>&1)"
 LAUNCH_STATUS=$?
 set -e
 assert_status "$LAUNCH_STATUS" 1 "launcher rejects a missing Bun executable"
 assert_contains "$LAUNCH_OUTPUT" "Bun 실행 파일이 없습니다" "missing Bun error is actionable"
 
 set +e
-LAUNCH_OUTPUT="$(bash "$FIXTURE/deploy/run.sh" "relative-bun" 2>&1)"
+LAUNCH_OUTPUT="$(bash "$FIXTURE/deploy/run.sh" "relative-bun" "$WORKSPACE" 2>&1)"
 LAUNCH_STATUS=$?
 set -e
 assert_status "$LAUNCH_STATUS" 1 "launcher rejects a relative Bun path"
@@ -166,9 +196,11 @@ assert_contains "$LAUNCH_OUTPUT" "절대 경로" "relative Bun error requires an
 PLIST_SOURCE="$(<"$ROOT/deploy/com.mail.local.plist")"
 INSTALL_SOURCE="$(<"$ROOT/deploy/install.sh")"
 assert_contains "$PLIST_SOURCE" '<string>__BUN__</string>' "launchd template reserves an absolute Bun argument"
+assert_contains "$PLIST_SOURCE" '<string>__WORKSPACE__</string>' "launchd template reserves the workspace argument"
 assert_contains "$INSTALL_SOURCE" 'Set :ProgramArguments:1 $BUN' "installer registers the resolved Bun path"
-assert_contains "$INSTALL_SOURCE" '"$BUN" run build' "installer performs the build before registration"
-assert_contains "$INSTALL_SOURCE" 'dist/index.html' "installer validates the build artifact"
+assert_contains "$INSTALL_SOURCE" 'Set :ProgramArguments:2 $DIR' "installer registers the workspace"
+assert_not_contains "$INSTALL_SOURCE" ' run build' "installer never builds; the package ships dist"
+assert_contains "$INSTALL_SOURCE" 'dist/index.html' "installer validates the packaged build"
 
 run_uninstall() {
   local state="$1"

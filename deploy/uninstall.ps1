@@ -3,6 +3,7 @@ param(
   [int]$PollMilliseconds = 250
 )
 $ErrorActionPreference = "Stop"
+if ([Console]::IsOutputRedirected) { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) }
 
 # Windows: stop scheduled instances and unregister automatic startup.
 $task = "MailLocal"

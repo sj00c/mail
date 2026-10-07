@@ -292,105 +292,48 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-async function expectCliFailure(
-  label,
-  cliPath,
-  cwd,
-  args,
-  expectedMessage,
-  env = process.env,
-) {
-  const record = runProcess(process.execPath, [cliPath, ...args], {
-    cwd,
-    env,
-  });
+// Every CLI call runs with an isolated home so setup never reads or replaces
+// the runner's real autostart entry, logs or default workspace.
+function isolatedEnv(home, extra = {}) {
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ...extra };
+  if (process.platform === "win32") env.LOCALAPPDATA = join(home, "AppData", "Local");
+  for (const key of [
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "OAUTH_REDIRECT",
+    "PORT",
+    "HOST",
+    "MAIL_DATA_DIR",
+    "NODE_ENV",
+    "BUN_INSTALL",
+  ]) {
+    if (!(key in extra)) delete env[key];
+  }
+  return env;
+}
+
+async function expectCliFailure(label, cliPath, cwd, args, expectedMessage, env) {
+  const record = runProcess(process.execPath, [cliPath, ...args], { cwd, env });
   const result = await record.done;
   assert(result.code !== 0, `${label} unexpectedly succeeded`);
   assert(
     new RegExp(expectedMessage, "i").test(redact(result.output)),
-    `${label} did not explain the failure`,
+    `${label} did not explain the failure:\n${redact(result.output)}`,
   );
   return result;
 }
 
-async function exerciseFailureBranches(root, packageRoot, cliPath) {
-  const noEnvWorkspace = join(root, "missing-env");
-  await mkdir(noEnvWorkspace);
-  await expectCliFailure(
-    "missing .env",
-    cliPath,
-    noEnvWorkspace,
-    ["start"],
-    "no \\.env",
-  );
-
-  const missingBuildWorkspace = join(root, "missing-build");
-  await mkdir(missingBuildWorkspace);
-  await writeFile(
-    join(missingBuildWorkspace, ".env"),
-    "PORT=8787\n",
-  );
-  const packagedIndex = join(packageRoot, "dist", "index.html");
-  const backupIndex = `${packagedIndex}.smoke-backup`;
-  await rename(packagedIndex, backupIndex);
-  try {
-    await expectCliFailure(
-      "missing packaged build",
-      cliPath,
-      missingBuildWorkspace,
-      ["start"],
-      "production UI is missing",
-    );
-  } finally {
-    await rename(backupIndex, packagedIndex);
-  }
-
-  const noBunWorkspace = join(root, "missing-bun");
-  const noBunPath = join(root, "no-bun-on-path");
-  await mkdir(noBunWorkspace);
-  await mkdir(noBunPath);
-  await writeFile(join(noBunWorkspace, ".env"), "PORT=8787\n");
-  const noBunEnvironment = { ...process.env, PATH: noBunPath };
-  await expectCliFailure(
-    "missing Bun",
-    cliPath,
-    noBunWorkspace,
-    ["start"],
-    "Bun is required",
-    noBunEnvironment,
-  );
-
-  const unrelatedWorkspace = join(root, "unrelated");
-  await mkdir(unrelatedWorkspace);
-  const unrelatedPackage = JSON.stringify(
-    {
-      name: "unrelated-workspace",
-      private: true,
-      scripts: { start: "other-command" },
-    },
-    null,
-    2,
-  ) + "\n";
-  const unrelatedEnv = "SMOKE_UNRELATED_CONFIG=keep-me\n";
-  await writeFile(join(unrelatedWorkspace, "package.json"), unrelatedPackage);
-  await writeFile(join(unrelatedWorkspace, ".env"), unrelatedEnv);
-  await expectCliFailure(
-    "unrelated package protection",
-    cliPath,
-    unrelatedWorkspace,
-    ["init"],
-    "refusing to overwrite",
-  );
-  assert(
-    (await readFile(join(unrelatedWorkspace, "package.json"), "utf8")) ===
-      unrelatedPackage,
-    "init changed an unrelated package.json",
-  );
-  assert(
-    (await readFile(join(unrelatedWorkspace, ".env"), "utf8")) === unrelatedEnv,
-    "init changed an unrelated .env",
-  );
+function runtimeEnv(port) {
+  return [
+    `GOOGLE_CLIENT_ID=${fakeClientId}`,
+    `GOOGLE_CLIENT_SECRET=${fakeClientSecret}`,
+    `OAUTH_REDIRECT=http://localhost:${port}/auth/callback`,
+    `PORT=${port}`,
+    "",
+  ].join("\n");
 }
+
+const tokenContents = `${JSON.stringify({ refresh_token: fakeRefreshToken }, null, 2)}\n`;
 
 async function smoke(tarball) {
   assert(await isFile(tarball), `tarball does not exist: ${tarball}`);
@@ -398,193 +341,131 @@ async function smoke(tarball) {
   const root = await mkdtemp(join(tmpdir(), "sj-mail-package-smoke-"));
   let server;
   try {
+    const home = join(root, "home");
     const consumer = join(root, "consumer");
-    const workspace = join(root, "workspace");
+    await mkdir(home);
     await mkdir(consumer);
-    await mkdir(workspace);
     await writeFile(
       join(consumer, "package.json"),
       JSON.stringify({ private: true }, null, 2) + "\n",
     );
 
-    // Install once into a disposable consumer so all subsequent checks use
-    // files from the packed artifact, never the source checkout.
+    // The CLI under test comes from the packed artifact, never the checkout.
     await npmInstall(consumer, tarball);
-    const packageRoot = join(consumer, "node_modules", "@sj00c", "mail");
-    const installedManifestPath = join(packageRoot, "package.json");
-    const cliPath = join(packageRoot, "cli", "mail.mjs");
-    assert(await isFile(installedManifestPath), "packed package was not installed");
+    const cliPath = join(consumer, "node_modules", "@sj00c", "mail", "cli", "mail.mjs");
     assert(await isFile(cliPath), "packed CLI entry is missing");
-    assert(
-      await isFile(join(packageRoot, "dist", "index.html")),
-      "packed production dist/index.html is missing",
-    );
-    const installedManifest = await readJson(installedManifestPath);
-    assert(
-      typeof installedManifest.version === "string" &&
-        installedManifest.version.length > 0,
-      "packed package has no version",
-    );
+    const env = isolatedEnv(home, { SJ_MAIL_PACKAGE_SPEC: `file:${tarball}` });
+    const cli = (label, args, cwd = consumer) =>
+      runChecked(label, process.execPath, [cliPath, ...args], { cwd, env });
 
-    await exerciseFailureBranches(root, packageRoot, cliPath);
-
-    // init is deliberately run before installing workspace dependencies.
-    await runChecked(
-      "sj-mail init",
-      process.execPath,
-      [cliPath, "init", workspace],
-      { cwd: consumer },
-    );
-    const workspacePackagePath = join(workspace, "package.json");
-    const workspaceEnvPath = join(workspace, ".env");
-    assert(await isFile(workspacePackagePath), "init did not create package.json");
-    assert(await isFile(workspaceEnvPath), "init did not create .env");
-    assert(
-      (await stat(join(workspace, "node_modules")).catch(() => null)) === null,
-      "init installed dependencies unexpectedly",
-    );
-
-    const generatedPackage = await readJson(workspacePackagePath);
-    const expectedRange = `>=${installedManifest.version}`;
-    assert(generatedPackage.private === true, "workspace package is not private");
-    assert(
-      generatedPackage.scripts?.start === "sj-mail start",
-      "workspace start script is not sj-mail start",
-    );
-    assert(
-      generatedPackage.dependencies?.[PACKAGE_NAME] === expectedRange,
-      `workspace dependency range is not ${expectedRange}`,
-    );
-
-    // Existing configuration is never replaced by a repeated init.
-    const preservedPackage = `${JSON.stringify(
-      { ...generatedPackage, "x-smoke-config": "preserved" },
-      null,
-      2,
-    )}\n`;
-    const preservedEnv =
-      (await readFile(workspaceEnvPath, "utf8")) +
-      "SMOKE_CUSTOM_CONFIG=preserved\n";
-    await writeFile(workspacePackagePath, preservedPackage);
-    await writeFile(workspaceEnvPath, preservedEnv);
-    await runChecked(
-      "repeated sj-mail init",
-      process.execPath,
-      [cliPath, "init", workspace],
-      { cwd: consumer },
-    );
-    assert(
-      (await readFile(workspacePackagePath, "utf8")) === preservedPackage,
-      "repeated init replaced package configuration",
-    );
-    assert(
-      (await readFile(workspaceEnvPath, "utf8")) === preservedEnv,
-      "repeated init replaced .env configuration",
-    );
-
-    const port = await freePort();
-    const runtimeEnv = [
-      `GOOGLE_CLIENT_ID=${fakeClientId}`,
-      `GOOGLE_CLIENT_SECRET=${fakeClientSecret}`,
-      `OAUTH_REDIRECT=http://localhost:${port}/auth/callback`,
-      `PORT=${port}`,
-      "SMOKE_CUSTOM_CONFIG=preserved",
-      "",
-    ].join("\n");
-    await writeFile(workspaceEnvPath, runtimeEnv);
-    const dataDir = join(workspace, ".data");
-    const tokenPath = join(dataDir, "token.json");
-    const tokenContents = JSON.stringify(
-      { refresh_token: fakeRefreshToken },
-      null,
-      2,
-    ) + "\n";
-    await mkdir(dataDir);
-    await writeFile(tokenPath, tokenContents);
-
-    // npm install is intentionally repeated with the tarball and no-save:
-    // package.json/.env remain user configuration while node_modules changes.
-    await npmInstall(workspace, tarball);
-    assert(
-      (await readFile(workspacePackagePath, "utf8")) === preservedPackage,
-      "workspace package configuration changed during install",
-    );
-    assert(
-      (await readFile(workspaceEnvPath, "utf8")) === runtimeEnv,
-      "workspace .env changed during install",
-    );
-
-    const childEnvironment = { ...process.env };
-    for (const key of [
-      "GOOGLE_CLIENT_ID",
-      "GOOGLE_CLIENT_SECRET",
-      "OAUTH_REDIRECT",
-      "PORT",
-      "HOST",
-      "MAIL_DATA_DIR",
-      "NODE_ENV",
-    ]) {
-      delete childEnvironment[key];
+    // 1. New install: workspace + package + .env template, then a clear stop
+    //    for Google credentials (exit 0, nothing registered).
+    const workspace = join(root, "workspace");
+    const first = await cli("sj-mail setup (new)", ["setup", "--dir", workspace]);
+    assert(/credentials are still needed/i.test(first.output), "setup did not ask for credentials");
+    const manifest = await readJson(join(workspace, "package.json"));
+    assert(manifest.private === true, "workspace package is not private");
+    assert(manifest.dependencies?.[PACKAGE_NAME] === `file:${tarball}`, "workspace dependency is not the package spec");
+    assert(manifest.scripts?.serve === "sj-mail run", "workspace has no serve script");
+    const app = join(workspace, "node_modules", "@sj00c", "mail");
+    for (const file of ["dist/index.html", "server/index.ts", "deploy/run.sh", "deploy/run.ps1", "deploy/install.ps1"]) {
+      assert(await isFile(join(app, file)), `installed package is missing ${file}`);
     }
-    const npm = await npmInvocation();
-    server = runProcess(
-      npm.command,
-      [...npm.prefix, "run", "start"],
-      {
-        cwd: workspace,
-        env: childEnvironment,
-        windowsHide: false,
-        timeoutMs: 0,
-      },
+    const envPath = join(workspace, ".env");
+    const template = await readFile(envPath, "utf8");
+    assert(/your-client-id/.test(template), "setup did not create the .env template");
+    const setupLog = await readFile(
+      process.platform === "win32"
+        ? join(home, "AppData", "Local", "MailLocal", "setup.log")
+        : process.platform === "darwin"
+          ? join(home, "Library", "Logs", "sj-mail", "setup.log")
+          : join(home, ".local", "state", "sj-mail", "setup.log"),
+      "utf8",
     );
-    const baseUrl = `http://127.0.0.1:${port}`;
-    const statusResponse = await waitForReady(
-      server,
-      `${baseUrl}/auth/status`,
-    );
-    assert(statusResponse.status === 200, "auth status did not return HTTP 200");
-    assert(
-      (await statusResponse.json()).authed === true,
-      "auth status did not read workspace .data/token.json",
-    );
+    assert(/\[RUN\] \[3\/5\] Package/.test(setupLog) && /\[OUT\] /.test(setupLog), "setup.log misses stages or install output");
 
-    const rootResponse = await fetch(`${baseUrl}/`);
-    assert(rootResponse.status === 200, "production root did not return HTTP 200");
-    const html = await rootResponse.text();
-    const assets = [
-      ...new Set(
-        [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map(
-          (match) => match[1],
-        ),
-      ),
-    ];
+    // 2. Runtime: the foreground server reads the workspace .env and token.
+    const port = await freePort();
+    await writeFile(envPath, runtimeEnv(port));
+    await mkdir(join(workspace, ".data"));
+    await writeFile(join(workspace, ".data", "token.json"), tokenContents);
+    server = runProcess(process.execPath, [cliPath, "run", "--dir", workspace], {
+      cwd: consumer,
+      // A conflicting shell PORT must not override the workspace .env.
+      env: { ...env, PORT: "1" },
+      windowsHide: false,
+      timeoutMs: 0,
+    });
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const status = await waitForReady(server, `${baseUrl}/auth/status`);
+    assert((await status.json()).authed === true, "server did not read workspace .data/token.json");
+    const html = await (await fetch(`${baseUrl}/`)).text();
+    const assets = [...new Set([...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]))];
     assert(assets.length > 0, "production root did not reference any assets");
     for (const asset of assets) {
-      const response = await fetch(`${baseUrl}${asset}`);
-      assert(response.status === 200, `asset failed to load: ${asset}`);
+      assert((await fetch(`${baseUrl}${asset}`)).status === 200, `asset failed to load: ${asset}`);
     }
-
-    // Reinstall after the server has used its token. User data lives beside
-    // the workspace, not in node_modules, so an update must not remove it.
     await stopProcess(server);
     server = undefined;
-    await npmInstall(workspace, tarball);
+
+    // 3. Update in place keeps settings and sign-in data.
+    const envBefore = await readFile(envPath, "utf8");
+    await cli("sj-mail setup (update)", ["setup", "--dir", workspace, "--no-autostart"]);
+    assert((await readFile(envPath, "utf8")) === envBefore, "update changed .env");
     assert(
-      (await readFile(workspacePackagePath, "utf8")) === preservedPackage,
-      "workspace package configuration changed during reinstall",
+      (await readFile(join(workspace, ".data", "token.json"), "utf8")) === tokenContents,
+      "update changed .data/token.json",
     );
+
+    // 4. Migration from a ZIP/source installation: .env and server/.data are
+    //    copied, the old folder is left untouched.
+    const legacy = join(root, "legacy mail-main");
+    await mkdir(join(legacy, "deploy"), { recursive: true });
+    await mkdir(join(legacy, "server", ".data"), { recursive: true });
+    await writeFile(join(legacy, "server", "index.ts"), "");
+    const legacyEnv = runtimeEnv(await freePort());
+    await writeFile(join(legacy, ".env"), legacyEnv);
+    await writeFile(join(legacy, "server", ".data", "token.json"), tokenContents);
+    const migrated = join(root, "migrated");
+    await cli("sj-mail setup --from", ["setup", "--dir", migrated, "--from", legacy, "--no-autostart"]);
+    assert((await readFile(join(migrated, ".env"), "utf8")) === legacyEnv, "migration did not copy .env");
     assert(
-      (await readFile(workspaceEnvPath, "utf8")) === runtimeEnv,
-      "workspace .env changed during reinstall",
+      (await readFile(join(migrated, ".data", "token.json"), "utf8")) === tokenContents,
+      "migration did not copy sign-in data",
     );
-    assert(
-      (await readFile(tokenPath, "utf8")) === tokenContents,
-      "workspace .data/token.json did not survive reinstall",
+    assert((await readFile(join(legacy, ".env"), "utf8")) === legacyEnv, "migration changed the old folder");
+
+    // 5. Failures are explicit and leave unrelated files alone.
+    const unrelated = join(root, "unrelated");
+    await mkdir(unrelated);
+    const unrelatedPackage = `${JSON.stringify({ name: "unrelated", scripts: { start: "x" } }, null, 2)}\n`;
+    await writeFile(join(unrelated, "package.json"), unrelatedPackage);
+    await expectCliFailure("unrelated package protection", cliPath, consumer, ["setup", "--dir", unrelated], "belongs to another project", env);
+    assert((await readFile(join(unrelated, "package.json"), "utf8")) === unrelatedPackage, "setup changed an unrelated package.json");
+    await expectCliFailure("unknown legacy folder", cliPath, consumer, ["setup", "--dir", migrated, "--from", unrelated], "neither an sj-mail workspace", env);
+    await expectCliFailure("run before setup", cliPath, consumer, ["run", "--dir", join(root, "empty")], "No installed app", env);
+    const missingEnv = join(root, "missing-env");
+    await cli("sj-mail setup (missing .env fixture)", ["setup", "--dir", missingEnv, "--no-autostart"]);
+    await rm(join(missingEnv, ".env"));
+    await expectCliFailure("missing .env", cliPath, consumer, ["run", "--dir", missingEnv], "no \\.env", env);
+    const index = join(app, "dist", "index.html");
+    await rename(index, `${index}.smoke-backup`);
+    try {
+      await expectCliFailure("missing packaged build", cliPath, consumer, ["run", "--dir", workspace], "production UI is missing", env);
+    } finally {
+      await rename(`${index}.smoke-backup`, index);
+    }
+    const noBin = join(root, "no-bin");
+    await mkdir(noBin);
+    await expectCliFailure(
+      "missing Bun",
+      cliPath,
+      consumer,
+      ["run", "--dir", workspace],
+      "Bun is required",
+      { ...env, PATH: noBin, Path: noBin },
     );
-    assert(
-      !tokenPath.includes(`${join("node_modules", "")}`),
-      "workspace token path unexpectedly points inside node_modules",
-    );
+    await expectCliFailure("unknown option", cliPath, consumer, ["setup", "--bogus"], "Unknown option", env);
   } finally {
     await stopProcess(server);
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

@@ -47,25 +47,36 @@ function Get-MailRunPathFromTask([object]$Task) {
   return $null
 }
 
+function Get-MailTaskRunPath {
+  # Used by sj-mail setup to find (and migrate) the installation that
+  # currently owns automatic startup.
+  return Get-MailRunPathFromTask (Get-MailTask)
+}
+
 function Test-MailTaskOwnership {
+  # RunPath lists every launcher this caller may manage: its own run.ps1 and,
+  # while migrating, the previous installation's run.ps1.
   param(
     [Parameter(Mandatory = $true)][object]$Task,
-    [Parameter(Mandatory = $true)][string]$RunPath
+    [Parameter(Mandatory = $true)][string[]]$RunPath
   )
-  $expected = ConvertTo-MailFullPath $RunPath
   $actual = ConvertTo-MailFullPath (Get-MailRunPathFromTask $Task)
-  return -not [string]::IsNullOrEmpty($expected) -and
-    -not [string]::IsNullOrEmpty($actual) -and
-    [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)
+  if ([string]::IsNullOrEmpty($actual)) { return $false }
+  foreach ($candidate in $RunPath) {
+    $expected = ConvertTo-MailFullPath $candidate
+    if (-not [string]::IsNullOrEmpty($expected) -and
+      [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  }
+  return $false
 }
 
 function Assert-MailTaskOwnership {
   param(
     [Parameter(Mandatory = $true)][object]$Task,
-    [Parameter(Mandatory = $true)][string]$RunPath
+    [Parameter(Mandatory = $true)][string[]]$RunPath
   )
   if (-not (Test-MailTaskOwnership -Task $Task -RunPath $RunPath)) {
-    throw "MailLocal points to another deploy/run.ps1. Run deploy\uninstall.ps1 from the previous installation folder before installing here."
+    throw "MailLocal points to another deploy/run.ps1. Run sj-mail setup so it can migrate that installation, or remove it first."
   }
 }
 
@@ -92,7 +103,7 @@ function Export-MailTaskRecovery {
 function Restore-MailTaskRecovery {
   param(
     [Parameter(Mandatory = $true)][object]$Snapshot,
-    [Parameter(Mandatory = $true)][string]$RunPath,
+    [Parameter(Mandatory = $true)][string[]]$RunPath,
     [switch]$StateOnly
   )
   if ([string]::IsNullOrWhiteSpace([string]$Snapshot.Definition)) {
@@ -168,7 +179,7 @@ function Get-MailTaskInstanceCount {
 
 function Stop-MailTask {
   param(
-    [Parameter(Mandatory = $true)][string]$RunPath,
+    [Parameter(Mandatory = $true)][string[]]$RunPath,
     [double]$WaitTimeoutSeconds = 10,
     [int]$PollMilliseconds = 250
   )

@@ -5,29 +5,27 @@ This repository is a local-only Gmail, Google Calendar, Google Drive, and Google
 ## Required behavior
 
 1. Detect the operating system before running commands.
-2. Read `README.md`, `.env.example`, and the matching installer before changing or running anything:
-   - macOS: `deploy/install.sh`
-   - Windows: `deploy/install.ps1`
+2. Read `README.md` and `cli/mail.mjs` (`setup`) before changing or running anything. Distribution is npm-only: `bunx @sj00c/mail@latest setup` installs or updates into the workspace `~/sj-mail` (`--dir` to override). The platform scripts it runs live in the package's `deploy/` (`install.ps1`/`install.sh`).
 3. Explain Google Cloud steps in plain Korean, one human action at a time.
 4. Never ask the user to paste a Client Secret into chat or a command argument.
-5. Have the user enter credentials directly into the local `.env` file. Never print, inspect, commit, or transmit its values.
+5. Have the user enter credentials directly into the workspace `.env` file. Never print, inspect, commit, or transmit its values.
 6. Do not invent API keys. This app uses a Web application OAuth Client ID and Client Secret.
-7. Keep the default port 8787 unless the installer reports that another program owns it. Then set `PORT` and `OAUTH_REDIRECT` in `.env` to the same free port and have the user add that redirect URI in Google Cloud Console before re-running. Never expose the server to the LAN.
-8. Run the installer only after `.env` exists and the user confirms they saved both credential values.
-9. Verify the build and `http://127.0.0.1:<PORT>/auth/status` (default 8787). Report the exact failing step when installation does not complete. On Windows, inspect `%LOCALAPPDATA%\MailLocal\install.log` for stage timings, Bun path/version, task result and the server log tail; server output is in `mail.local.log` in the same directory. Do not infer slow hardware, Defender, or invalid credentials from a timeout alone. A `bun` port owner is not necessarily this app.
-10. Login starts the already-built app using `deploy/run.sh` (macOS) or `deploy/run.ps1` (Windows) and the absolute Bun path registered by the installer. Re-run the installer after source updates; do not reintroduce builds at login or rely on the scheduler's PATH. Before moving a Windows installation, unregister its task from the old folder, then install from the new folder.
-11. Windows lifecycle commands use `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows-control.ps1 Start|Status|Restart|Stop` (choose one action). Start returns after readiness; the caller's console need not remain open. The enabled task has a one-minute repeating trigger with overlapping runs ignored, so stopped servers can recover without exhausting failure retries. Stop disables the task before stopping it; Start re-enables it. Do not replace this with foreground `bun run start`, kill arbitrary port owners, or promise automatic recovery of a running-but-unresponsive process. Use Status and the server log to diagnose, then Restart when appropriate.
+7. Keep the default port 8787 unless setup reports that another program owns it. Then set `PORT` and `OAUTH_REDIRECT` in `.env` to the same free port and have the user add that redirect URI in Google Cloud Console before re-running. Never expose the server to the LAN.
+8. The first `setup` creates the `.env` template and stops; run it again only after the user confirms they saved both credential values.
+9. Verify `http://127.0.0.1:<PORT>/auth/status` (default 8787). Report the exact failing step when setup does not complete. The setup screen is mirrored to `setup.log` (Windows `%LOCALAPPDATA%\MailLocal\`, macOS `~/Library/Logs/sj-mail/`); on Windows `install.log` in the same directory has stage timings, Bun path/version, task result and the server log tail; server output is `mail.local.log`. Do not infer slow hardware, Defender, or invalid credentials from a timeout alone. A `bun` port owner is not necessarily this app.
+10. Login starts the packaged, already-built app via `deploy/run.sh` (macOS) or `deploy/run.ps1` (Windows) with the absolute Bun path and workspace registered by setup. Do not reintroduce builds at login or rely on the scheduler's PATH.
+11. ZIP/git installations migrate with the same `setup`: it finds the old folder from the registered autostart entry (or `--from <folder>`), copies `.env` and `server/.data` without overwriting, and takes over `MailLocal`/`com.mail.local`. The old folder is left untouched. Until then, a checkout's `deploy/run.sh`/`run.ps1` keeps serving with its own `.env` when called without a workspace.
+12. Lifecycle commands run in the workspace: `bun run status|start|stop|restart|uninstall` (Windows delegates to `deploy\windows-control.ps1`, which re-enables on Start and disables on Stop; the task has a one-minute repeating trigger with overlapping runs ignored). Do not kill arbitrary port owners or promise automatic recovery of a running-but-unresponsive process. Use status and the server log to diagnose, then restart when appropriate.
 
 ## Installation source of truth
 
-- Use `README.md` → “직접 설치하기” for Google Cloud links, API/scopes, credential setup, and platform commands. Do not maintain a second copy here.
-- Run commands from the actual repository root containing `package.json` and `deploy/`.
-- Follow the README's conditional `.env` creation command. Never overwrite an existing `.env`.
+- Use `README.md` for Google Cloud links, API/scopes, credential setup, and platform commands. Do not maintain a second copy here.
+- Never overwrite an existing `.env`; setup only creates or migrates it when absent (or still the untouched template).
 - Installation validates credential format, not Google's acceptance of the credentials. Keep readiness, OAuth success, and API access as separate checks.
 
 ## Safety boundaries
 
 - `.env` and OAuth tokens are secrets and must remain untracked.
 - The server must bind to `127.0.0.1`; never set `HOST=0.0.0.0`.
-- Do not replace the installers with ad-hoc startup commands. They install Bun when needed, build the app, register automatic startup, and verify readiness.
+- Do not replace `setup` with ad-hoc startup commands. It checks Bun, installs the exact package version, migrates previous installations, registers automatic startup, and verifies readiness.
 - Do not run macOS commands on Windows or Windows commands on macOS.

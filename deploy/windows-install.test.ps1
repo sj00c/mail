@@ -134,12 +134,12 @@ try {
   Write-InstallLog "${escape}[31mNative warning${escape}[0m" -Level DETAIL
   $logged = Get-Content -LiteralPath $installLog -Raw
   Assert (-not $logged.Contains([string]$escape) -and $logged.Contains("Native warning")) "File logs remove ANSI controls without dropping warnings"
-  $script:stage = "[1/6] Configuration"
+  $script:stage = "[1/4] Configuration"
   $script:stageStarted = 0.0
-  $stageOutput = @(Set-InstallStage "[2/6] Runtime" 6>&1)
-  Assert (($stageOutput -join "`n") -match 'OK\s+\[1/6\] Configuration \([\d.,]+s\)') "Completed stages report duration"
-  Assert (($stageOutput -join "`n") -match 'RUN\s+\[2/6\] Runtime') "The current stage is visible before work starts"
-  Assert ($script:stage -eq "[2/6] Runtime") "Failure context tracks the current stage"
+  $stageOutput = @(Set-InstallStage "[2/4] Runtime" 6>&1)
+  Assert (($stageOutput -join "`n") -match 'OK\s+\[1/4\] Configuration \([\d.,]+s\)') "Completed stages report duration"
+  Assert (($stageOutput -join "`n") -match 'RUN\s+\[2/4\] Runtime') "The current stage is visible before work starts"
+  Assert ($script:stage -eq "[2/4] Runtime") "Failure context tracks the current stage"
   # Exercise the actual placeholder regex constants, including the Korean
   # prefix represented by ASCII regex escapes in the production script.
   $patterns = @($ast.FindAll({
@@ -185,10 +185,12 @@ try {
   try {
     $env:LOCALAPPDATA = $configLogs
     $hostExecutable = (Get-Process -Id $PID).Path
-    $configOutput = @(& $hostExecutable -NoProfile -File (Join-Path $configDeploy "install.ps1"))
+    $configWorkspace = Join-Path $configRoot "workspace"
+    New-Item -ItemType Directory -Force -Path $configWorkspace | Out-Null
+    $configOutput = @(& $hostExecutable -NoProfile -File (Join-Path $configDeploy "install.ps1") -Workspace $configWorkspace)
     Assert ($LASTEXITCODE -eq 1) "Missing configuration fails the real installer"
     $configText = $configOutput -join "`n"
-    Assert ($configText -match 'FAIL\s+\[1/6\] Configuration') "Failure summary names the actual stage"
+    Assert ($configText -match 'FAIL\s+\[1/4\] Configuration') "Failure summary names the actual stage"
     Assert ($configText -match '\.env is missing') "Failure includes actionable configuration guidance"
     $configLog = Get-Content -LiteralPath (Join-Path $configLogs "MailLocal/install.log") -Raw
     Assert ($configText -notmatch 'OLD SERVER|403|Server log:' -and $configLog -notmatch 'OLD SERVER|403') "Early failures do not surface stale server errors"
@@ -208,13 +210,16 @@ try {
 
   $hostExecutable = (Get-Process -Id $PID).Path
   $launchLog = Join-Path $temp "server.log"
-  & $hostExecutable -NoProfile -File (Join-Path $PSScriptRoot "run.ps1") -BunPath $bun -LogPath $launchLog
+  $launchWorkspace = Join-Path $temp "launch-workspace"
+  New-Item -ItemType Directory -Path $launchWorkspace | Out-Null
+  Set-Content -LiteralPath (Join-Path $launchWorkspace ".env") -Value "PORT=8787" -Encoding ASCII
+  & $hostExecutable -NoProfile -File (Join-Path $PSScriptRoot "run.ps1") -BunPath $bun -LogPath $launchLog -Workspace $launchWorkspace
   Assert ($LASTEXITCODE -ne 0) "Launcher reports missing executable with nonzero exit"
   Assert ((Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8).Contains("Bun executable missing")) "Launcher persists missing executable error"
   $fixtureDeploy = Join-Path $temp "deploy"
   New-Item -ItemType Directory -Path $fixtureDeploy | Out-Null
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run.ps1") -Destination $fixtureDeploy
-  & $hostExecutable -NoProfile -File (Join-Path $fixtureDeploy "run.ps1") -BunPath $hostExecutable -LogPath $launchLog
+  & $hostExecutable -NoProfile -File (Join-Path $fixtureDeploy "run.ps1") -BunPath $hostExecutable -LogPath $launchLog -Workspace $launchWorkspace
   Assert ($LASTEXITCODE -ne 0) "Missing build fails without rebuilding at startup"
   Assert ((Get-Content -LiteralPath $launchLog -Raw -Encoding UTF8).Contains("dist/index.html missing")) "Launcher explains missing build in log"
 
@@ -229,6 +234,7 @@ try {
   $jobServer = Join-Path $jobRoot "server"
   New-Item -ItemType Directory -Force -Path $jobDeploy, $jobDist, $jobServer | Out-Null
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run.ps1") -Destination $jobDeploy
+  Set-Content -LiteralPath (Join-Path $jobRoot ".env") -Value "# job fixture" -Encoding ASCII
   Set-Content -LiteralPath (Join-Path $jobDist "index.html") -Value "<!doctype html><title>job fixture</title>" -Encoding UTF8
   @'
 const marker = process.env.MAIL_JOB_TEST_PID_FILE;
@@ -265,7 +271,8 @@ await new Promise(() => {});
       "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
       "-File", (& $quote (Join-Path $jobDeploy "run.ps1")),
       "-BunPath", (& $quote $bunCommand.Source),
-      "-LogPath", (& $quote $jobLog)
+      "-LogPath", (& $quote $jobLog),
+      "-Workspace", (& $quote $jobRoot)
     )
     $jobLauncher = Start-Process -FilePath $hostExecutable -ArgumentList $jobArguments -WorkingDirectory $jobRoot -PassThru
     $startDeadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -827,21 +834,38 @@ finally {
 
 if ($Integration) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw "Integration requires Windows" }
+  # The checkout acts as the installed package (dist must already be built);
+  # a separate workspace with a non-ASCII name holds .env like sj-mail setup.
   $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-  $envPath = Join-Path $root ".env"
+  if (-not (Test-Path -LiteralPath (Join-Path $root "dist\index.html"))) { throw "Build dist before the integration test" }
+  $workspace = Join-Path ([IO.Path]::GetTempPath()) ("mail-workspace-" + ([string][char]0xBA54) + [char]0xC77C + "-" + [guid]::NewGuid().ToString("N"))
+  $envPath = Join-Path $workspace ".env"
   $mailLogDir = Join-Path $env:LOCALAPPDATA "MailLocal"
-  if (Test-Path -LiteralPath $envPath) { throw "Refusing to overwrite existing .env" }
   if (Get-ScheduledTask -TaskName MailLocal -TaskPath "\" -ErrorAction SilentlyContinue) { throw "Refusing to replace existing MailLocal task" }
   if (Test-Path -LiteralPath $mailLogDir) { throw "Refusing to overwrite existing MailLocal user files" }
   $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
   $bunPath = (Get-Command bun -CommandType Application).Source
   $log = Join-Path $mailLogDir "mail.local.log"
   try {
+    New-Item -ItemType Directory -Path $workspace | Out-Null
     # Dummy OAuth values only. Readiness must work without Google connectivity.
     @("GOOGLE_CLIENT_ID=ci.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET=ci-dummy-secret", "PORT=18787", "OAUTH_REDIRECT=http://localhost:18787/auth/callback") |
       Set-Content -LiteralPath $envPath -Encoding ASCII
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install.ps1")
-    Assert ($LASTEXITCODE -eq 0) "Real Windows installer and scheduled server start successfully"
+
+    # A previous (ZIP/source) installation owns MailLocal. Without an explicit
+    # replacement the installer must leave it alone; setup can find it.
+    $legacyRun = Join-Path ([IO.Path]::GetTempPath()) ("mail-legacy-" + [guid]::NewGuid().ToString("N") + "\deploy\run.ps1")
+    $legacyAction = New-ScheduledTaskAction -Execute $powershell -Argument "-WindowStyle Hidden -NoProfile -File `"$legacyRun`" -BunPath `"$bunPath`""
+    $legacyPrincipal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName MailLocal -TaskPath "\" -Action $legacyAction -Principal $legacyPrincipal -Force | Out-Null
+    Assert ((Get-MailTaskRunPath) -eq $legacyRun) "Setup detection reads the previous installation's launcher"
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install.ps1") -Workspace $workspace -BunPath $bunPath
+    Assert ($LASTEXITCODE -ne 0) "Installer refuses a task owned by another installation"
+    Assert ((Get-MailTaskRunPath) -eq $legacyRun) "Refused installation leaves the previous task intact"
+
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install.ps1") -Workspace $workspace -BunPath $bunPath -ReplaceRunPath $legacyRun
+    Assert ($LASTEXITCODE -eq 0) "Real Windows installer takes over the previous task and starts the server"
+    Assert (Test-MailTaskOwnership -Task (Get-MailTask) -RunPath (Join-Path $PSScriptRoot "run.ps1")) "MailLocal now launches this package"
     $response = Invoke-RestMethod -Uri "http://127.0.0.1:18787/auth/status"
     Assert ($response.authed -eq $false) "Scheduled server answers without real credentials"
     $installedTask = Get-ScheduledTask -TaskName MailLocal -TaskPath "\"
@@ -852,6 +876,7 @@ if ($Integration) {
     $periodicInstalled = @($installedTriggers | Where-Object { $_.Repetition.Interval -eq "PT1M" })
     Assert ($periodicInstalled.Count -eq 1 -and -not $periodicInstalled[0].Repetition.StopAtDurationEnd) "Scheduler periodic trigger is indefinite at one minute"
     Assert ($installedTask.Actions.Arguments.Contains($bunPath)) "Scheduled launch uses the exact installed Bun executable"
+    Assert ($installedTask.Actions.Arguments.Contains("-Workspace `"$workspace`"")) "Scheduled launch passes the non-ASCII workspace intact"
     Assert ($installedTask.Actions.Arguments.Contains("-WindowStyle Hidden")) "Scheduled launch keeps the PowerShell window hidden"
 
     # Register a uniquely named, deliberately failing task and observe one
@@ -910,7 +935,7 @@ exit 1
     Stop-ScheduledTask -TaskName MailLocal -TaskPath "\"
     Unregister-ScheduledTask -TaskName MailLocal -TaskPath "\" -Confirm:$false
     # Actual native launcher failure must propagate to Task Scheduler.
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run.ps1") -BunPath (Join-Path $root "missing-bun.exe") -LogPath $log
+    & $powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run.ps1") -BunPath (Join-Path $root "missing-bun.exe") -LogPath $log -Workspace $workspace
     Assert ($LASTEXITCODE -ne 0) "Missing Bun produces a nonzero launcher exit"
     Assert ((Get-Content -LiteralPath $log -Raw -Encoding UTF8).Contains("Bun executable missing")) "Launcher error is persisted"
   }
@@ -918,7 +943,7 @@ exit 1
     Disable-ScheduledTask -TaskName MailLocal -TaskPath "\" -ErrorAction SilentlyContinue
     Stop-ScheduledTask -TaskName MailLocal -TaskPath "\" -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName MailLocal -TaskPath "\" -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Path $root ".env") -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 

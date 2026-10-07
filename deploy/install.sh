@@ -1,10 +1,12 @@
 #!/bin/bash
-# macOS 원클릭 설치: .env 확인 → Bun/의존성 설치 → 빌드 → 자동 실행 등록.
+# macOS 자동 실행 등록: sj-mail setup이 호출한다.
+#   bash deploy/install.sh <작업 폴더> <Bun 절대 경로>
+# 패키지는 이미 빌드되어 있으므로 여기서는 .env 확인 → launchd 등록 → 응답 확인만 한다.
 set -euo pipefail
 
-DIR="$(cd "$(dirname "$0")/.." && pwd)"
+APP="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL="com.mail.local"
-RUN="$DIR/deploy/run.sh"
+RUN="$APP/deploy/run.sh"
 LOG="$HOME/Library/Logs/mail.local.log"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 UID_NUM="$(id -u)"
@@ -34,8 +36,11 @@ env_value() {
   done < "$DIR/.env"
 }
 
-[ "$(uname -s)" = "Darwin" ] || fail "이 파일은 macOS용입니다. Windows에서는 deploy\\install.ps1을 실행하세요."
-[ -f "$DIR/.env" ] || fail ".env 파일이 없습니다. README의 안내대로 .env를 먼저 만들고 Google 연결 정보를 입력하세요."
+[ "$(uname -s)" = "Darwin" ] || fail "이 파일은 macOS용입니다."
+[ "$#" -eq 2 ] || fail "사용법: bash deploy/install.sh <작업 폴더> <Bun 절대 경로> (sj-mail setup이 호출합니다)"
+DIR="$(cd "$1" && pwd)" || fail "작업 폴더를 찾을 수 없습니다: $1"
+BUN="$2"
+[ -f "$DIR/.env" ] || fail ".env 파일이 없습니다: $DIR/.env"
 chmod 600 "$DIR/.env"
 
 CLIENT_ID="$(env_value GOOGLE_CLIENT_ID)"
@@ -91,45 +96,22 @@ port_listener() {
   fi
 }
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:/usr/bin:/bin:$PATH"
-
-echo "[1/4] 실행 프로그램 확인"
-if ! command -v bun >/dev/null 2>&1; then
-  PACKAGE_MANAGER="$(/usr/bin/plutil -extract packageManager raw -o - "$DIR/package.json")" ||
-    fail "package.json의 packageManager를 읽지 못했습니다."
-  [[ "$PACKAGE_MANAGER" =~ ^bun@([0-9]+\.[0-9]+\.[0-9]+)$ ]] ||
-    fail "packageManager에는 bun@버전 형식의 고정 버전이 필요합니다."
-  BUN_VERSION="${BASH_REMATCH[1]}"
-  echo "Bun $BUN_VERSION을 공식 설치 프로그램으로 설치합니다."
-  command -v curl >/dev/null 2>&1 || fail "Bun 설치에 필요한 curl을 찾을 수 없습니다."
-  curl -fsSL https://bun.com/install | bash -s -- "bun-v$BUN_VERSION"
-  export PATH="$HOME/.bun/bin:$PATH"
-fi
-BUN="$(command -v bun)" || fail "Bun 설치 후에도 실행 파일을 찾지 못했습니다. 터미널을 다시 연 뒤 재실행하세요."
-BUN_DIR="$(cd "$(dirname "$BUN")" && pwd -P)" || fail "Bun 실행 파일 경로를 확인하지 못했습니다: $BUN"
-BUN="$BUN_DIR/$(basename "$BUN")"
+echo "[1/3] 실행 프로그램 확인"
+case "$BUN" in
+  /*) ;;
+  *) fail "Bun 실행 파일 경로가 절대 경로가 아닙니다: $BUN" ;;
+esac
 [ -x "$BUN" ] || fail "Bun 실행 파일을 찾을 수 없거나 실행할 수 없습니다: $BUN"
-echo "Bun 실행 파일: $BUN"
+echo "Bun 실행 파일: $BUN ($("$BUN" --version))"
+[ -f "$APP/dist/index.html" ] || fail "패키지에 dist/index.html이 없습니다. setup을 다시 실행하세요."
 
-echo "[2/4] 앱에 필요한 파일 설치"
-(
-  cd "$DIR"
-  "$BUN" install --frozen-lockfile
-)
-
-echo "[3/4] 앱 빌드"
-(
-  cd "$DIR"
-  "$BUN" run build
-)
-[ -f "$DIR/dist/index.html" ] || fail "빌드 결과 dist/index.html이 없습니다."
-
-echo "[4/4] 로그인 시 자동 실행 등록"
+echo "[2/3] 로그인 시 자동 실행 등록"
 chmod +x "$RUN"
 mkdir -p "$HOME/Library/LaunchAgents" "$(dirname "$LOG")"
-cp "$DIR/deploy/$LABEL.plist" "$PLIST"
+cp "$APP/deploy/$LABEL.plist" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $RUN" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :ProgramArguments:1 $BUN" "$PLIST"
+/usr/libexec/PlistBuddy -c "Set :ProgramArguments:2 $DIR" "$PLIST"
 /usr/bin/plutil -replace WorkingDirectory -string "$DIR" "$PLIST"
 /usr/bin/plutil -replace StandardOutPath -string "$LOG" "$PLIST"
 /usr/bin/plutil -replace StandardErrorPath -string "$LOG" "$PLIST"
@@ -143,7 +125,7 @@ for _ in {1..10}; do
 done
 sleep 1
 if launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; then
-  fail "기존 자동 실행을 종료하지 못했습니다. 잠시 후 설치 스크립트를 다시 실행하세요."
+  fail "기존 자동 실행을 종료하지 못했습니다. 잠시 후 setup을 다시 실행하세요."
 fi
 OCCUPANT="$(port_listener)"
 if [ -n "$OCCUPANT" ]; then
@@ -172,6 +154,7 @@ show_log_tail() {
   fi
 }
 
+echo "[3/3] 서버 응답 확인"
 READY=0
 DIED=0
 sleep 1
@@ -201,5 +184,4 @@ echo
 echo "설치가 끝났습니다."
 echo "주소: $APP_URL"
 echo "앞으로는 이 주소만 열면 됩니다."
-echo "자동 실행 해제: bash deploy/uninstall.sh"
-/usr/bin/open "$APP_URL"
+open "$APP_URL"

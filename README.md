@@ -4,34 +4,14 @@ Gmail·Google Calendar·Google Drive·Google Contacts를 한곳에서 사용하�
 서버는 `127.0.0.1`에만 열리고 Google API에 직접 연결합니다.
 
 - 기본 주소: <http://localhost:8787>
-- 처음 설치한다면 **소스 ZIP을 먼저 설치·빌드한 뒤**, Google 연결 설정을 진행하세요.
+- 배포는 npm 패키지 [`@sj00c/mail`](https://www.npmjs.com/package/@sj00c/mail) 하나입니다. 소스 ZIP으로 설치했다면 아래 [ZIP 설치에서 옮기기](#migrate-zip)를 따르세요.
 - Client ID·Client Secret은 README나 채팅에 붙이지 말고 로컬 `.env`에만 저장하세요.
 
-## 빠른 시작: 소스 ZIP 설치·빌드
+## 설치
 
-아래 1~3단계는 OAuth 비밀값 없이 완료할 수 있습니다. 이 단계가 끝나면 의존성과 웹 화면이 설치·빌드된 상태이며, 아직 서버를 시작하거나 Google에 연결하지 않습니다.
+필요한 것: Windows 10(1809)+/11 또는 macOS, 인터넷. Node.js·npm·git은 필요 없습니다.
 
-### 1. 소스 받기
-
-git·npm 없이 OS 기본 도구만 씁니다. 홈 폴더에 `mail` 폴더를 만들고 그 안으로 이동합니다. `mail`이 이미 있으면 덮어쓰지 않고 멈춥니다.
-
-**Windows (PowerShell)**
-
-```powershell
-$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $ProgressPreference='SilentlyContinue'; $d="$HOME\mail"; if (Test-Path $d) { throw "$d already exists" }; $t="$HOME\mail-download"; New-Item -ItemType Directory $t -Force | Out-Null; Invoke-WebRequest https://github.com/sj00c/mail/archive/refs/heads/main.zip -OutFile "$t\mail.zip" -UseBasicParsing; Expand-Archive "$t\mail.zip" $t -Force; Move-Item "$t\mail-main" $d; Remove-Item $t -Recurse -Force; Get-ChildItem $d -Recurse | Unblock-File; Set-Location $d
-```
-
-**macOS (Terminal)**
-
-```sh
-[ -e ~/mail ] && echo "~/mail already exists" || { t=$(mktemp -d) && curl -fL --retry 3 -o "$t/mail.zip" https://github.com/sj00c/mail/archive/refs/heads/main.zip && unzip -q "$t/mail.zip" -d "$t" && mv "$t/mail-main" ~/mail && rm -rf "$t" && cd ~/mail; }
-```
-
-이후 명령은 모두 이 폴더에서 실행합니다. 터미널을 새로 열었다면 `cd ~/mail`로 돌아옵니다. 브라우저로 받으려면 [소스 ZIP](https://github.com/sj00c/mail/archive/refs/heads/main.zip)을 풀고 `package.json`이 있는 폴더에서 터미널을 여세요.
-
-### 2. Bun 설치
-
-[Bun 공식 설치 명령](https://bun.sh/docs/installation)입니다.
+### 1. Bun 설치 (처음 한 번)
 
 ```powershell
 # Windows (PowerShell)
@@ -43,32 +23,63 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 curl -fsSL https://bun.sh/install | bash
 ```
 
-새 PowerShell/Terminal을 열고 `cd ~/mail` 후 버전을 확인합니다. Bun **1.3.14 이상**이 필요합니다.
+설치 후 터미널을 새로 열고 `bun --version`이 1.3.14 이상인지 확인하세요.
+
+### 2. 설치·업데이트
 
 ```sh
-bun --version
+bunx @sj00c/mail@latest setup
 ```
 
-### 3. 의존성 설치·빌드
+Windows·macOS 같은 명령입니다. 작업 폴더 `~/sj-mail`(Windows는 `%USERPROFILE%\sj-mail`)에 앱을 설치하고, 화면에 단계별 로그를 보여 주며 같은 내용을 파일에 남깁니다.
 
-앱 폴더(`~/mail`)에서 실행합니다.
+- 처음에는 `.env` 템플릿을 만들고 멈춥니다. [Google 연결 준비](#google-setup)대로 Client ID·Secret을 넣고 **같은 명령을 다시 실행**하면 로그인 시 자동 실행을 등록하고 서버 응답까지 확인한 뒤 브라우저를 엽니다.
+- 업데이트도 같은 명령입니다. `.env`와 로그인 정보는 그대로 유지됩니다.
+- 다른 폴더: `--dir <폴더>`, 자동 실행 없이 설치만: `--no-autostart`
+- Node.js가 있다면 `npx @sj00c/mail@latest setup`도 같습니다.
+
+<a id="migrate-zip"></a>
+
+### ZIP 설치에서 옮기기
+
+기존 ZIP(또는 git) 설치에서도 위 1~2단계를 그대로 실행하면 됩니다. `setup`이 기존 자동 실행 항목에서 이전 폴더를 찾아 다음을 처리합니다.
+
+- `.env`와 `server/.data`(로그인 정보)를 새 작업 폴더로 복사 — 이미 있는 파일은 덮어쓰지 않음
+- 이전 자동 실행(Windows `MailLocal` 예약 작업, macOS `launchd`)을 새 설치로 교체
+- 이전 폴더는 건드리지 않음 — 새 설치가 정상인지 확인한 뒤 직접 지우세요.
+
+자동 실행을 등록하지 않았거나 해제했다면 이전 폴더를 직접 지정합니다.
 
 ```sh
-bun install --frozen-lockfile
-bun run build
+bunx @sj00c/mail@latest setup --from "<이전 ZIP 폴더>"
 ```
 
-`bun install`과 `bun run build`는 `.env`, OAuth Client ID·Secret 없이도 실행됩니다. `dist/index.html`이 만들어지면 설치·빌드가 완료된 것입니다. **서버를 시작하려면 다음 Google 연결 설정과 `.env`가 필요합니다.**
+### 관리
 
-### 필요한 환경
+작업 폴더에서 실행합니다(`cd ~/sj-mail`).
 
-- Windows 10 버전 1809 이상·Windows 11 또는 Bash와 `launchd`를 사용할 수 있는 macOS
-- Google 계정·인터넷·웹 브라우저 (Google 연결 단계에서 필요)
-- npm 대안을 사용할 때는 Node.js 22 이상도 필요
+```sh
+bun run status      # 상태 확인
+bun run restart     # 재시작 (start / stop도 가능, stop은 다음 로그인까지 유지)
+bun run uninstall   # 자동 실행 해제 (.env·로그인 정보는 남음, 폴더를 지우면 완전 삭제)
+bun run serve       # 자동 실행 없이 이 터미널에서 실행 (Ctrl+C로 종료)
+```
 
-## Google 연결 준비 (나중에 해도 됨)
+<a id="logs"></a>
 
-Google 계정으로 앱을 연결할 때 필요한 단계입니다. 위의 설치·빌드는 먼저 끝내고, 실제로 연결할 때 진행해도 됩니다. `deploy/install.ps1`과 `deploy/install.sh`는 `.env`와 실제 Client ID·Secret을 먼저 검사하므로 이 설정 전에 설치기를 실행하지 마세요.
+### 로그
+
+| | Windows (`%LOCALAPPDATA%\MailLocal\`) | macOS |
+|---|---|---|
+| 설치 화면 기록 | `setup.log` | `~/Library/Logs/sj-mail/setup.log` |
+| 자동 실행 등록 상세 | `install.log` | (설치 화면 기록에 포함) |
+| 서버 | `mail.local.log` | `~/Library/Logs/mail.local.log` |
+
+설치가 실패하면 화면 마지막에 실패한 단계와 로그 경로가 표시됩니다. 로그를 공유할 때는 Secret·토큰·인증 코드·전체 OAuth URL을 지우세요.
+
+<a id="google-setup"></a>
+
+## Google 연결 준비
 
 ### Google Cloud 프로젝트·OAuth 설정
 
@@ -93,105 +104,25 @@ Google 계정으로 앱을 연결할 때 필요한 단계입니다. 위의 설�
    - 유형: **웹 애플리케이션**
    - 승인된 자바스크립트 원본: 비워 둠
    - 승인된 리디렉션 URI: `http://localhost:8787/auth/callback`
-   - 발급된 Client ID·Client Secret은 아래 로컬 `.env`에만 입력
+   - 발급된 Client ID·Client Secret은 작업 폴더의 `.env`에만 입력
 
-### 로컬 `.env` 만들기 (기존 파일은 덮어쓰지 않음)
-
-앱 루트에서 운영체제에 맞는 명령을 실행하세요. 이미 `.env`가 있으면 두 명령 모두 그대로 보존합니다.
-
-**Windows (PowerShell)**
+### `.env` 입력
 
 ```powershell
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-notepad .env
+notepad "$HOME\sj-mail\.env"     # Windows
 ```
-
-**macOS (Terminal)**
 
 ```sh
-test -e .env || cp .env.example .env
-open -e .env
+open -e ~/sj-mail/.env             # macOS
 ```
 
-`.env`의 `GOOGLE_CLIENT_ID`와 `GOOGLE_CLIENT_SECRET`을 본인이 발급한 값으로 바꾸고 저장합니다. 값에 따옴표나 앞뒤 공백을 넣지 마세요. 기본 `PORT=8787`과 `OAUTH_REDIRECT=http://localhost:8787/auth/callback`은 그대로 두면 됩니다. 포트를 바꿀 때는 두 값의 포트와 Google Cloud의 승인된 리디렉션 URI를 모두 같은 번호로 바꾸세요. `HOST`는 기본값 `127.0.0.1`을 사용합니다.
+`GOOGLE_CLIENT_ID`와 `GOOGLE_CLIENT_SECRET`을 본인이 발급한 값으로 바꾸고 저장한 뒤 `bunx @sj00c/mail@latest setup`을 다시 실행합니다. 값에 따옴표나 앞뒤 공백을 넣지 마세요. 포트를 바꿀 때는 `PORT`, `OAUTH_REDIRECT`, Google Cloud의 승인된 리디렉션 URI를 모두 같은 번호로 바꾸세요.
 
-## 앱 시작·로그인·자동 시작 (소스 설치기)
-
-<a id="run-app"></a>
-
-위 `.env`에 실제 Google 값을 저장한 다음에만 설치기를 실행하세요. 두 설치기는 설정을 먼저 검증한 뒤 Bun을 다시 확인하고, `bun install --frozen-lockfile`과 `bun run build`를 다시 실행해 현재 소스로 빌드합니다. 이어서 로그인 시 자동 실행을 등록하고 서버의 `/auth/status` 응답을 확인합니다. 따라서 **빌드 단계는 비밀값 없이 가능하지만, 설치기를 통한 시작·자동 실행에는 유효한 `.env`가 필요합니다.**
-
-### Windows
-
-앱 루트에서 PowerShell을 열고 실행합니다.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install.ps1
-```
-
-설치 완료 시 브라우저가 열리며, 이후 로그인할 때는 `MailLocal` 예약 작업이 서버를 숨김 실행합니다.
-
-설치 화면은 영문으로 `Configuration → Runtime → Dependencies → Production build → Automatic startup → Health check`의 6단계를 표시합니다. `RUN`은 진행 중, `OK`는 단계 완료, `FAIL`은 실패이며 완료 단계에는 소요 시간이 표시됩니다. 마지막 `OK Ready in ...`은 서버 응답까지 확인했다는 뜻입니다. 빌드·의존성 명령의 상세 출력은 `%LOCALAPPDATA%\MailLocal\install.log`에 저장됩니다. 설정 단계에서 실패하면 이전 서버의 오류 로그를 섞어 표시하지 않습니다.
-
-로그·인코딩 회귀 검사는 `pwsh -NoProfile -File deploy/windows-install.test.ps1 -LoggingOnly`로 실행할 수 있습니다. Windows 예약 작업과 프로세스 수명 검증은 이 옵션 없이 Windows에서 실행해야 합니다.
-
-### macOS
-
-앱 루트의 Terminal에서 실행합니다.
-
-```sh
-bash deploy/install.sh
-```
-
-설치 완료 시 브라우저가 열리며, 이후 로그인할 때는 `launchd`가 서버를 실행합니다.
-
-### 처음 연결하기
+## 처음 연결하기
 
 설치가 끝난 뒤 <http://localhost:8787>을 열고 **Gmail 연결하기**를 누릅니다. Google 테스트 사용자로 로그인하고 권한을 허용하세요. 본인이 만든 테스트 앱에 `Google에서 확인하지 않은 앱`이 표시되면 `고급 → Mail(으)로 이동`을 선택합니다.
 
 설치 성공, Google 인증 성공, 각 Google API 접근 권한은 서로 별개입니다. 상태 확인 주소는 <http://127.0.0.1:8787/auth/status>입니다.
-
-<a id="auto-start"></a>
-
-### 자동 시작·업데이트·제거
-
-- **자동 시작:** Windows `MailLocal` 예약 작업 또는 macOS `launchd`가 로그인할 때 이미 빌드된 앱을 실행합니다. 로그인할 때마다 다시 빌드하지는 않습니다.
-- **업데이트:** 소스가 바뀌었거나 폴더를 옮겼다면 앱 루트에서 해당 운영체제 설치기를 다시 실행하세요. 설치기가 설정·Bun·의존성을 재확인하고 다시 빌드한 뒤 자동 실행 항목을 갱신합니다.
-  - ZIP을 업데이트할 때는 새 폴더에 압축을 풀고 기존 `.env`와 필요하면 기존 `server/.data`를 옮긴 뒤, 새 폴더에서 설치기를 실행합니다. 새 버전이 정상 동작하는 것을 확인하기 전에는 이전 폴더를 지우지 마세요.
-  - Git 체크아웃을 사용 중이라면 `git pull --ff-only origin main` 후 설치기를 다시 실행합니다.
-- **자동 시작·서버 해제:** 이 명령은 자동 실행과 현재 서버를 해제하지만 `.env`, 토큰, 사용자 데이터를 삭제하지 않습니다.
-  - Windows: `powershell -File deploy\uninstall.ps1`
-  - macOS: `bash deploy/uninstall.sh`
-- **Windows 실행·중지:** 앱 폴더에서 `powershell -NoProfile -ExecutionPolicy Bypass -File deploy\windows-control.ps1 Start`
-  - `Start`를 `Status`(상태 확인), `Restart`(재시작), `Stop`(중지)으로 바꿔 사용합니다. `Start`는 서버 응답을 확인한 뒤 끝나므로 이후 창을 닫아도 됩니다.
-  - 활성화된 작업은 1분마다 종료된 서버를 다시 시작합니다. `Stop`은 이 자동 복구와 로그인 시 시작도 끕니다.
-  - 살아 있지만 응답하지 않는 서버는 강제로 죽이지 않습니다. `Status`로 확인한 뒤 `Restart`하세요.
-
-## npm 대안 (현재 공개 여부 미확인)
-
-현재 공개 npm 버전을 확인하지 못했으므로 위 ZIP 설치를 사용하세요. 아래 명령은 npm에 패키지가 공개된 뒤 사용할 수 있습니다.
-
-npm 경로에는 Node.js **22 이상**과 Bun **1.3.14 이상**이 필요합니다. npm은 패키지를 설치·업데이트하고, Bun은 서버를 실행합니다. 원하는 위치에 빈 폴더를 만들고 그 폴더에서 터미널을 여세요. ZIP 소스 폴더에서 실행하는 명령이 아닙니다. Google 설정 없이 먼저 설치할 수 있습니다.
-
-```sh
-npx --package=@sj00c/mail sj-mail init
-npm install
-```
-
-`@sj00c/mail`은 설치할 패키지의 이름일 뿐이며, 별도 npm 계정이나 가입은 필요 없습니다. `sj-mail init`은 현재 폴더에 `package.json`과 `.env` 템플릿을 만들며, 기존 파일을 덮어쓰지 않습니다. 설치 후 연결할 준비가 되면 `.env`에 Google 값을 입력하세요. Google Cloud 설정과 리디렉션 URI는 위와 같습니다. 그런 다음:
-
-```sh
-npm run start
-```
-
-`npm run start`는 Bun과 `.env` 파일을 확인한 뒤 서버를 실행합니다. `.env`가 없으면 시작하지 않으며 Google 연결에는 유효한 값이 필요합니다. 이 방식은 현재 터미널에서 수동으로 실행하며 터미널을 닫거나 `Ctrl+C`를 누르면 서버가 종료됩니다. 업데이트할 때는 서버를 먼저 중지하고 같은 사용자 폴더에서 다음을 실행합니다.
-
-```sh
-npm update
-npm run start
-```
-
-npm 방식은 Windows 예약 작업이나 macOS `launchd`를 등록·수정하지 않습니다. npm 방식의 `.env`와 `.data/token.json`은 사용자 폴더에 보존되고, 소스 ZIP 방식의 토큰은 `server/.data/token.json`에 저장됩니다. 두 방식을 동시에 실행하면 기본 포트가 충돌할 수 있습니다.
 
 ## 주요 기능
 
@@ -232,27 +163,21 @@ npm 방식은 Windows 예약 작업이나 macOS `launchd`를 등록·수정하�
 
 ## 문제 해결
 
-- **`.env` 없음·placeholder 오류:** 소스 설치기와 npm 시작 명령은 설정이 없으면 서버를 시작하지 않습니다. 위의 안전한 생성 명령으로 `.env`를 만들고 실제 Client ID·Secret을 입력하세요.
-- **`401 invalid_client`:** 같은 웹 클라이언트의 ID·Secret 쌍과 Secret 재발급 여부를 확인하고 `.env` 저장 후 소스 설치기를 다시 실행하세요.
+- **`.env` placeholder:** `setup`은 실제 Client ID·Secret이 들어가기 전에는 자동 실행을 등록하지 않습니다. [`.env` 입력](#google-setup) 후 다시 실행하세요.
+- **`401 invalid_client`:** 같은 웹 클라이언트의 ID·Secret 쌍과 Secret 재발급 여부를 확인하고 `.env` 저장 후 `bun run restart`하세요.
 - **`403 access_denied`:** 해당 프로젝트의 테스트 사용자 등록과 조직 관리자 정책을 확인하세요.
 - **`redirect_uri_mismatch`:** Google Cloud URI와 `.env`의 `OAUTH_REDIRECT`가 완전히 같은지 확인하세요. `https`나 끝의 `/`를 추가하지 마세요.
 - **`has not been used in project`:** Google API 4개가 같은 프로젝트에서 사용 설정됐는지 확인하세요.
 - **반복 로그인:** `.env`의 공백·따옴표와 테스트 사용자 설정을 확인하세요. 테스트 앱은 약 7일마다 재로그인이 필요할 수 있습니다.
-- **Bun 설치 실패·시간 초과:** 인터넷 및 `bun.com`·`bun.sh` 접근을 확인하세요. 시간 초과만으로 PC 성능이나 인증 오류를 단정하지 마세요.
-- **Windows 작업 등록 권한 거부(`0x80070005`):** 같은 계정의 관리자 PowerShell에서 설치기를 다시 실행하고 회사 정책·작업 소유권은 관리자에게 확인하세요.
-- **`.ps1` 경로 오류:** 현재 폴더에 `package.json`과 `deploy`가 있는지 확인하세요.
+- **`bunx`를 찾을 수 없음:** Bun 설치 후 터미널을 새로 여세요. 인터넷과 `bun.sh`·`registry.npmjs.org` 접근도 확인하세요.
+- **Windows 작업 등록 권한 거부(`0x80070005`):** 같은 계정의 관리자 PowerShell에서 `setup`을 다시 실행하고 회사 정책·작업 소유권은 관리자에게 확인하세요.
 - **포트 충돌:** 점유 프로그램을 확인한 뒤 사용 가능한 포트로 바꾸세요. 예를 들어 `.env`의 `PORT=8788`, `OAUTH_REDIRECT=http://localhost:8788/auth/callback`으로 함께 바꾸고 Google Cloud에도 같은 URI를 추가합니다. 프로세스 이름이 `bun`이라는 이유만으로 임의 종료하지 마세요.
-- **로그 위치:** 공유할 때 Secret·토큰·인증 코드·전체 OAuth URL을 제외하세요.
-  - Windows 설치: `%LOCALAPPDATA%\MailLocal\install.log`
-  - Windows 서버: `%LOCALAPPDATA%\MailLocal\mail.local.log`
-  - macOS 서버: `~/Library/Logs/mail.local.log`
-  - Windows 작업은 실패 시 최대 3회, 1분 간격으로 재시도합니다.
+- **로그:** [로그](#logs) 표를 참고하세요. Windows 작업은 서버가 종료되면 1분 간격으로 다시 시작합니다.
 
 ## 데이터·보안
 
 - `.env`와 인증 토큰을 공유하거나 커밋하지 마세요. 로그아웃하면 저장된 토큰 내용이 비워집니다.
-  - 소스 ZIP 설치: `server/.data/token.json`
-  - npm 설치: 사용자 폴더의 `.data/token.json`
+  - 위치: 작업 폴더의 `.data/token.json` (ZIP 설치는 `server/.data/token.json`)
 - 서버는 루프백 전용으로 실행되므로 LAN·인터넷에 공개하지 마세요.
 - 메일 HTML은 스크립트가 차단된 격리 화면에서 표시합니다.
 - 메일 본문의 외부 이미지는 해당 이미지 서버로 요청될 수 있습니다.
@@ -261,7 +186,8 @@ npm 방식은 Windows 예약 작업이나 macOS `launchd`를 등록·수정하�
 ## 개발자 참고
 
 - CI의 npm resolver 회귀 검사는 `.github/workflows/ci.yml`에 고정한 Node/npm과 `package.json`의 Bun 도구 조합을 사용합니다. 로컬 재현 시에도 이 도구 조합을 맞추세요.
-- 소스 설치·빌드는 저장소 루트에서 `bun install --frozen-lockfile` 후 `bun run build`를 사용하세요. 배포 가능한 아카이브는 `npm pack`으로 확인하고, 소비자 프로젝트 의존성 갱신에만 해당 프로젝트에서 `npm update`를 실행하세요.
+- 소스 빌드는 `bun install --frozen-lockfile` 후 `bun run build`입니다. 패키지는 `npm pack`으로 만들고 `bun run check:package`·`node scripts/package-smoke.mjs <tgz>`로 검증합니다. `SJ_MAIL_PACKAGE_SPEC=file:<tgz>`를 주면 `setup`이 레지스트리 대신 그 tarball을 설치합니다.
+- 배포: GitHub Release를 만들면 `.github/workflows/release.yml`이 npm trusted publishing으로 게시합니다(npmjs.com에서 trusted publisher 설정 필요).
 - 환경 변수 예시는 [`.env.example`](.env.example)에서 확인하세요. 개발 서버는 `bun run dev`(웹 `5173`, API `8787`), 운영 빌드는 `bun run build && bun run start`입니다.
 - 소스 구조와 설치 안전 지침은 [CLAUDE.md](CLAUDE.md)를 참고하세요.
 

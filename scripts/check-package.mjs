@@ -10,8 +10,22 @@ const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PACKAGE_JSON = join(PACKAGE_ROOT, "package.json");
 const TAR_EXECUTABLE = process.platform === "win32" ? "tar.exe" : "tar";
 
+// Automatic startup scripts that sj-mail setup runs from the installed package.
+const DEPLOY_FILES = [
+  "deploy/install.ps1",
+  "deploy/run.ps1",
+  "deploy/uninstall.ps1",
+  "deploy/windows-control.ps1",
+  "deploy/windows-readiness.ps1",
+  "deploy/install.sh",
+  "deploy/run.sh",
+  "deploy/uninstall.sh",
+  "deploy/com.mail.local.plist",
+];
+
 const REQUIRED_FILES = new Set([
   "cli/mail.mjs",
+  ...DEPLOY_FILES,
   "server/index.ts",
   "dist/index.html",
   "LICENSE",
@@ -100,6 +114,7 @@ function isForbiddenPath(path) {
 
 function isAllowedPath(path) {
   if (path === "cli/mail.mjs") return true;
+  if (DEPLOY_FILES.includes(path)) return true;
   if (path === "package.json") return true;
   if (path === "README.md" || path === "LICENSE" || path === "THIRD_PARTY_NOTICES") return true;
   if (path === "dist/index.html") return true;

@@ -1,6 +1,8 @@
 param(
   [ValidateSet("Start", "Stop", "Restart", "Status")]
   [string]$Action = "Start",
+  # Folder with .env (sj-mail workspace); Stop does not need it.
+  [string]$Workspace,
   [double]$WaitTimeoutSeconds = 60,
   [int]$PollMilliseconds = 250
 )
@@ -11,10 +13,11 @@ if ([Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
   Write-Host "windows-control.ps1 is Windows-only." -ForegroundColor Red
   exit 1
 }
+if ([Console]::IsOutputRedirected) { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $run = Join-Path $root "deploy\run.ps1"
-$envFile = Join-Path $root ".env"
+$envFile = if ([string]::IsNullOrWhiteSpace($Workspace)) { $null } else { Join-Path $Workspace ".env" }
 $task = "MailLocal"
 $taskPath = "\"
 $logPath = Join-Path $env:LOCALAPPDATA "MailLocal\mail.local.log"
@@ -33,8 +36,8 @@ function Assert-ControlBounds {
 }
 
 function Get-ControlPort {
-  if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
-    throw ".env is missing. Run deploy/install.ps1 first."
+  if ($null -eq $envFile -or -not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
+    throw ".env is missing. Run sj-mail setup first."
   }
   $portText = $null
   foreach ($rawLine in Get-Content -LiteralPath $envFile -Encoding UTF8) {
@@ -61,7 +64,7 @@ function Get-ControlPort {
 function Get-ControlTask {
   $found = Get-MailTask
   if ($null -eq $found) {
-    throw "MailLocal is not installed at the root task path. Run deploy/install.ps1 first."
+    throw "MailLocal is not installed at the root task path. Run sj-mail setup first."
   }
   Assert-MailTaskOwnership -Task $found -RunPath $run
   return $found
