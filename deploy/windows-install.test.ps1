@@ -471,12 +471,12 @@ await new Promise(() => {});
       Add-Member -InputObject $service -MemberType ScriptMethod -Name Connect -Value { }
       Add-Member -InputObject $service -MemberType ScriptMethod -Name GetFolder -Value { param($Path) $script:mockScheduleFolder }
       Add-Member -InputObject $folder -MemberType ScriptMethod -Name GetTask -Value { param($Name) $script:mockScheduleTask }
+      # Mirror IRunningTaskCollection: an object with Count. A bare one-item
+      # array would be unrolled, and PowerShell 5.1 objects have no Count.
       Add-Member -InputObject $registered -MemberType ScriptMethod -Name GetInstances -Value {
         param($Flags)
-        if ($script:lingeringInstance -or $script:uninstallState -eq "Running" -or $script:uninstallState -eq "Queued") {
-          return @([pscustomobject]@{ Name = "MailLocal" })
-        }
-        return @()
+        $active = $script:lingeringInstance -or $script:uninstallState -eq "Running" -or $script:uninstallState -eq "Queued"
+        return [pscustomobject]@{ Count = $(if ($active) { 1 } else { 0 }) }
       }
       return $service
     }
