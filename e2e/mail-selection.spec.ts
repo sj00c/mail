@@ -142,6 +142,29 @@ test("actions render inline when they fit and overflow into the menu", async ({
     .toEqual({ ids: ["select-0"], add: ["UNREAD"] });
 });
 
+test("inline actions re-flow live as the toolbar resizes", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await open(page);
+  await checks(page).first().click();
+  await expect(inline(page, "보관")).toBeVisible();
+  await expect(actions(page)).toHaveCount(0);
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect(actions(page)).toBeVisible();
+  await expect(inline(page, "휴지통")).toBeVisible();
+  // Inline buttons never spill past the strip they were measured against.
+  const strip = (await page.locator(".bulk-actions").boundingBox())!;
+  for (const button of await bar(page)
+    .locator(".bulk-actions > button")
+    .all()) {
+    const box = (await button.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(strip.x - 0.5);
+    expect(box.x + box.width).toBeLessThanOrEqual(strip.x + strip.width + 0.5);
+  }
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(inline(page, "보관")).toBeVisible();
+  await expect(actions(page)).toHaveCount(0);
+});
+
 test("action menu contains keyboard focus and preserves loaded-message API scope", async ({
   page,
 }) => {

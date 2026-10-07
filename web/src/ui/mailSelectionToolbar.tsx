@@ -56,47 +56,54 @@ export function MailSelectionToolbar({
   const signature = quick
     .map((action) => `${action.id}:${action.label}:${!!action.iconOnly}`)
     .join("\n");
-  const [shown, setShown] = useState<ReadonlySet<string>>(new Set());
+  // 노출할 작업 id를 문자열로 들고 있어 결과가 같으면 setState가 렌더를 건너뛴다.
+  // (리사이즈마다 새 Set을 만들면 픽셀 단위로 툴바 전체가 다시 그려진다.)
+  const [shownKey, setShownKey] = useState("");
 
   useLayoutEffect(() => {
     const el = strip.current;
-    if (!el) return;
+    const rulerEl = ruler.current;
+    if (!el || !rulerEl) return;
     const gap = 2;
-    const children = Array.from(ruler.current!.children) as HTMLElement[];
-    const more = children[children.length - 1].offsetWidth + gap;
-    const items = quick.map((action, i) => ({
-      action,
-      width: children[i].offsetWidth + gap,
-    }));
-    const priority = [
-      ...items.filter((item) => item.action.iconOnly),
-      ...items.filter((item) => !item.action.iconOnly),
-    ];
-    // 열 너비는 내용과 무관한 minmax(0, 1fr)이라 버튼 개수가 바뀌어도
-    // 측정값이 흔들리지 않는다.
+    // 열 너비는 내용과 무관한 minmax(0, 1fr)이라 버튼 개수가 바뀌어도 측정값이
+    // 흔들리지 않는다. 글자 폭은 웹폰트 로딩·확대 배율에 따라 바뀌므로 ruler도
+    // 함께 관찰해 매번 다시 읽는다(버튼 몇 개의 offsetWidth라 비용은 무시할 만하다).
     const measure = () => {
+      const children = rulerEl.children;
+      const more = (children[children.length - 1] as HTMLElement).offsetWidth;
+      const items = quick.map((action, i) => ({
+        id: action.id,
+        iconOnly: !!action.iconOnly,
+        width: (children[i] as HTMLElement).offsetWidth + gap,
+      }));
       const room = el.clientWidth + gap;
       const all = items.reduce((sum, item) => sum + item.width, 0);
+      let ids: string[];
       if (!textActions.length && all <= room) {
-        setShown(new Set(quick.map((action) => action.id)));
-        return;
+        ids = items.map((item) => item.id);
+      } else {
+        let used = more + gap;
+        ids = [];
+        for (const item of [
+          ...items.filter((item) => item.iconOnly),
+          ...items.filter((item) => !item.iconOnly),
+        ]) {
+          if (used + item.width > room) break;
+          used += item.width;
+          ids.push(item.id);
+        }
       }
-      let used = more;
-      const next = new Set<string>();
-      for (const item of priority) {
-        if (used + item.width > room) break;
-        used += item.width;
-        next.add(item.action.id);
-      }
-      setShown(next);
+      setShownKey(ids.join("\n"));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
+    observer.observe(rulerEl);
     return () => observer.disconnect();
     // signature가 quick의 측정 관련 내용을 모두 담는다.
   }, [signature, textActions.length]);
 
+  const shown = new Set(shownKey ? shownKey.split("\n") : []);
   const inline = quick.filter((action) => shown.has(action.id));
   const overflow = [
     ...textActions,
