@@ -874,7 +874,8 @@ if ($Integration) {
     $installedTriggers = @($installedTask.Triggers)
     Assert ($installedTriggers.Count -eq 2) "Scheduler keeps logon and periodic triggers"
     $periodicInstalled = @($installedTriggers | Where-Object { $_.Repetition.Interval -eq "PT1M" })
-    Assert ($periodicInstalled.Count -eq 1 -and -not $periodicInstalled[0].Repetition.StopAtDurationEnd) "Scheduler periodic trigger is indefinite at one minute"
+    $repetitions = ($installedTriggers | ForEach-Object { "interval=$($_.Repetition.Interval) duration=$($_.Repetition.Duration) stopAtEnd=$($_.Repetition.StopAtDurationEnd)" }) -join "; "
+    Assert ($periodicInstalled.Count -eq 1 -and -not $periodicInstalled[0].Repetition.StopAtDurationEnd) "Scheduler periodic trigger is indefinite at one minute ($repetitions)"
     Assert ($installedTask.Actions.Arguments.Contains($bunPath)) "Scheduled launch uses the exact installed Bun executable"
     Assert ($installedTask.Actions.Arguments.Contains("-Workspace `"$workspace`"")) "Scheduled launch passes the non-ASCII workspace intact"
     Assert ($installedTask.Actions.Arguments.Contains("-WindowStyle Hidden")) "Scheduled launch keeps the PowerShell window hidden"
