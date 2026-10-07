@@ -219,22 +219,15 @@ async function requiredBunVersion() {
   return pinned;
 }
 
-// The official installers (https://bun.sh/docs/installation), latest version.
-const BUN_INSTALL_HINT = IS_WINDOWS
-  ? 'powershell -c "irm bun.sh/install.ps1 | iex"'
-  : "curl -fsSL https://bun.sh/install | bash";
+function bunHome() {
+  return process.env.BUN_INSTALL || join(homedir(), ".bun");
+}
 
-async function findBun() {
+/** Find a Bun that satisfies packageManager: { bun } or { bun: null, tooOld }. */
+async function probeBun() {
   const required = await requiredBunVersion();
   const candidates = process.versions.bun ? [process.execPath] : [];
-  candidates.push(
-    "bun",
-    join(
-      process.env.BUN_INSTALL || join(homedir(), ".bun"),
-      "bin",
-      IS_WINDOWS ? "bun.exe" : "bun",
-    ),
-  );
+  candidates.push("bun", join(bunHome(), "bin", IS_WINDOWS ? "bun.exe" : "bun"));
   let tooOld = null;
   for (const candidate of candidates) {
     let stdout;
@@ -254,14 +247,53 @@ async function findBun() {
       tooOld ??= `${found.join(".")} at ${path}`;
       continue;
     }
-    return { path: resolve(path), version: found.join(".") };
+    return { bun: { path: resolve(path), version: found.join(".") }, required };
   }
+  return { bun: null, tooOld, required };
+}
+
+async function findBun() {
+  const { bun, tooOld, required } = await probeBun();
+  if (bun) return bun;
   throw cliError(
     (tooOld
       ? `Bun >= ${required.join(".")} is required (found ${tooOld}).`
       : "Bun is required but was not found.") +
-      ` Install it with: ${BUN_INSTALL_HINT} — then open a new terminal and rerun this command.`,
+      ` Run: npx @sj00c/mail@latest setup`,
   );
+}
+
+// setup installs the pinned Bun with the official installer when it is
+// missing or too old, so users only need Node.js/npm.
+async function ensureBun(log) {
+  const probe = await probeBun();
+  if (probe.bun) return probe.bun;
+  const version = probe.required.join(".");
+  log.info(
+    probe.tooOld
+      ? `Bun ${probe.tooOld} is too old; installing Bun ${version} (official installer).`
+      : `Bun not found; installing Bun ${version} (official installer).`,
+  );
+  const code = IS_WINDOWS
+    ? await runLogged(log, windowsPowerShell(), [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        // Windows PowerShell 5.1 may otherwise negotiate obsolete TLS.
+        `[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; & ([scriptblock]::Create((Invoke-RestMethod https://bun.sh/install.ps1))) -Version ${version}`,
+      ])
+    : await runLogged(log, "/bin/bash", [
+        "-c",
+        `set -o pipefail; curl -fsSL https://bun.sh/install | bash -s "bun-v${version}"`,
+      ]);
+  if (code !== 0) {
+    throw cliError(`Bun installation failed (exit ${code}). Check the internet connection to bun.sh and retry.`);
+  }
+  const after = await probeBun();
+  if (!after.bun) throw cliError(`Bun ${version} was installed but could not be run from ${join(bunHome(), "bin")}.`);
+  return after.bun;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +362,7 @@ async function requireInstalledRoot(workspace) {
   const root = installedRoot(workspace);
   if (!(await isFile(join(root, "package.json")))) {
     throw cliError(
-      `No installed app was found in ${workspace}. Run: bunx ${PACKAGE_NAME}@latest setup`,
+      `No installed app was found in ${workspace}. Run: npx ${PACKAGE_NAME}@latest setup`,
     );
   }
   return root;
@@ -507,7 +539,7 @@ async function setup(options) {
     log.stage("[1/5] Workspace and runtime");
     if (await isFile(workspace)) throw cliError(`${workspace} is a file, not a folder.`);
     await mkdir(workspace, { recursive: true });
-    const bun = await findBun();
+    const bun = await ensureBun(log);
     log.info(`Bun ${bun.version}: ${bun.path}`);
 
     log.stage("[2/5] Previous installation");
@@ -581,7 +613,7 @@ async function setup(options) {
     log.stage("[5/5] Automatic startup");
     if (options.autostart === false) {
       log.done("Installed without automatic startup");
-      log.info(`Start in the foreground with: cd "${workspace}" && bun run serve`);
+      log.info(`Start in the foreground with: cd "${workspace}" && npm run serve`);
       return;
     }
     let installCode;
@@ -603,12 +635,12 @@ async function setup(options) {
       );
     } else {
       log.done("Installed; automatic startup is available on Windows and macOS only");
-      log.info(`Start in the foreground with: cd "${workspace}" && bun run serve`);
+      log.info(`Start in the foreground with: cd "${workspace}" && npm run serve`);
       return;
     }
     if (installCode !== 0) throw cliError(`Automatic startup failed (exit ${installCode}).`);
     log.done("Setup complete");
-    log.info(`Manage: cd "${workspace}" then bun run status | restart | stop | start | uninstall`);
+    log.info(`Manage: cd "${workspace}" then npm run status | restart | stop | start | uninstall`);
   } catch (error) {
     const stage = log.current;
     log.failStage();
@@ -688,7 +720,7 @@ async function control(action, options) {
   if (!IS_MAC) throw cliError("Automatic startup is available on Windows and macOS only.");
   const plist = join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
   if (!(await isFile(plist))) {
-    throw cliError(`Automatic startup is not installed. Run: bunx ${PACKAGE_NAME}@latest setup`);
+    throw cliError(`Automatic startup is not installed. Run: npx ${PACKAGE_NAME}@latest setup`);
   }
   await assertOwnsLaunchAgent(app);
   const target = `gui/${process.getuid()}/${LAUNCHD_LABEL}`;
@@ -709,7 +741,7 @@ async function control(action, options) {
     }
     if (await loaded()) throw cliError("launchd did not stop the service; retry shortly.");
     if (action === "stop") {
-      console.log("sj-mail stopped until next login (or `bun run start`).");
+      console.log("sj-mail stopped until next login (or `npm run start`).");
       return;
     }
   }

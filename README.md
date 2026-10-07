@@ -9,40 +9,23 @@ Gmail·Google Calendar·Google Drive·Google Contacts를 한곳에서 사용하�
 
 ## 설치
 
-필요한 것: Windows 10(1809)+/11 또는 macOS, 인터넷. Node.js·npm·git은 필요 없습니다.
-
-### 1. Bun 설치 (처음 한 번)
-
-```powershell
-# Windows (PowerShell)
-powershell -c "irm bun.sh/install.ps1 | iex"
-```
+필요한 것: Windows 10(1809)+/11 또는 macOS, [Node.js](https://nodejs.org) 22 이상(npm 포함), 인터넷.
 
 ```sh
-# macOS (Terminal)
-curl -fsSL https://bun.sh/install | bash
+npx @sj00c/mail@latest setup
 ```
 
-설치 후 터미널을 새로 열고 `bun --version`이 1.3.14 이상인지 확인하세요.
-
-### 2. 설치·업데이트
-
-```sh
-bunx @sj00c/mail@latest setup
-```
-
-Windows·macOS 같은 명령입니다. 작업 폴더 `~/sj-mail`(Windows는 `%USERPROFILE%\sj-mail`)에 앱을 설치하고, 화면에 단계별 로그를 보여 주며 같은 내용을 파일에 남깁니다.
+Windows·macOS 같은 명령입니다. 작업 폴더 `~/sj-mail`(Windows는 `%USERPROFILE%\sj-mail`)에 앱을 설치하고, 서버 실행에 쓰는 Bun이 없으면 공식 설치기로 함께 설치합니다. 화면에 단계별 로그를 보여 주며 같은 내용을 파일에 남깁니다.
 
 - 처음에는 `.env` 템플릿을 만들고 멈춥니다. [Google 연결 준비](#google-setup)대로 Client ID·Secret을 넣고 **같은 명령을 다시 실행**하면 로그인 시 자동 실행을 등록하고 서버 응답까지 확인한 뒤 브라우저를 엽니다.
 - 업데이트도 같은 명령입니다. `.env`와 로그인 정보는 그대로 유지됩니다.
 - 다른 폴더: `--dir <폴더>`, 자동 실행 없이 설치만: `--no-autostart`
-- Node.js가 있다면 `npx @sj00c/mail@latest setup`도 같습니다.
 
 <a id="migrate-zip"></a>
 
 ### ZIP 설치에서 옮기기
 
-기존 ZIP(또는 git) 설치에서도 위 1~2단계를 그대로 실행하면 됩니다. `setup`이 기존 자동 실행 항목에서 이전 폴더를 찾아 다음을 처리합니다.
+기존 ZIP(또는 git) 설치에서도 위 명령을 그대로 실행하면 됩니다. `setup`이 기존 자동 실행 항목에서 이전 폴더를 찾아 다음을 처리합니다.
 
 - `.env`와 `server/.data`(로그인 정보)를 새 작업 폴더로 복사 — 이미 있는 파일은 덮어쓰지 않음
 - 이전 자동 실행(Windows `MailLocal` 예약 작업, macOS `launchd`)을 새 설치로 교체
@@ -51,7 +34,7 @@ Windows·macOS 같은 명령입니다. 작업 폴더 `~/sj-mail`(Windows는 `%US
 자동 실행을 등록하지 않았거나 해제했다면 이전 폴더를 직접 지정합니다.
 
 ```sh
-bunx @sj00c/mail@latest setup --from "<이전 ZIP 폴더>"
+npx @sj00c/mail@latest setup --from "<이전 ZIP 폴더>"
 ```
 
 ### 관리
@@ -59,10 +42,10 @@ bunx @sj00c/mail@latest setup --from "<이전 ZIP 폴더>"
 작업 폴더에서 실행합니다(`cd ~/sj-mail`).
 
 ```sh
-bun run status      # 상태 확인
-bun run restart     # 재시작 (start / stop도 가능, stop은 다음 로그인까지 유지)
-bun run uninstall   # 자동 실행 해제 (.env·로그인 정보는 남음, 폴더를 지우면 완전 삭제)
-bun run serve       # 자동 실행 없이 이 터미널에서 실행 (Ctrl+C로 종료)
+npm run status      # 상태 확인
+npm run restart     # 재시작 (start / stop도 가능, stop은 다음 로그인까지 유지)
+npm run uninstall   # 자동 실행 해제 (.env·로그인 정보는 남음, 폴더를 지우면 완전 삭제)
+npm run serve       # 자동 실행 없이 이 터미널에서 실행 (Ctrl+C로 종료)
 ```
 
 <a id="logs"></a>
@@ -116,7 +99,7 @@ notepad "$HOME\sj-mail\.env"     # Windows
 open -e ~/sj-mail/.env             # macOS
 ```
 
-`GOOGLE_CLIENT_ID`와 `GOOGLE_CLIENT_SECRET`을 본인이 발급한 값으로 바꾸고 저장한 뒤 `bunx @sj00c/mail@latest setup`을 다시 실행합니다. 값에 따옴표나 앞뒤 공백을 넣지 마세요. 포트를 바꿀 때는 `PORT`, `OAUTH_REDIRECT`, Google Cloud의 승인된 리디렉션 URI를 모두 같은 번호로 바꾸세요.
+`GOOGLE_CLIENT_ID`와 `GOOGLE_CLIENT_SECRET`을 본인이 발급한 값으로 바꾸고 저장한 뒤 `npx @sj00c/mail@latest setup`을 다시 실행합니다. 값에 따옴표나 앞뒤 공백을 넣지 마세요. 포트를 바꿀 때는 `PORT`, `OAUTH_REDIRECT`, Google Cloud의 승인된 리디렉션 URI를 모두 같은 번호로 바꾸세요.
 
 ## 처음 연결하기
 
@@ -164,12 +147,12 @@ open -e ~/sj-mail/.env             # macOS
 ## 문제 해결
 
 - **`.env` placeholder:** `setup`은 실제 Client ID·Secret이 들어가기 전에는 자동 실행을 등록하지 않습니다. [`.env` 입력](#google-setup) 후 다시 실행하세요.
-- **`401 invalid_client`:** 같은 웹 클라이언트의 ID·Secret 쌍과 Secret 재발급 여부를 확인하고 `.env` 저장 후 `bun run restart`하세요.
+- **`401 invalid_client`:** 같은 웹 클라이언트의 ID·Secret 쌍과 Secret 재발급 여부를 확인하고 `.env` 저장 후 `npm run restart`하세요.
 - **`403 access_denied`:** 해당 프로젝트의 테스트 사용자 등록과 조직 관리자 정책을 확인하세요.
 - **`redirect_uri_mismatch`:** Google Cloud URI와 `.env`의 `OAUTH_REDIRECT`가 완전히 같은지 확인하세요. `https`나 끝의 `/`를 추가하지 마세요.
 - **`has not been used in project`:** Google API 4개가 같은 프로젝트에서 사용 설정됐는지 확인하세요.
 - **반복 로그인:** `.env`의 공백·따옴표와 테스트 사용자 설정을 확인하세요. 테스트 앱은 약 7일마다 재로그인이 필요할 수 있습니다.
-- **`bunx`를 찾을 수 없음:** Bun 설치 후 터미널을 새로 여세요. 인터넷과 `bun.sh`·`registry.npmjs.org` 접근도 확인하세요.
+- **`npx`를 찾을 수 없음:** Node.js 설치 후 터미널을 새로 여세요. Bun 자동 설치가 실패하면 인터넷과 `bun.sh`·`registry.npmjs.org` 접근을 확인하세요.
 - **Windows 작업 등록 권한 거부(`0x80070005`):** 같은 계정의 관리자 PowerShell에서 `setup`을 다시 실행하고 회사 정책·작업 소유권은 관리자에게 확인하세요.
 - **포트 충돌:** 점유 프로그램을 확인한 뒤 사용 가능한 포트로 바꾸세요. 예를 들어 `.env`의 `PORT=8788`, `OAUTH_REDIRECT=http://localhost:8788/auth/callback`으로 함께 바꾸고 Google Cloud에도 같은 URI를 추가합니다. 프로세스 이름이 `bun`이라는 이유만으로 임의 종료하지 마세요.
 - **로그:** [로그](#logs) 표를 참고하세요. Windows 작업은 서버가 종료되면 1분 간격으로 다시 시작합니다.

@@ -107,7 +107,7 @@ try {
   Write-InstallLog "Windows: $([Environment]::OSVersion.VersionString); PowerShell: $($PSVersionTable.PSVersion); CPU: $env:PROCESSOR_ARCHITECTURE" -Level DETAIL
   . (Join-Path $PSScriptRoot "windows-readiness.ps1")
 
-  if ($null -eq $envFile) { Stop-Install "Workspace is required. Run: bunx @sj00c/mail@latest setup" }
+  if ($null -eq $envFile) { Stop-Install "Workspace is required. Run: npx @sj00c/mail@latest setup" }
   if (-not (Test-Path -LiteralPath $envFile)) {
     Stop-Install ".env is missing in $Workspace. Run sj-mail setup and enter your Google OAuth credentials."
   }
@@ -148,7 +148,7 @@ try {
   # sj-mail setup resolves and version-checks Bun; the task uses this exact
   # absolute path, never the scheduler's PATH.
   if ([string]::IsNullOrWhiteSpace($BunPath) -or -not (Test-Path -LiteralPath $BunPath -PathType Leaf)) {
-    Stop-Install "Bun executable not found: $BunPath. Run: bunx @sj00c/mail@latest setup"
+    Stop-Install "Bun executable not found: $BunPath. Run: npx @sj00c/mail@latest setup"
   }
   $bun = (Resolve-Path -LiteralPath $BunPath).Path
   Write-InstallLog "Bun: $bun"
