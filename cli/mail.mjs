@@ -694,7 +694,7 @@ async function control(action, options) {
   const target = `gui/${process.getuid()}/${LAUNCHD_LABEL}`;
   const port = await envPort(workspace);
   const loaded = () =>
-    execFileAsync("/bin/launchctl", ["print", target]).then(() => true, () => false);
+    execFileAsync("launchctl", ["print", target]).then(() => true, () => false);
   if (action === "status") {
     const [isLoaded, ready] = [await loaded(), await serverReady(port)];
     console.log(`sj-mail: service=${isLoaded ? "loaded" : "stopped"}; health=${ready ? "ready" : "not responding"}; http://localhost:${port}`);
@@ -702,7 +702,7 @@ async function control(action, options) {
     return;
   }
   if (action === "stop" || action === "restart") {
-    if (await loaded()) await execFileAsync("/bin/launchctl", ["bootout", target]);
+    if (await loaded()) await execFileAsync("launchctl", ["bootout", target]);
     // bootout returns before launchd has released the label.
     for (let i = 0; i < 20 && (await loaded()); i++) {
       await new Promise((done) => setTimeout(done, 500));
@@ -714,9 +714,9 @@ async function control(action, options) {
     }
   }
   if (!(await loaded())) {
-    await execFileAsync("/bin/launchctl", ["bootstrap", `gui/${process.getuid()}`, plist]);
+    await execFileAsync("launchctl", ["bootstrap", `gui/${process.getuid()}`, plist]);
   }
-  await execFileAsync("/bin/launchctl", ["kickstart", target]);
+  await execFileAsync("launchctl", ["kickstart", target]);
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await serverReady(port)) {
