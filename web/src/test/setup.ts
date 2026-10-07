@@ -38,7 +38,8 @@ Object.defineProperty(window, "localStorage", {
   value: localStorage,
 });
 
-// jsdom does not implement browser observers used by the mail list sentinel.
+// jsdom does not implement browser observers used by the mail list sentinel
+// and the selection toolbar's inline-action measurement.
 class IntersectionObserverStub implements IntersectionObserver {
   readonly root = null;
   readonly rootMargin = "";
@@ -53,4 +54,16 @@ class IntersectionObserverStub implements IntersectionObserver {
 Object.defineProperty(globalThis, "IntersectionObserver", {
   writable: true,
   value: IntersectionObserverStub,
+});
+
+class ResizeObserverStub implements ResizeObserver {
+  constructor(_callback: ResizeObserverCallback) {}
+  disconnect() {}
+  observe() {}
+  unobserve() {}
+}
+
+Object.defineProperty(globalThis, "ResizeObserver", {
+  writable: true,
+  value: ResizeObserverStub,
 });

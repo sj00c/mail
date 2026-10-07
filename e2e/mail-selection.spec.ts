@@ -108,39 +108,71 @@ for (const width of [1440, 1200, 1000, 700, 390]) {
   });
 }
 
+const bar = (page: Page) => page.locator(".bulk-bar");
+const inline = (page: Page, name: string) =>
+  bar(page).getByRole("button", { name, exact: true });
+
+test("actions render inline when they fit and overflow into the menu", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const calls = await open(page);
+  await checks(page).first().click();
+  for (const name of ["읽음", "안읽음", "별표", "보관", "휴지통"])
+    await expect(inline(page, name)).toBeVisible();
+  // Nothing overflows, so there is no menu trigger to open.
+  await expect(actions(page)).toHaveCount(0);
+  await page.addStyleTag({ content: ".bulk-actions { max-width: 110px; }" });
+  // A narrow strip keeps the leading actions inline and moves the rest, in
+  // order, into the overflow menu — every action stays reachable exactly once.
+  // The icon-only trash action is narrow and claims space first.
+  await expect(inline(page, "휴지통")).toBeVisible();
+  await expect(inline(page, "읽음")).toBeVisible();
+  await expect(inline(page, "안읽음")).toHaveCount(0);
+  await actions(page).click();
+  const menu = page.getByRole("menu", { name: "선택한 메일 작업" });
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "안읽음",
+    "별표",
+    "보관",
+  ]);
+  await menu.getByRole("menuitem", { name: "안읽음" }).click();
+  await expect
+    .poll(() => calls.find((c) => c.path.endsWith("batchModify"))?.body)
+    .toEqual({ ids: ["select-0"], add: ["UNREAD"] });
+});
+
 test("action menu contains keyboard focus and preserves loaded-message API scope", async ({
   page,
 }) => {
   const calls = await open(page);
   await page.locator(".msg-row").first().click();
-  await checks(page).first().click();
-  await checks(page).nth(1).click();
+  await page.getByRole("checkbox", { name: "전체 선택", exact: true }).check();
   await actions(page).focus();
   await actions(page).press("ArrowDown");
   const menu = page.getByRole("menu", { name: "선택한 메일 작업" });
   await expect(menu).toBeVisible();
   await expect(
-    page.getByRole("menuitem", { name: "읽음", exact: true }),
+    page.getByRole("menuitem", { name: "받은편지함의 모든 메일 선택" }),
   ).toBeFocused();
   await page.keyboard.press("e");
   await page.keyboard.press("j");
   await expect(page.locator(".reader")).toContainText("Selection message 0");
   expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-  await page.keyboard.press("End");
-  await expect(page.getByRole("menuitem", { name: "휴지통" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(actions(page)).toBeFocused();
-  await expect(page.locator(".reader")).toContainText("Selection message 0");
-  await actions(page).click();
-  await page.getByRole("menuitem", { name: "안읽음", exact: true }).click();
+  await page.getByRole("checkbox", { name: "전체 선택", exact: true }).uncheck();
+  await checks(page).first().click();
+  await checks(page).nth(1).click();
+  await inline(page, "안읽음").click();
   await expect
     .poll(() => calls.find((c) => c.path.endsWith("batchModify"))?.body)
     .toEqual({
       ids: ["select-0", "select-1"],
       add: ["UNREAD"],
     });
-  await expect(actions(page)).toBeDisabled();
+  await expect(inline(page, "안읽음")).toHaveCount(0);
 });
 
 test("all-results cancellation never executes and failure restores controls", async ({
@@ -162,31 +194,30 @@ test("all-results cancellation never executes and failure restores controls", as
     expect(dialog.message()).toContain("173");
     void dialog.dismiss();
   });
-  await actions(page).click();
-  await page.getByRole("menuitem", { name: "휴지통" }).click();
+  await inline(page, "휴지통").click();
   await expect.poll(() => prepare().length).toBe(1);
-  await expect(actions(page)).toBeEnabled();
+  await expect(inline(page, "휴지통")).toBeEnabled();
   expect(calls.filter((c) => c.path.endsWith("bulkAll/confirm"))).toHaveLength(
     0,
   );
   expect(prepare()[0].body).toEqual({ label: "INBOX", action: "trash" });
   page.once("dialog", (dialog) => void dialog.accept());
-  await actions(page).click();
-  await page.getByRole("menuitem", { name: "읽음", exact: true }).click();
+  await inline(page, "읽음").click();
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(actions(page)).toBeEnabled();
+  await expect(inline(page, "읽음")).toBeEnabled();
   expect(calls.find((c) => c.path.endsWith("bulkAll/confirm"))?.body).toEqual({
     operationId: "synthetic-operation",
   });
   await page.getByRole("button", { name: "선택 해제" }).click();
   await expect(actions(page)).toBeDisabled();
+  await expect(inline(page, "읽음")).toHaveCount(0);
 });
 
 test("menu dismisses with Tab, outside click and scope changes", async ({
   page,
 }) => {
   await open(page);
-  await checks(page).first().click();
+  await page.getByRole("checkbox", { name: "전체 선택", exact: true }).check();
   await actions(page).click();
   await page.keyboard.press("Tab");
   await expect(
@@ -197,7 +228,10 @@ test("menu dismisses with Tab, outside click and scope changes", async ({
   await page.locator(".brand").click();
   await expect(page.getByRole("menu")).toHaveCount(0);
   await actions(page).click();
-  await page.getByRole("button", { name: /^별표/ }).click();
+  await page
+    .locator(".nav-sub")
+    .getByRole("button", { name: /^별표/ })
+    .click();
   await expect(page.getByRole("menu")).toHaveCount(0);
 });
 
@@ -222,10 +256,9 @@ test("all-results execution stays busy until confirmed response and sends frozen
     .getByRole("menuitem", { name: "받은편지함의 모든 메일 선택" })
     .click();
   page.once("dialog", (dialog) => void dialog.accept());
-  await actions(page).click();
-  await page.getByRole("menuitem", { name: "읽음", exact: true }).click();
+  await inline(page, "읽음").click();
   try {
-    await expect(actions(page)).toBeDisabled();
+    await expect(inline(page, "읽음")).toBeDisabled();
     await expect(
       page.getByRole("checkbox", { name: "전체 선택", exact: true }),
     ).toBeDisabled();

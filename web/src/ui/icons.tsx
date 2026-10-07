@@ -55,6 +55,12 @@ export const MailIcon = () => (
     <path d="m4 7 8 6 8-6" />
   </Icon>
 );
+export const MailOpenIcon = () => (
+  <Icon>
+    <path d="M3 10v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9l-9-6Z" />
+    <path d="m3 10 9 6 9-6" />
+  </Icon>
+);
 export const DriveIcon = () => (
   <Icon>
     <path d="M9 3h6l6 10-3 5H6l-3-5Z" />

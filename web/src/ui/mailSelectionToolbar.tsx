@@ -14,6 +14,8 @@ type MailAction = {
   icon?: ReactNode;
   run: () => void;
   danger?: boolean;
+  /** 아이콘만으로 뜻이 분명한 작업(휴지통)은 툴바에서 아이콘으로 보인다. */
+  iconOnly?: boolean;
 };
 
 export function MailSelectionToolbar({
@@ -34,6 +36,8 @@ export function MailSelectionToolbar({
   onClear: () => void;
 }) {
   const [open, setOpen] = useState<"actions" | "help" | null>(null);
+  const strip = useRef<HTMLDivElement>(null);
+  const ruler = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const actionTrigger = useRef<HTMLButtonElement>(null);
   const helpTrigger = useRef<HTMLButtonElement>(null);
@@ -44,9 +48,65 @@ export function MailSelectionToolbar({
     setOpen(null);
   };
 
+  // 빠른 작업(아이콘이 있는 작업)은 툴바에 공간이 허락하는 만큼 바로 노출하고,
+  // 넘치는 작업과 문장형 작업(예: 모든 메일 선택)만 ⋯ 메뉴로 보낸다. 아이콘만
+  // 쓰는 작업(휴지통)은 폭이 작아 먼저 자리를 받고, 글자 버튼은 앞에서부터 채운다.
+  const quick = actions.filter((action) => action.icon);
+  const textActions = actions.filter((action) => !action.icon);
+  const signature = quick
+    .map((action) => `${action.id}:${action.label}:${!!action.iconOnly}`)
+    .join("\n");
+  const [shown, setShown] = useState<ReadonlySet<string>>(new Set());
+
+  useLayoutEffect(() => {
+    const el = strip.current;
+    if (!el) return;
+    const gap = 2;
+    const children = Array.from(ruler.current!.children) as HTMLElement[];
+    const more = children[children.length - 1].offsetWidth + gap;
+    const items = quick.map((action, i) => ({
+      action,
+      width: children[i].offsetWidth + gap,
+    }));
+    const priority = [
+      ...items.filter((item) => item.action.iconOnly),
+      ...items.filter((item) => !item.action.iconOnly),
+    ];
+    // 열 너비는 내용과 무관한 minmax(0, 1fr)이라 버튼 개수가 바뀌어도
+    // 측정값이 흔들리지 않는다.
+    const measure = () => {
+      const room = el.clientWidth + gap;
+      const all = items.reduce((sum, item) => sum + item.width, 0);
+      if (!textActions.length && all <= room) {
+        setShown(new Set(quick.map((action) => action.id)));
+        return;
+      }
+      let used = more;
+      const next = new Set<string>();
+      for (const item of priority) {
+        if (used + item.width > room) break;
+        used += item.width;
+        next.add(item.action.id);
+      }
+      setShown(next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+    // signature가 quick의 측정 관련 내용을 모두 담는다.
+  }, [signature, textActions.length]);
+
+  const inline = quick.filter((action) => shown.has(action.id));
+  const overflow = [
+    ...textActions,
+    ...quick.filter((action) => !shown.has(action.id)),
+  ];
+
   useEffect(() => {
-    if (open === "actions" && (!count || busy)) setOpen(null);
-  }, [open, count, busy]);
+    if (open === "actions" && (!count || busy || !overflow.length))
+      setOpen(null);
+  }, [open, count, busy, overflow.length]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -101,6 +161,60 @@ export function MailSelectionToolbar({
       >
         {count ? summary : "전체 선택"}
       </span>
+      <div ref={strip} className="bulk-actions">
+        {count > 0 &&
+          inline.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              className={[
+                "bulk-action",
+                action.danger && "danger",
+                action.iconOnly && "icon",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              aria-label={action.iconOnly ? action.label : undefined}
+              title={action.iconOnly ? action.label : undefined}
+              disabled={busy}
+              onClick={action.run}
+            >
+              {action.iconOnly ? action.icon : action.label}
+            </button>
+          ))}
+        {(count === 0 || overflow.length > 0) && (
+          <button
+            type="button"
+            ref={actionTrigger}
+            className="bulk-menu-trigger"
+            aria-label="선택한 메일 작업"
+            aria-haspopup="menu"
+            aria-expanded={open === "actions"}
+            disabled={!count || busy}
+            title="선택한 메일 작업"
+            onClick={() => setOpen(open === "actions" ? null : "actions")}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setOpen("actions");
+              }
+            }}
+          >
+            ⋯
+          </button>
+        )}
+      </div>
+      <div ref={ruler} className="bulk-ruler" aria-hidden="true">
+        {quick.map((action) => (
+          <span
+            key={action.id}
+            className={action.iconOnly ? "bulk-action icon" : "bulk-action"}
+          >
+            {action.iconOnly ? action.icon : action.label}
+          </span>
+        ))}
+        <span className="bulk-menu-trigger">⋯</span>
+      </div>
       <button
         type="button"
         className="bulk-clear"
@@ -110,25 +224,6 @@ export function MailSelectionToolbar({
         title="선택 해제"
       >
         ×
-      </button>
-      <button
-        type="button"
-        ref={actionTrigger}
-        className="bulk-menu-trigger"
-        aria-label="선택한 메일 작업"
-        aria-haspopup="menu"
-        aria-expanded={open === "actions"}
-        disabled={!count || busy}
-        title="선택한 메일 작업"
-        onClick={() => setOpen(open === "actions" ? null : "actions")}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            setOpen("actions");
-          }
-        }}
-      >
-        ⋯
       </button>
       <button
         type="button"
@@ -197,7 +292,7 @@ export function MailSelectionToolbar({
             {open === "actions" ? (
               <>
                 <div className="bulk-menu-caption">{summary}</div>
-                {actions.map((action) => (
+                {overflow.map((action) => (
                   <button
                     key={action.id}
                     type="button"

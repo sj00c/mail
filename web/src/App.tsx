@@ -42,6 +42,7 @@ import {
   EditIcon,
   InboxIcon,
   MailIcon,
+  MailOpenIcon,
   MoonIcon,
   RestoreIcon,
   SendIcon,
@@ -1358,7 +1359,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                           {
                             id: "read",
                             label: "읽음",
-                            icon: <MailIcon />,
+                            icon: <MailOpenIcon />,
                             run: () => bulkRead(true),
                           },
                           {
@@ -1393,6 +1394,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
                             icon: <TrashIcon />,
                             run: bulkTrash,
                             danger: true,
+                            iconOnly: true,
                           },
                         ]),
                   ]}
