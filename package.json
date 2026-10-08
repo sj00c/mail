@@ -1,6 +1,6 @@
 {
   "name": "@sj00c/mail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Gmail, Calendar, Drive and Contacts app",
   "license": "MIT",
   "repository": {
