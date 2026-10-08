@@ -170,4 +170,5 @@ jobs:
         run: sha256sum --check artifact/sj-mail.tgz.sha256
       # Configure the npm trusted publisher for sj00c/mail before enabling this job.
       - name: Publish the validated tarball with npm trusted publishing
-        run: npm publish artifact/sj-mail.tgz --access public --provenance --ignore-scripts
+        # ./ is required: npm reads "artifact/sj-mail.tgz" as the GitHub repo artifact/sj-mail.tgz.
+        run: npm publish ./artifact/sj-mail.tgz --access public --provenance --ignore-scripts
