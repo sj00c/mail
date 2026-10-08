@@ -44,11 +44,11 @@ curl -fsSL https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.sh
 
 ### 상황별
 
-| 예전 설치(ZIP·git·AI 에이전트·이전 npm 버전), 자동 실행 동작 중 | 한 줄 설치 (자동으로 옮김) |
+| 상황 | 할 일 |
 |---|---|
 | 새 PC | 한 줄 설치 |
 | 업데이트 | 한 줄 설치 |
-| 예전 설치(ZIP·git·AI 에이전트·0.1.1 이하), 자동 실행 동작 중 | 한 줄 설치 (자동으로 옮김) |
+| 예전 설치(ZIP·git·AI 에이전트·이전 npm 버전), 자동 실행 동작 중 | 한 줄 설치 (자동으로 옮김) |
 | 예전 폴더는 있고 자동 실행 없음 | 한 줄 설치 + `--from <예전 폴더>` |
 | 예전 폴더를 지움 | 한 줄 설치 → Client ID·Secret 재입력(묻는 경우) → 재로그인 |
 | Google Cloud 설정 전 | 한 줄 설치 → 입력 단계에서 대기 또는 `Ctrl+C` 후 나중에 재실행 |
