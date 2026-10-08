@@ -1,65 +1,59 @@
 # Mail
 
-내 컴퓨터에서 돌아가는 Gmail·캘린더·Drive 앱. 브라우저로 <http://localhost:8787> 에서 씀.
+Gmail, Google 캘린더, Google Drive를 한 화면에서 쓰는 앱이에요.
+내 컴퓨터 안에서만 돌아가고, 브라우저에서 <http://localhost:8787> 로 열어요.
 
-## 설치하기
+설치는 두 단계예요.
 
-처음 설치와 업데이트 모두 같은 방법.
+1. Google에서 **열쇠 2개** 받기 (처음 한 번, 10분 정도)
+2. **설치 명령** 한 줄 붙여넣기 (2분 정도)
 
-**1. Google 키 2개 준비** (처음 한 번만)
+---
 
-- Client ID, Client Secret
-- 받는 법: 아래 [Google 키 받기](#google-setup)
+## 1단계. Google에서 열쇠 받기
 
-**2. 설치 명령 붙여넣기**
+이 앱이 내 Gmail을 읽고 보내려면 Google이 내주는 열쇠가 필요해요.
+열쇠는 **Client ID**와 **Client Secret** 두 개예요. 아래 순서대로 하면 받을 수 있어요.
 
-- Windows: 시작 메뉴에서 **PowerShell** 열기 → 붙여넣기 → Enter
+> 처음 한 번만 하면 돼요. 이미 받아 둔 열쇠가 있으면 2단계로 넘어가세요.
 
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.ps1 | iex"
-  ```
+### ① 프로젝트 만들기
 
-- macOS: **터미널** 열기 → 붙여넣기 → Enter
+1. [여기](https://console.cloud.google.com/projectcreate)를 열어요. (Gmail 계정으로 로그인)
+2. 프로젝트 이름은 아무거나 (예: `Mail`) 쓰고 **만들기**를 눌러요.
+3. 화면 위쪽에 방금 만든 프로젝트 이름이 보이는지 확인해요. 다른 이름이면 눌러서 바꿔 주세요.
 
-  ```sh
-  curl -fsSL https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.sh | bash
-  ```
+<a id="google-apis"></a>
 
-**3. 키 입력**
+### ② 기능 켜기
 
-- 설치 창이 `Client ID:` 를 물으면 붙여넣기 → Enter
-- `Client Secret:` 도 똑같이 (화면에는 `*` 로 보임)
-- 잘못 넣으면 이유를 알려 주고 다시 물어봄
+아래 링크를 하나씩 열고, 파란 **사용** 버튼을 눌러요.
 
-**4. 로그인**
+- [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com) — 메일
+- [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com) — 캘린더
+- [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) — Drive
+- [People API](https://console.cloud.google.com/apis/library/people.googleapis.com) — 받는사람 이름 자동완성 (안 켜도 돼요)
 
-- 브라우저가 열리면 **Gmail 연결하기** → Google 계정으로 로그인
-- `Google에서 확인하지 않은 앱` 화면 → **고급** → **Mail(으)로 이동**
+<a id="google-consent"></a>
 
-끝.
+### ③ 앱 정보 등록
 
-- 컴퓨터를 켤 때마다 자동으로 실행됨
-- 설치 위치는 신경 쓸 필요 없음
-- 업데이트: 2번 명령을 다시 실행 (키·로그인 유지)
-- 약 7일마다 다시 로그인해야 할 수 있음 (Google 테스트 앱 규칙)
-
-<a id="google-setup"></a>
-
-## Google 키 받기
-
-처음 한 번, 약 10분. 링크를 위에서부터 차례로 열면 됨.
-
-1. [프로젝트 만들기](https://console.cloud.google.com/projectcreate) → 이름 아무거나 → 만들기
-2. 아래 3개를 각각 열고 **사용** 클릭
-   - [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
-   - [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
-   - [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-   - (선택) [People API](https://console.cloud.google.com/apis/library/people.googleapis.com): 받는사람 이름 자동완성용
-3. [앱 정보 설정](https://console.cloud.google.com/auth/overview) → **시작하기**
-   - 앱 이름 `Mail`, 이메일 칸에는 내 이메일
+1. [여기](https://console.cloud.google.com/auth/overview)를 열고 **시작하기**를 눌러요.
+2. 순서대로 채워요.
+   - 앱 이름: `Mail`
+   - 사용자 지원 이메일: 내 이메일
    - 대상: **외부**
-   - 왼쪽 **대상** 메뉴 → **테스트 사용자**에 로그인할 Gmail 주소 추가
-4. [권한 추가](https://console.cloud.google.com/auth/scopes) → **범위 추가 또는 삭제** → 아래 5줄을 붙여넣어 추가 → 저장
+   - 연락처 이메일: 내 이메일
+   - 약관 동의 체크 → **만들기**
+3. 왼쪽 메뉴 **대상** → **테스트 사용자** 아래 **+ Add users** → 이 앱으로 로그인할 Gmail 주소를 넣고 **저장**해요.
+
+> 테스트 사용자에 없는 계정은 로그인할 수 없어요.
+
+### ④ 권한 등록
+
+1. [여기](https://console.cloud.google.com/auth/scopes)를 열고 **범위 추가 또는 삭제**를 눌러요.
+2. 오른쪽 창 맨 아래 **직접 범위 추가** 칸에 아래 5줄을 통째로 붙여넣어요.
+
    ```
    https://www.googleapis.com/auth/gmail.modify
    https://www.googleapis.com/auth/calendar
@@ -67,105 +61,188 @@
    https://www.googleapis.com/auth/contacts.readonly
    https://www.googleapis.com/auth/contacts.other.readonly
    ```
-5. [클라이언트 만들기](https://console.cloud.google.com/auth/clients) → **클라이언트 만들기**
-   - 애플리케이션 유형: **웹 애플리케이션**
-   - 승인된 리디렉션 URI에 추가: `http://localhost:8787/auth/callback`
-   - 만들기 → 화면에 나온 **클라이언트 ID**와 **클라이언트 보안 비밀번호**가 설치 때 넣을 2개
-   - 보안 비밀번호는 다른 사람에게 보내지 않기
 
-## 자주 쓰는 명령
+3. **테이블에 추가** → **업데이트** → 화면 맨 아래 **저장**을 눌러요.
 
-PowerShell이나 터미널에 붙여넣기.
+<a id="google-client"></a>
 
-| 하고 싶은 일 | 명령 |
+### ⑤ 열쇠 만들기
+
+1. [여기](https://console.cloud.google.com/auth/clients)를 열고 **+ 클라이언트 만들기**를 눌러요.
+2. 애플리케이션 유형은 **웹 애플리케이션**을 골라요.
+3. 아래쪽 **승인된 리디렉션 URI**에서 **+ URI 추가**를 누르고 이 주소를 그대로 넣어요.
+
+   ```
+   http://localhost:8787/auth/callback
+   ```
+
+4. **만들기**를 누르면 **클라이언트 ID**와 **클라이언트 보안 비밀번호**가 나와요.
+   이 두 개가 열쇠예요. 바로 메모장 등에 복사해 두세요.
+
+> 보안 비밀번호는 이 창을 닫으면 다시 못 볼 수 있어요. 그때는 같은 화면에서 새로 만들면 돼요.
+> 열쇠는 다른 사람에게 보내지 마세요.
+
+---
+
+## 2단계. 설치하기
+
+### Windows
+
+1. 키보드의 **Windows 키**를 누르고 `PowerShell`을 입력한 뒤 **Windows PowerShell**을 열어요.
+2. 아래 한 줄을 복사해서 붙여넣고 **Enter**를 눌러요. (붙여넣기는 마우스 오른쪽 클릭)
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.ps1 | iex"
+   ```
+
+### macOS
+
+1. **Command + Space**를 누르고 `터미널`을 입력해 열어요.
+2. 아래 한 줄을 복사해서 붙여넣고 **Return**을 눌러요.
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.sh | bash
+   ```
+
+### 설치 중에 할 일
+
+설치가 진행되다가 열쇠를 물어봐요.
+
+```
+Client ID: 
+```
+
+1. 1단계에서 받은 **클라이언트 ID**를 붙여넣고 Enter
+2. 이어서 `Client Secret:`이 나오면 **클라이언트 보안 비밀번호**를 붙여넣고 Enter
+   - 비밀번호는 화면에 `*****`로만 보여요. 정상이에요.
+   - 잘못 넣으면 무엇이 틀렸는지 알려 주고 다시 물어봐요.
+
+열쇠는 자동으로 저장돼요. 파일을 직접 열 필요는 없어요.
+
+### 마지막으로 로그인
+
+1. 설치가 끝나면 브라우저가 열려요. **Gmail 연결하기**를 눌러요.
+2. 테스트 사용자로 등록한 Google 계정으로 로그인해요.
+3. **Google에서 확인하지 않은 앱**이라는 화면이 나오면 **계속**을 눌러요.
+   (버튼이 안 보이면 **고급** → **Mail(으)로 이동**)
+4. 권한을 모두 허용하면 끝이에요.
+
+이제 컴퓨터를 켤 때마다 앱이 저절로 실행돼요. 브라우저에서 <http://localhost:8787> 만 열면 돼요.
+
+> Google 규칙상 일주일에 한 번쯤 다시 로그인하라고 할 수 있어요. 고장 난 게 아니에요.
+
+---
+
+## 업데이트
+
+2단계의 설치 명령을 그대로 다시 실행하면 돼요.
+열쇠와 로그인은 그대로 남아 있어서 다시 물어보지 않아요.
+
+---
+
+## 필요할 때 쓰는 명령
+
+PowerShell(Windows)이나 터미널(macOS)에 붙여넣어 쓰세요.
+
+| 이럴 때 | 이 명령 |
 |---|---|
-| Google 키 바꾸기 | `bunx @sj00c/mail config` |
-| 문제 확인 | `bunx @sj00c/mail doctor` |
-| 껐다 켜기 | `bunx @sj00c/mail restart` |
-| 끄기 (다음 컴퓨터 로그인 때 다시 켜짐) | `bunx @sj00c/mail stop` |
-| 켜기 | `bunx @sj00c/mail start` |
-| 지금 상태 | `bunx @sj00c/mail status` |
-| 자동 실행 해제 | `bunx @sj00c/mail uninstall` |
+| 열쇠를 바꾸고 싶어요 | `bunx @sj00c/mail config` |
+| 뭔가 이상해요 | `bunx @sj00c/mail doctor` |
+| 껐다 켜고 싶어요 | `bunx @sj00c/mail restart` |
+| 잠깐 끄고 싶어요 (다음에 컴퓨터 켜면 다시 켜져요) | `bunx @sj00c/mail stop` |
+| 다시 켜고 싶어요 | `bunx @sj00c/mail start` |
+| 자동 실행을 그만하고 싶어요 | `bunx @sj00c/mail uninstall` |
 
-- `bunx` 를 찾을 수 없다고 나오면: 창을 닫고 새로 열기
+> `bunx`를 찾을 수 없다고 나오면 창을 닫고 새로 열어서 다시 해 보세요.
 
-## 문제가 생기면
+---
 
-먼저 `bunx @sj00c/mail doctor` 실행. 무엇이 문제이고 어떻게 고치는지 알려 줌. 물어볼 때는 그 결과를 그대로 보내기 (키 값은 표시되지 않음).
+## 문제가 생겼을 때
 
-| 화면에 나온 말 | 할 일 |
+먼저 이 명령을 실행해 보세요. 무엇이 문제인지, 어떻게 고치는지 알려 줘요.
+
+```sh
+bunx @sj00c/mail doctor
+```
+
+누군가에게 도움을 요청할 때는 이 결과를 그대로 보내 주세요. 열쇠 값은 결과에 나오지 않아요.
+
+자주 나오는 문제:
+
+| 이런 말이 보이면 | 이렇게 하세요 |
 |---|---|
-| `credentials are still needed` | `bunx @sj00c/mail config` 로 키 입력 → 설치 명령 다시 실행 |
-| `invalid_client` | 키를 잘못 넣음 → `bunx @sj00c/mail config` 로 다시 입력 |
-| `access_denied` | [테스트 사용자](#google-setup)에 그 Gmail 주소 추가 |
-| `redirect_uri_mismatch` | 리디렉션 URI가 정확히 `http://localhost:8787/auth/callback` 인지 확인 |
-| `has not been used in project` | 그 API를 **사용** 으로 켜기 (2단계) |
-| `0x80070005` | PowerShell을 **관리자 권한으로 실행** 후 설치 명령 다시 |
-| `Port 8787 is occupied` | 8787번을 쓰는 다른 프로그램이 있음 → 아래 [포트 바꾸기](#port) |
-| 계속 다시 로그인하라고 함 | 테스트 사용자 등록 확인. 7일마다 한 번은 정상 |
+| `credentials are still needed` | 열쇠를 아직 안 넣었어요. `bunx @sj00c/mail config`로 넣은 뒤 설치 명령을 다시 실행해요. |
+| `invalid_client` | 열쇠가 틀렸어요. `bunx @sj00c/mail config`로 다시 넣어요. |
+| `access_denied` | 로그인한 계정이 테스트 사용자에 없어요. [1단계 ③](#google-consent)에서 추가해요. |
+| `redirect_uri_mismatch` | [1단계 ⑤](#google-client)의 주소가 `http://localhost:8787/auth/callback`과 똑같은지 확인해요. |
+| `has not been used in project` | 기능이 꺼져 있어요. [1단계 ②](#google-apis)에서 **사용**을 눌러요. |
+| `0x80070005` | PowerShell을 마우스 오른쪽 클릭 → **관리자 권한으로 실행**한 뒤 설치 명령을 다시 실행해요. |
+| `Port 8787 is occupied` | 다른 프로그램이 같은 자리를 쓰고 있어요. 아래 [포트 바꾸기](#port)를 보세요. |
 
-## 그 밖에
+---
 
-<a id="migrate-zip"></a>
+## 더 알아보기
 
-- **예전 버전에서 넘어오기**: 설치 명령만 실행하면 키·로그인을 자동으로 옮김
-  - 예전 폴더는 그대로 둠 → 새 버전이 잘 되면 직접 삭제
-  - 자동 실행이 꺼져 있던 예전 설치는 위치를 알려 주기: 설치 명령 끝에 `--from <예전 폴더>`
-- **설치 명령에 옵션 붙이기**
-  - Windows: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.ps1))) <옵션>`
-  - macOS: `curl -fsSL https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.sh | bash -s -- <옵션>`
-  - `--from <폴더>` 예전 설치 위치 / `--dir <폴더>` 설치 위치 지정 / `--no-autostart` 자동 실행 없이
-- **자동 실행 없이 쓰기** (회사 PC 등): `--no-autostart` 로 설치 → 쓸 때마다 `bunx @sj00c/mail run` (창을 닫으면 꺼짐)
-- **Linux**: macOS 명령으로 설치 → `bunx @sj00c/mail run` (자동 실행 없음)
+### 예전 버전을 쓰고 있었다면
+
+설치 명령만 실행하세요. 열쇠와 로그인을 새 버전으로 알아서 옮겨요.
+예전 폴더는 지우지 않으니, 새 버전이 잘 되는 걸 확인한 뒤 직접 지우면 돼요.
+
+예전 버전이 꺼져 있었다면 예전 폴더 위치를 알려 줘야 해요. 설치 명령 대신 아래를 쓰세요.
+
+- Windows: `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.ps1))) --from "예전 폴더"`
+- macOS: `curl -fsSL https://raw.githubusercontent.com/sj00c/mail/main/deploy/bootstrap.sh | bash -s -- --from "예전 폴더"`
+
+### 자동 실행 없이 쓰고 싶다면
+
+회사 컴퓨터처럼 자동 실행이 막힌 경우예요. 위 명령에서 `--from "예전 폴더"` 대신 `--no-autostart`를 붙여 설치하세요.
+쓸 때마다 `bunx @sj00c/mail run`을 실행하면 돼요. (그 창을 닫으면 앱도 꺼져요)
+
+Linux도 이 방법으로 쓸 수 있어요. (macOS 설치 명령 사용)
 
 <a id="port"></a>
 
-- **포트 바꾸기** (8787을 다른 프로그램이 쓸 때)
-  - `bunx @sj00c/mail config` 끝에 나오는 설정 파일 열기
-  - `PORT=8788`, `OAUTH_REDIRECT=http://localhost:8788/auth/callback` 으로 수정
-  - Google 클라이언트의 리디렉션 URI에도 `http://localhost:8788/auth/callback` 추가
-  - `bunx @sj00c/mail restart`
+### 포트 바꾸기
 
-<a id="logs"></a>
+8787번을 다른 프로그램이 이미 쓰고 있을 때만 필요해요.
 
-- **기록 파일 위치**: `bunx @sj00c/mail doctor` 맨 아래 줄. 공유할 때는 키·토큰이 없는지 확인
+1. `bunx @sj00c/mail config`를 실행하고 Enter를 두 번 누르면 마지막 줄에 설정 파일 위치가 나와요.
+2. 그 파일을 메모장으로 열어 `8787`을 모두 `8788`로 바꾸고 저장해요.
+3. [1단계 ⑤](#google-client) 화면에서 리디렉션 URI에 `http://localhost:8788/auth/callback`도 추가해요.
+4. `bunx @sj00c/mail restart`를 실행하고, 이제부터 <http://localhost:8788> 로 열어요.
 
-## 기능
+### 내 정보는 안전한가요?
 
-- 메일: 편지함·라벨·대화 보기, 검색, 읽음·보관·별표·휴지통, 여러 개 한꺼번에 처리
-- 쓰기: 답장·전체답장·전달, 서식·서명, 첨부 (25MB 넘으면 Drive 링크), 보내기 취소
-- 캘린더: 월·목록 보기, 일정 만들기·수정·삭제, 참석자·알림·Meet
-- Drive: 폴더·검색, 올리기·내려받기, 새 폴더·이름 바꾸기·휴지통
-- 그 밖에: 새 메일 알림, 다크 테마, 메일·일정·Drive 통합 검색
+- 메일은 내 컴퓨터와 Google 사이에서만 오가요. 다른 곳으로 보내지 않아요.
+- 내 컴퓨터에서만 열 수 있어요. 같은 와이파이의 다른 기기에서도 못 열어요.
+- 열쇠와 로그인 정보는 내 컴퓨터 사용자 폴더에만 저장돼요.
+- 메일을 완전히 지우지 않아요. 삭제하면 Gmail 휴지통으로 가요.
+- 연락처는 읽기만 해요.
+- 메일 속 사진은 보낸 사람 쪽 서버에서 불러올 수 있어요. (일반 메일 앱과 같아요)
 
-<a id="reply-forward"></a>
-<a id="bulk-cleanup"></a>
+### 할 수 있는 것
 
-- 전체 선택 후 정리: 화면에 안 보이는 메일까지 처리, 확인창에 개수 표시, 영구 삭제 없음 (휴지통으로)
-- 전달: 대화 전체를 메일별 정보·첨부와 함께 전달
+- **메일:** 받은편지함·라벨·대화 보기, 검색, 읽음·보관·별표·삭제, 여러 개 한꺼번에 정리
+- **메일 쓰기:** 답장·전체답장·전달, 글꼴·서명, 파일 첨부 (25MB가 넘으면 Drive 링크로), 보내기 취소
+- **캘린더:** 월·목록 보기, 일정 만들기·고치기·지우기, 참석자·알림·Meet
+- **Drive:** 폴더 보기·검색, 올리기·내려받기, 새 폴더·이름 바꾸기·삭제
+- **그 밖에:** 새 메일 알림, 어두운 화면, 메일·일정·Drive 한 번에 검색
 
-## 데이터·보안
-
-- 메일은 Google과 내 컴퓨터 사이에서만 오감. 이 앱은 다른 서버로 보내지 않음
-- 내 컴퓨터에서만 접속 가능 (다른 기기·인터넷에서 접속 불가)
-- 키와 로그인 정보는 내 사용자 폴더에만 저장. 다른 사람에게 보내지 않기
-- 로그아웃하면 로그인 정보 삭제
-- 메일을 영구 삭제하지 않음, 연락처는 읽기만 함
-- 메일 속 외부 이미지는 보낸 쪽 서버에서 불러올 수 있음
+---
 
 ## 개발자용
 
 - 빌드: `bun install --frozen-lockfile` → `bun run build`
-- 개발 서버: `bun run dev` (웹 `5173`, API `8787`), 설정 예시 [`.env.example`](.env.example)
+- 개발 서버: `bun run dev` (웹 `5173`, API `8787`), 설정 예시는 [`.env.example`](.env.example)
 - 패키지 검증: `npm pack` → `bun run check:package` → `node scripts/package-smoke.mjs <tgz>`
-  - smoke 검사는 Mail 자동 실행이 설치된 PC에서는 실행 거부
-  - `SJ_MAIL_PACKAGE_SPEC=file:<tgz>`: 설치가 레지스트리 대신 이 파일을 씀
-- 키를 앱에 넣어 배포하기 (선택, 사용자가 키를 받을 필요 없어짐)
-  - Google Cloud에서 **데스크톱 앱** 유형 클라이언트 생성
-  - 저장소 `.env` 또는 GitHub 저장소 secret에 `BUNDLED_GOOGLE_CLIENT_ID`, `BUNDLED_GOOGLE_CLIENT_SECRET`
-  - 패키지에 `dist/oauth-client.json` 으로 들어가고, 설치가 사용자 설정에 채움 (사용자가 넣은 키가 우선)
-  - 사용자는 그 프로젝트의 테스트 사용자로 등록 (최대 100명) 또는 Google 앱 검증
-- 배포: GitHub Release → `.github/workflows/release.yml` 이 npm에 게시 (npmjs.com trusted publisher 설정 필요)
+  - smoke 검사는 Mail 자동 실행이 설치된 PC에서는 실행을 거부해요.
+  - `SJ_MAIL_PACKAGE_SPEC=file:<tgz>`를 주면 설치가 npm 대신 그 파일을 써요.
+- 열쇠를 앱에 넣어 배포하기 (선택, 사용자가 1단계를 건너뜀)
+  - Google Cloud에서 **데스크톱 앱** 유형 클라이언트를 만들어요.
+  - 저장소 `.env` 또는 GitHub 저장소 secret에 `BUNDLED_GOOGLE_CLIENT_ID`, `BUNDLED_GOOGLE_CLIENT_SECRET`을 넣어요.
+  - 패키지에 `dist/oauth-client.json`으로 들어가고, 설치할 때 사용자 설정에 채워져요. 사용자가 직접 넣은 열쇠가 우선이에요.
+  - 사용자는 그 프로젝트의 테스트 사용자로 등록해야 해요 (최대 100명). 그 이상은 Google 앱 검증이 필요해요.
+- 배포: GitHub Release를 만들면 `.github/workflows/release.yml`이 npm에 올려요. (npmjs.com trusted publisher 설정 필요)
 
 ## 라이선스
 
