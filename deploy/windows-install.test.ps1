@@ -884,7 +884,7 @@ finally {
 if ($Integration) {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw "Integration requires Windows" }
   # The checkout acts as the installed package (dist must already be built);
-  # a separate workspace with a non-ASCII name holds .env like sj-mail setup.
+  # a separate workspace with a non-ASCII name holds .env like setup does.
   $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
   if (-not (Test-Path -LiteralPath (Join-Path $root "dist\index.html"))) { throw "Build dist before the integration test" }
   $workspace = Join-Path ([IO.Path]::GetTempPath()) ("mail-workspace-" + ([string][char]0xBA54) + [char]0xC77C + "-" + [guid]::NewGuid().ToString("N"))

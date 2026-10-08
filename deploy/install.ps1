@@ -1,4 +1,4 @@
-# Windows automatic startup for the packaged app, called by `sj-mail setup`:
+# Windows automatic startup for the packaged app, called by setup
 # configuration check, runtime check, scheduled startup, health check.
 param(
   [string]$Workspace,
@@ -13,7 +13,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
   Write-Host "Windows only." -ForegroundColor Red
   exit 1
 }
-# Keep non-ASCII paths intact when sj-mail captures this output.
+# Keep non-ASCII paths intact when setup captures this output.
 if ([Console]::IsOutputRedirected) { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) }
 
 $app = (Resolve-Path "$PSScriptRoot\..").Path
@@ -107,9 +107,9 @@ try {
   Write-InstallLog "Windows: $([Environment]::OSVersion.VersionString); PowerShell: $($PSVersionTable.PSVersion); CPU: $env:PROCESSOR_ARCHITECTURE" -Level DETAIL
   . (Join-Path $PSScriptRoot "windows-readiness.ps1")
 
-  if ($null -eq $envFile) { Stop-Install "Workspace is required. Run: npx @sj00c/mail@latest setup" }
+  if ($null -eq $envFile) { Stop-Install "Workspace is required. Run the Mail installer from the README." }
   if (-not (Test-Path -LiteralPath $envFile)) {
-    Stop-Install ".env is missing in $Workspace. Run sj-mail setup and enter your Google OAuth credentials."
+    Stop-Install ".env is missing in $Workspace. Run the Mail installer again and enter your Google OAuth credentials."
   }
   $values = @{}
   foreach ($rawLine in Get-Content -LiteralPath $envFile -Encoding UTF8) {
@@ -145,18 +145,18 @@ try {
 
   Set-InstallStage "[2/4] Runtime"
   $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-  # sj-mail setup resolves and version-checks Bun; the task uses this exact
+  # Setup resolves and version-checks Bun; the task uses this exact
   # absolute path, never the scheduler's PATH.
   if ([string]::IsNullOrWhiteSpace($BunPath) -or -not (Test-Path -LiteralPath $BunPath -PathType Leaf)) {
-    Stop-Install "Bun executable not found: $BunPath. Run: npx @sj00c/mail@latest setup"
+    Stop-Install "Bun executable not found: $BunPath. Run the Mail installer again."
   }
   $bun = (Resolve-Path -LiteralPath $BunPath).Path
   Write-InstallLog "Bun: $bun"
   Invoke-InstallCommand -Executable $bun -CommandArgs @("--version")
-  if (-not (Test-Path -LiteralPath (Join-Path $app "dist\index.html"))) { Stop-Install "The package has no dist/index.html. Rerun sj-mail setup." }
+  if (-not (Test-Path -LiteralPath (Join-Path $app "dist\index.html"))) { Stop-Install "The package has no dist/index.html. Run the Mail installer again." }
 
   Set-InstallStage "[3/4] Automatic startup"
-  if (-not (Test-Path -LiteralPath $run -PathType Leaf)) { Stop-Install "deploy/run.ps1 is missing. Rerun sj-mail setup." }
+  if (-not (Test-Path -LiteralPath $run -PathType Leaf)) { Stop-Install "deploy/run.ps1 is missing. Run the Mail installer again." }
   $action = New-ScheduledTaskAction -Execute $powershell -Argument "-WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$run`" -BunPath `"$bun`" -LogPath `"$log`" -Workspace `"$Workspace`"" -WorkingDirectory $Workspace
   $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
   $atLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $user

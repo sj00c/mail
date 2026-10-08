@@ -1,9 +1,9 @@
 #!/bin/bash
 # launchd가 실행하는 진입점. 설치 때 등록한 Bun으로 이미 빌드된 서버만 띄운다.
 # exec로 Bun을 launchd가 직접 감시하게 하여 종료 코드를 그대로 전달한다.
-#   run.sh <Bun> <작업 폴더>  — sj-mail 패키지: 설정(.env)·로그인 정보(.data)는 작업 폴더
+#   run.sh <Bun> <작업 폴더>  — npm 패키지 설치: 설정(.env)·로그인 정보(.data)는 작업 폴더
 #   run.sh <Bun>              — git 체크아웃: 설정은 저장소 루트, 로그인 정보는 server/.data
-#                               (sj-mail setup으로 옮기기 전까지 기존 자동 실행을 유지)
+#                               (setup으로 옮기기 전까지 기존 자동 실행을 유지)
 set -euo pipefail
 
 fail() {

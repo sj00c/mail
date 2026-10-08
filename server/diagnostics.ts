@@ -16,7 +16,7 @@ const PROBE_TIMEOUT_MS = 10_000;
 /**
  * One cheap read per Google API, run independently so one failing API (for
  * example People API not enabled) never hides the state of the others.
- * Used by `sj-mail doctor` and setup to explain what each account can use.
+ * Used by the doctor command and setup to explain what each account can use.
  */
 export async function checkGoogleApis(): Promise<GoogleApiChecks> {
   const auth = await getAuthedClient();

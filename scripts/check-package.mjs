@@ -10,7 +10,7 @@ const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PACKAGE_JSON = join(PACKAGE_ROOT, "package.json");
 const TAR_EXECUTABLE = process.platform === "win32" ? "tar.exe" : "tar";
 
-// Automatic startup scripts that sj-mail setup runs from the installed package.
+// Automatic startup scripts that setup runs from the installed package.
 const DEPLOY_FILES = [
   "deploy/install.ps1",
   "deploy/run.ps1",
@@ -117,7 +117,7 @@ function isAllowedPath(path) {
   if (DEPLOY_FILES.includes(path)) return true;
   if (path === "package.json") return true;
   if (path === "README.md" || path === "LICENSE" || path === "THIRD_PARTY_NOTICES") return true;
-  if (path === "dist/index.html") return true;
+  if (path === "dist/index.html" || path === "dist/oauth-client.json") return true;
   if (path.startsWith("dist/assets/") && path.length > "dist/assets/".length) return true;
   if (
     path.startsWith("server/") &&

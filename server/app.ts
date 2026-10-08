@@ -161,7 +161,7 @@ export function createApp(appUrl: string): Hono {
   // 받는사람 자동완성용 — 주소록 + 자주 주고받은 주소 (이메일 기준 병합).
   api.get("/contacts", async (c) => c.json(await listContacts()));
 
-  // Per-API access for `sj-mail doctor` (which features this account can use).
+  // Per-API access for the doctor command (which features this account can use).
   api.get("/diagnostics", async (c) => c.json(await checkGoogleApis()));
 
   api.route("/", createCalendarRoutes());

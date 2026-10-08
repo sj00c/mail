@@ -1,7 +1,7 @@
 param(
   [ValidateSet("Start", "Stop", "Restart", "Status")]
   [string]$Action = "Start",
-  # Folder with .env (sj-mail workspace); Stop does not need it.
+  # Folder with .env (the workspace); Stop does not need it.
   [string]$Workspace,
   [double]$WaitTimeoutSeconds = 60,
   [int]$PollMilliseconds = 250
@@ -37,7 +37,7 @@ function Assert-ControlBounds {
 
 function Get-ControlPort {
   if ($null -eq $envFile -or -not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
-    throw ".env is missing. Run sj-mail setup first."
+    throw ".env is missing. Run the Mail installer first."
   }
   $portText = $null
   foreach ($rawLine in Get-Content -LiteralPath $envFile -Encoding UTF8) {
@@ -64,7 +64,7 @@ function Get-ControlPort {
 function Get-ControlTask {
   $found = Get-MailTask
   if ($null -eq $found) {
-    throw "MailLocal is not installed at the root task path. Run sj-mail setup first."
+    throw "MailLocal is not installed at the root task path. Run the Mail installer first."
   }
   Assert-MailTaskOwnership -Task $found -RunPath $run
   return $found
@@ -96,16 +96,16 @@ function Start-ControlTask([int]$Port) {
       return
     }
     if ($state -eq "Queued") {
-      throw "MailLocal is queued and no duplicate start was submitted. Readiness timed out; run: npm run restart"
+      throw "MailLocal is queued and no duplicate start was submitted. Readiness timed out; run: bunx @sj00c/mail restart"
     }
-    throw "MailLocal is running but unresponsive. No process was killed; run: npm run restart"
+    throw "MailLocal is running but unresponsive. No process was killed; run: bunx @sj00c/mail restart"
   }
 
   $startedAt = Get-Date
   Start-ScheduledTask -TaskName $task -TaskPath $taskPath -ErrorAction Stop
   $ready = Get-ControlReadiness -Port $Port -StartedAt $startedAt -TimeoutSeconds $WaitTimeoutSeconds
   if ($ready.Reason -ne "ready") {
-    throw "MailLocal did not become ready ($($ready.Reason)); run: npm run restart"
+    throw "MailLocal did not become ready ($($ready.Reason)); run: bunx @sj00c/mail restart"
   }
   Write-Host "MailLocal started and is ready."
 }
@@ -124,7 +124,7 @@ function Stop-ControlTask {
     # the logon trigger then starts the server again.
     Enable-ControlTask
   }
-  Write-Host "MailLocal stopped until you sign out or restart Windows. Resume now with: npm run start"
+  Write-Host "MailLocal stopped until you sign out or restart Windows. Resume now with: bunx @sj00c/mail start"
 }
 
 function Restart-ControlTask([int]$Port) {
@@ -160,13 +160,13 @@ function Show-ControlStatus([int]$Port) {
     return
   }
   if ($paused) {
-    Write-Host "MailLocal: stopped by 'npm run stop' until you sign out or restart Windows. Resume now with: npm run start" -ForegroundColor Yellow
+    Write-Host "MailLocal: stopped until you sign out or restart Windows. Resume now with: bunx @sj00c/mail start" -ForegroundColor Yellow
   }
   elseif (-not $enabled) {
-    Write-Host "MailLocal: automatic startup is disabled. Turn it back on with: npm run start" -ForegroundColor Yellow
+    Write-Host "MailLocal: automatic startup is disabled. Turn it back on with: bunx @sj00c/mail start" -ForegroundColor Yellow
   }
   else {
-    Write-Host "MailLocal: not responding (task $([string]$current.State)). Last event: $lastText. Log: $logPath. Try: npm run restart" -ForegroundColor Yellow
+    Write-Host "MailLocal: not responding (task $([string]$current.State)). Last event: $lastText. Log: $logPath. Try: bunx @sj00c/mail restart" -ForegroundColor Yellow
   }
   # The explanation above is the whole report; the nonzero exit is the signal.
   $script:statusReported = $true

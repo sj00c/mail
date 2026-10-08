@@ -164,7 +164,7 @@ assert_status "$LAUNCH_STATUS" 1 "launcher rejects a workspace without .env"
 assert_contains "$LAUNCH_OUTPUT" ".env" "missing .env error names the file"
 mv "$WORKSPACE/.env.off" "$WORKSPACE/.env"
 
-# A git checkout registered before sj-mail passes only Bun: .env stays in the
+# A git checkout registered before the npm package passes only Bun: .env stays in the
 # checkout and sign-in data uses the server default (server/.data).
 printf 'PORT=8787\n' > "$FIXTURE/.env"
 set +e

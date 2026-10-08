@@ -1,9 +1,9 @@
 param(
   [Parameter(Mandatory = $true)][string]$BunPath,
   [Parameter(Mandatory = $true)][string]$LogPath,
-  # sj-mail workspace holding .env and .data. Omitted by tasks registered from
+  # Workspace holding .env and .data. Omitted by tasks registered from
   # a git checkout: .env stays in the checkout and sign-in data in server/.data
-  # until `sj-mail setup` migrates them.
+  # until setup migrates them.
   [string]$Workspace,
   # Volatile HKCU key set by `stop` until the next sign-in; see
   # $script:MailPauseKey in deploy/windows-readiness.ps1.
@@ -166,12 +166,12 @@ try {
   # Exit quietly: the watchdog trigger re-runs this launcher every minute.
   if (Test-Path -LiteralPath "HKCU:\$PauseKey") { exit 0 }
   $app = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-  if (-not (Test-Path -LiteralPath $BunPath -PathType Leaf)) { throw "Bun executable missing: $BunPath. Run sj-mail setup again." }
-  if (-not (Test-Path -LiteralPath (Join-Path $app "dist/index.html"))) { throw "dist/index.html missing. Run sj-mail setup again." }
+  if (-not (Test-Path -LiteralPath $BunPath -PathType Leaf)) { throw "Bun executable missing: $BunPath. Run the Mail installer again." }
+  if (-not (Test-Path -LiteralPath (Join-Path $app "dist/index.html"))) { throw "dist/index.html missing. Run the Mail installer again." }
   if ([string]::IsNullOrWhiteSpace($Workspace)) { $Workspace = $app }
   else { $env:MAIL_DATA_DIR = Join-Path $Workspace ".data" }
   $envFile = Join-Path $Workspace ".env"
-  if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) { throw ".env missing in $Workspace. Run sj-mail setup again." }
+  if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) { throw ".env missing in $Workspace. Run the Mail installer again." }
   Set-Location -LiteralPath $Workspace
   # Keep the native job handle open until this launcher exits. Closing it
   # explicitly would also terminate the launcher, which would skip the exit

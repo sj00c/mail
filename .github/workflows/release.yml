@@ -91,6 +91,13 @@ jobs:
         run: bunx playwright install --with-deps chromium
       - name: Run release E2E coverage
         run: bun run test:e2e
+      - name: Bundle the publisher's Google OAuth client (optional)
+        # Repository secrets; when unset the package ships no client and setup
+        # asks each user for their own.
+        env:
+          BUNDLED_GOOGLE_CLIENT_ID: ${{ secrets.BUNDLED_GOOGLE_CLIENT_ID }}
+          BUNDLED_GOOGLE_CLIENT_SECRET: ${{ secrets.BUNDLED_GOOGLE_CLIENT_SECRET }}
+        run: node scripts/embed-oauth-client.mjs
       - name: Pack without lifecycle recursion
         run: npm pack --json --ignore-scripts > pack-receipt.json
       - name: Validate the npm pack receipt and archive

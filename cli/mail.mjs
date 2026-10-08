@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-// sj-mail: the only supported way to install, update, migrate and manage the
-// app. The npm package carries the built UI, the server and the platform
-// autostart scripts; a workspace folder (default ~/sj-mail) carries the user's
-// .env, OAuth token and the installed package.
+// The Mail installer and manager (`bunx @sj00c/mail <command>`): installs,
+// updates, migrates and manages the app. The package carries the built UI,
+// the server and the platform autostart scripts; the workspace (an OS app-data
+// folder, see defaultWorkspace) carries .env, the OAuth token and the
+// installed package. Users never need to know its path.
 
 import { execFile, spawn } from "node:child_process";
 import {
@@ -23,7 +24,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const PACKAGE_NAME = "@sj00c/mail";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKSPACE_NAME = "sj-mail-workspace";
+const WORKSPACE_NAME = "mail-local-workspace";
 const LAUNCHD_LABEL = "com.mail.local";
 const READY_TIMEOUT_MS = 60_000;
 const IS_WINDOWS = process.platform === "win32";
@@ -42,8 +43,11 @@ PORT=8787
 `;
 
 function cliError(message) {
-  return new Error(`[sj-mail] ${message}`);
+  return new Error(`[mail] ${message}`);
 }
+
+// Commands users type; no Node.js or npm needed once Bun is installed.
+const COMMAND = `bunx ${PACKAGE_NAME}`;
 
 function logDirectory() {
   if (IS_WINDOWS) {
@@ -52,12 +56,22 @@ function logDirectory() {
       "MailLocal",
     );
   }
-  if (IS_MAC) return join(homedir(), "Library", "Logs", "sj-mail");
+  if (IS_MAC) return join(homedir(), "Library", "Logs", "MailLocal");
   return join(
     process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"),
-    "sj-mail",
+    "mail-local",
   );
 }
+
+// Windows keeps app, settings and logs together in %LOCALAPPDATA%\MailLocal.
+// Elsewhere a hidden home folder avoids spaces ("Application Support") in the
+// paths the launchd scripts pass around.
+function defaultWorkspace() {
+  return IS_WINDOWS ? logDirectory() : join(homedir(), ".mail-local");
+}
+
+// Earlier releases installed into ~/sj-mail; setup moves it.
+const LEGACY_WORKSPACE = join(homedir(), "sj-mail");
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
@@ -261,7 +275,7 @@ async function findBun() {
     (tooOld
       ? `Bun >= ${required.join(".")} is required (found ${tooOld}).`
       : "Bun is required but was not found.") +
-      ` Run: npx @sj00c/mail@latest setup`,
+      ` Run the installer from the README (or: ${COMMAND}@latest setup).`,
   );
 }
 
@@ -313,19 +327,24 @@ function parseEnv(text) {
   return values;
 }
 
+const PLACEHOLDER = /^(your-|여기에_)|PLACEHOLDER/;
+
+function isUnset(value) {
+  return !value?.trim() || PLACEHOLDER.test(value.trim());
+}
+
 // Mirrors deploy/install.ps1 so setup and doctor explain every problem before
 // any platform script runs. Values are never printed.
 function envProblems(values) {
-  const placeholder = /^(your-|여기에_)|PLACEHOLDER/;
   const id = values.GOOGLE_CLIENT_ID ?? "";
   const secret = values.GOOGLE_CLIENT_SECRET ?? "";
   const problems = [];
-  if (!id.trim() || placeholder.test(id.trim())) {
-    problems.push("GOOGLE_CLIENT_ID is not set: enter the Client ID of your Google OAuth web client.");
+  if (isUnset(id)) {
+    problems.push("GOOGLE_CLIENT_ID is not set: enter the Client ID of your Google OAuth client.");
   } else if (!id.trim().endsWith(".apps.googleusercontent.com")) {
     problems.push("GOOGLE_CLIENT_ID must end with .apps.googleusercontent.com.");
   }
-  if (!secret.trim() || placeholder.test(secret.trim())) {
+  if (isUnset(secret)) {
     problems.push("GOOGLE_CLIENT_SECRET is not set: enter the Client Secret of the same OAuth client.");
   }
   if (/[\s"']/.test(id) || /[\s"']/.test(secret)) {
@@ -339,6 +358,35 @@ function envProblems(values) {
     problems.push(`OAUTH_REDIRECT must be http://localhost:${port}/auth/callback to match PORT.`);
   }
   return problems;
+}
+
+// Release builds can bundle the publisher's Google OAuth client (a desktop
+// client: Google does not treat its secret as confidential). Setup writes it
+// into .env, so the server still reads every key from .env and users only
+// sign in. scripts/embed-oauth-client.mjs creates the file at pack time.
+async function bundledClient(app) {
+  const client = await readJson(join(app, "dist", "oauth-client.json")).catch(() => null);
+  return client?.clientId && client?.clientSecret ? client : null;
+}
+
+function withClient(text, client) {
+  let out = text;
+  for (const [key, value] of [["GOOGLE_CLIENT_ID", client.clientId], ["GOOGLE_CLIENT_SECRET", client.clientSecret]]) {
+    const line = new RegExp(`^${key}=.*$`, "m");
+    out = line.test(out) ? out.replace(line, `${key}=${value}`) : `${out.trimEnd()}\n${key}=${value}\n`;
+  }
+  return out;
+}
+
+function openEditor(path) {
+  const editor = IS_WINDOWS ? ["notepad.exe", [path], "Notepad"] : IS_MAC ? ["open", ["-e", path], "TextEdit"] : null;
+  if (!editor) return null;
+  try {
+    spawn(editor[0], editor[1], { detached: true, stdio: "ignore" }).unref();
+    return editor[2];
+  } catch {
+    return null;
+  }
 }
 
 async function envPort(workspace) {
@@ -374,7 +422,16 @@ async function isWorkspace(dir) {
 async function resolveWorkspace(dir) {
   if (dir) return resolve(process.cwd(), dir);
   if (await isWorkspace(process.cwd())) return resolve(process.cwd());
-  return join(homedir(), "sj-mail");
+  return defaultWorkspace();
+}
+
+// Management commands keep working on a ~/sj-mail install until the next
+// setup moves it; setup itself always targets the default workspace.
+async function resolveManagedWorkspace(dir) {
+  const workspace = await resolveWorkspace(dir);
+  if (dir || (await isFile(join(installedRoot(workspace), "package.json")))) return workspace;
+  if (await isFile(join(installedRoot(LEGACY_WORKSPACE), "package.json"))) return LEGACY_WORKSPACE;
+  return workspace;
 }
 
 function installedRoot(workspace) {
@@ -384,9 +441,7 @@ function installedRoot(workspace) {
 async function requireInstalledRoot(workspace) {
   const root = installedRoot(workspace);
   if (!(await isFile(join(root, "package.json")))) {
-    throw cliError(
-      `No installed app was found in ${workspace}. Run: npx ${PACKAGE_NAME}@latest setup`,
-    );
+    throw cliError(`Mail is not installed. Run the installer from the README (or: ${COMMAND}@latest setup).`);
   }
   return root;
 }
@@ -402,7 +457,7 @@ async function writeWorkspaceManifest(workspace, spec) {
     manifest = existing;
   } catch (error) {
     if (error.code !== "ENOENT") {
-      throw error.message?.startsWith("[sj-mail]")
+      throw error.message?.startsWith("[mail]")
         ? error
         : cliError(`${path} is not valid JSON; refusing to overwrite it.`);
     }
@@ -410,15 +465,8 @@ async function writeWorkspaceManifest(workspace, spec) {
   manifest.name = WORKSPACE_NAME;
   manifest.private = true;
   manifest.dependencies = { [PACKAGE_NAME]: spec };
-  manifest.scripts = {
-    status: "sj-mail status",
-    start: "sj-mail start",
-    stop: "sj-mail stop",
-    restart: "sj-mail restart",
-    serve: "sj-mail run",
-    uninstall: "sj-mail uninstall",
-    doctor: "sj-mail doctor",
-  };
+  // Commands run through bunx, so the workspace needs no npm scripts.
+  delete manifest.scripts;
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
@@ -511,7 +559,7 @@ async function dataOfFolder(folder) {
   const found = await dataOfRoot(dir);
   if (!found) {
     throw cliError(
-      `${dir} is neither an sj-mail workspace nor a Mail source/ZIP folder.`,
+      `${dir} is neither a Mail workspace nor a Mail source/ZIP folder.`,
     );
   }
   return found;
@@ -554,7 +602,7 @@ async function setup(options) {
   const workspace = await resolveWorkspace(options.dir);
   const log = createLogger(join(logDirectory(), "setup.log"));
   const version = (await ownManifest()).version;
-  console.log(`\n  SJ-MAIL SETUP ${version}`);
+  console.log(`\n  MAIL SETUP ${version}`);
   console.log("  ----------------------------------------------");
   log.info(`Workspace: ${workspace}`);
   log.info(`Setup log: ${log.file}`);
@@ -623,6 +671,14 @@ async function setup(options) {
       if (!IS_WINDOWS) chmodSync(envPath, 0o600);
       log.info(`Created ${envPath}`);
     }
+    const client = await bundledClient(app);
+    const envText = await readFile(envPath, "utf8");
+    const current = parseEnv(envText);
+    // Fill only keys the user has not set; their own client always wins.
+    if (client && isUnset(current.GOOGLE_CLIENT_ID) && isUnset(current.GOOGLE_CLIENT_SECRET)) {
+      await writeFile(envPath, withClient(envText, client));
+      log.info("Using the app's built-in Google sign-in client.");
+    }
     let problems = envProblems(parseEnv(await readFile(envPath, "utf8")));
     // A person at a terminal edits .env while setup waits; scripts and agents
     // (no TTY) get the two-step flow: fill .env, run setup again.
@@ -632,11 +688,8 @@ async function setup(options) {
     if (problems.length > 0) {
       for (const problem of problems) log.warn(problem);
       log.done("Installed; Google credentials are still needed");
-      log.info(`1. Put your Google Client ID and Secret into ${envPath}`);
-      log.info(
-        `   ${IS_WINDOWS ? `notepad "${envPath}"` : IS_MAC ? `open -e "${envPath}"` : `\${EDITOR:-nano} "${envPath}"`}`,
-      );
-      log.info("2. Run the same setup command again.");
+      log.info(`1. Enter your Google Client ID and Secret: ${COMMAND} config`);
+      log.info("2. Run the same installer command again.");
       return;
     }
     log.info(".env has Google credentials.");
@@ -644,7 +697,7 @@ async function setup(options) {
     log.stage("[5/5] Automatic startup");
     if (options.autostart === false) {
       log.done("Installed without automatic startup");
-      log.info(`Start in the foreground with: cd "${workspace}" && npm run serve`);
+      log.info(`Start in the foreground with: ${COMMAND} run`);
       return;
     }
     let installCode;
@@ -666,14 +719,14 @@ async function setup(options) {
       );
     } else {
       log.done("Installed; automatic startup is available on Windows and macOS only");
-      log.info(`Start in the foreground with: cd "${workspace}" && npm run serve`);
+      log.info(`Start in the foreground with: ${COMMAND} run`);
       return;
     }
     if (installCode !== 0) throw cliError(`Automatic startup failed (exit ${installCode}).`);
     log.done("Setup complete");
-    log.info(`Manage: cd "${workspace}" then npm run status | restart | stop | start | doctor | uninstall`);
+    log.info(`Manage from any terminal: ${COMMAND} status | restart | stop | start | doctor | config | uninstall`);
     console.log("");
-    log.info("Checking the installation (npm run doctor shows this again):");
+    log.info(`Checking the installation (${COMMAND} doctor shows this again):`);
     const failures = await reportDiagnosis(log, await diagnose(workspace));
     if (failures > 0) log.warn(`Installed, but ${failures} problem(s) above still need attention.`);
   } catch (error) {
@@ -691,15 +744,8 @@ async function setup(options) {
 // each save. Notepad's process lifetime is no signal (Windows 11 opens tabs
 // in an existing window), so the person confirms explicitly.
 async function promptForCredentials(log, envPath, initialProblems) {
-  const editor = IS_WINDOWS ? ["notepad.exe", [envPath]] : IS_MAC ? ["open", ["-e", envPath]] : null;
-  if (editor) {
-    try {
-      spawn(editor[0], editor[1], { detached: true, stdio: "ignore" }).unref();
-      log.info(`Opened ${envPath} in ${IS_WINDOWS ? "Notepad" : "TextEdit"}.`);
-    } catch {
-      log.info(`Open ${envPath} in a text editor.`);
-    }
-  }
+  const editor = openEditor(envPath);
+  log.info(editor ? `Opened ${envPath} in ${editor}.` : `Open ${envPath} in a text editor.`);
   let problems = initialProblems;
   const input = createInterface({ input: process.stdin });
   const lines = input[Symbol.asyncIterator]();
@@ -718,7 +764,7 @@ async function promptForCredentials(log, envPath, initialProblems) {
 
 // ---------------------------------------------------------------------------
 // Diagnosis: one pass over everything that differs between machines, shared
-// by `sj-mail doctor` and the end of setup. Secrets are never printed.
+// by `doctor` and the end of setup. Secrets are never printed.
 
 function serverLogPath() {
   if (IS_WINDOWS) return join(logDirectory(), "mail.local.log");
@@ -748,7 +794,7 @@ async function autostartState() {
   if (IS_MAC) {
     const runPath = await registeredRunPath();
     if (!runPath) return { supported: true, present: false };
-    // bootout (npm run stop) unloads the agent until the next login.
+    // bootout (the stop command) unloads the agent until the next login.
     const loaded = await execFileAsync("launchctl", ["print", `gui/${process.getuid()}/${LAUNCHD_LABEL}`]).then(
       () => true,
       () => false,
@@ -819,7 +865,11 @@ async function diagnose(workspace) {
   if (values) {
     const problems = envProblems(values);
     for (const problem of problems) add("fail", `${problem} (${envPath})`);
-    if (problems.length === 0) add("ok", `Google client settings in ${envPath} (values not shown)`);
+    if (problems.length === 0) {
+      const client = await bundledClient(app);
+      const builtIn = client?.clientId === values.GOOGLE_CLIENT_ID?.trim();
+      add("ok", `Google client settings in ${envPath} (${builtIn ? "built-in client" : "your own client"}; values not shown)`);
+    }
   }
   const port = Number(values?.PORT || 8787);
 
@@ -837,11 +887,11 @@ async function diagnose(workspace) {
     else if (!samePath(registered, own)) {
       if (await isDirectory(root)) add("warn", `Automatic startup runs another installation (${root}). Run setup here to take it over.`);
       else add("fail", `Automatic startup points to ${root}, which no longer exists. Run setup to repair it.`);
-    } else if (auto.paused) add("warn", "Stopped with npm run stop until the next sign-in. Resume now with: npm run start");
-    else if (auto.enabled === false) add("warn", "Automatic startup is disabled. Turn it back on with: npm run start");
+    } else if (auto.paused) add("warn", `Stopped until the next sign-in. Resume now with: ${COMMAND} start`);
+    else if (auto.enabled === false) add("warn", `Automatic startup is disabled. Turn it back on with: ${COMMAND} start`);
     else add("ok", "Automatic startup: at sign-in, relaunched if the server exits");
   } else if (!IS_WINDOWS && !IS_MAC) {
-    add("info", "Automatic startup is available on Windows and macOS; here, start with npm run serve.");
+    add("info", `Automatic startup is available on Windows and macOS; here, start with: ${COMMAND} run`);
   }
 
   const ready = await serverReady(port);
@@ -858,11 +908,11 @@ async function diagnose(workspace) {
       add("warn", `Not signed in to Google yet: open http://localhost:${port} and connect your account.`);
     } else {
       const apis = await fetchJson(`http://127.0.0.1:${port}/api/diagnostics`, 30_000);
-      if (!apis) add("fail", "Could not check Google API access. Run setup to update the app, then run npm run doctor again.");
+      if (!apis) add("fail", `Could not check Google API access. Run setup to update the app, then ${COMMAND} doctor again.`);
       else {
         const hints = {
           disabled: "enable this API in the same Google Cloud project",
-          client: "Google rejected the Client ID/Secret in .env; copy both from the same OAuth web client (regenerate the secret if unsure), then npm run restart",
+          client: `Google rejected the Client ID/Secret in .env; copy both from the same OAuth client (regenerate the secret if unsure), then ${COMMAND} restart`,
           auth: `sign in again at http://localhost:${port}`,
           error: "request failed",
         };
@@ -888,11 +938,22 @@ async function reportDiagnosis(log, checks) {
 }
 
 async function doctor(options) {
-  const workspace = await resolveWorkspace(options.dir);
-  console.log(`\n  SJ-MAIL DOCTOR ${(await ownManifest()).version}`);
+  const workspace = await resolveManagedWorkspace(options.dir);
+  console.log(`\n  MAIL DOCTOR ${(await ownManifest()).version}`);
   console.log("  ----------------------------------------------");
   const failures = await reportDiagnosis(createLogger(null), await diagnose(workspace));
   if (failures > 0) process.exitCode = 1;
+}
+
+async function config(options) {
+  const workspace = await resolveManagedWorkspace(options.dir);
+  const envPath = join(workspace, ".env");
+  if (!(await isFile(envPath))) {
+    throw cliError(`Settings were not found. Run the installer from the README (or: ${COMMAND}@latest setup).`);
+  }
+  const editor = openEditor(envPath);
+  console.log(editor ? `Opened ${envPath} in ${editor}.` : `Settings: ${envPath}`);
+  console.log(`After saving, apply the change with: ${COMMAND} restart`);
 }
 
 // launchd has one com.mail.local per user. Never stop or remove an entry
@@ -908,7 +969,7 @@ async function assertOwnsLaunchAgent(app) {
 }
 
 async function uninstall(options) {
-  const workspace = await resolveWorkspace(options.dir);
+  const workspace = await resolveManagedWorkspace(options.dir);
   const app = await requireInstalledRoot(workspace);
   if (IS_MAC) await assertOwnsLaunchAgent(app);
   const code = IS_WINDOWS
@@ -949,7 +1010,7 @@ async function serverReady(port) {
 }
 
 async function control(action, options) {
-  const workspace = await resolveWorkspace(options.dir);
+  const workspace = await resolveManagedWorkspace(options.dir);
   const app = await requireInstalledRoot(workspace);
   if (IS_WINDOWS) {
     const name = action[0].toUpperCase() + action.slice(1);
@@ -963,7 +1024,7 @@ async function control(action, options) {
   if (!IS_MAC) throw cliError("Automatic startup is available on Windows and macOS only.");
   const plist = join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
   if (!(await isFile(plist))) {
-    throw cliError(`Automatic startup is not installed. Run: npx ${PACKAGE_NAME}@latest setup`);
+    throw cliError(`Automatic startup is not installed. Run the installer from the README (or: ${COMMAND}@latest setup).`);
   }
   await assertOwnsLaunchAgent(app);
   const target = `gui/${process.getuid()}/${LAUNCHD_LABEL}`;
@@ -972,7 +1033,7 @@ async function control(action, options) {
     execFileAsync("launchctl", ["print", target]).then(() => true, () => false);
   if (action === "status") {
     const [isLoaded, ready] = [await loaded(), await serverReady(port)];
-    console.log(`sj-mail: service=${isLoaded ? "loaded" : "stopped"}; health=${ready ? "ready" : "not responding"}; http://localhost:${port}`);
+    console.log(`Mail: service=${isLoaded ? "loaded" : "stopped"}; health=${ready ? "ready" : "not responding"}; http://localhost:${port}`);
     if (!ready) process.exitCode = 1;
     return;
   }
@@ -984,7 +1045,7 @@ async function control(action, options) {
     }
     if (await loaded()) throw cliError("launchd did not stop the service; retry shortly.");
     if (action === "stop") {
-      console.log("sj-mail stopped until next login (or `npm run start`).");
+      console.log(`Mail stopped until the next login (or: ${COMMAND} start).`);
       return;
     }
   }
@@ -995,7 +1056,7 @@ async function control(action, options) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await serverReady(port)) {
-      console.log(`sj-mail is ready: http://localhost:${port}`);
+      console.log(`Mail is ready: http://localhost:${port}`);
       return;
     }
     await new Promise((done) => setTimeout(done, 500));
@@ -1004,7 +1065,7 @@ async function control(action, options) {
 }
 
 async function runForeground(options) {
-  const workspace = await resolveWorkspace(options.dir);
+  const workspace = await resolveManagedWorkspace(options.dir);
   const app = await requireInstalledRoot(workspace);
   const envPath = join(workspace, ".env");
   if (!(await isFile(envPath))) {
@@ -1050,16 +1111,18 @@ async function runForeground(options) {
   process.exitCode = code ?? ({ SIGINT: 130, SIGTERM: 143 }[signal] ?? 1);
 }
 
-const USAGE = `Usage: sj-mail <command> [--dir <workspace>]
+const USAGE = `Usage: ${COMMAND} <command> [--dir <workspace>]
 
   setup [--from <old folder>] [--no-autostart]
-        Install or update into the workspace (default ~/sj-mail), migrate a
-        previous ZIP/source installation, and register automatic startup.
+        Install or update, migrate a previous installation (ZIP/git or an
+        older ~/sj-mail), and register automatic startup.
   status | start | stop | restart
         Manage the automatically started server.
   uninstall
         Remove automatic startup. Settings and sign-in are kept.
   run   Run the server in this terminal (Ctrl+C to stop).
+  config
+        Open the settings file (.env) in a text editor.
   doctor
         Check Bun, the installed app, .env, automatic startup, the server
         and Google API access, with a fix for each problem.`;
@@ -1076,6 +1139,7 @@ function parseArguments(argv) {
     restart: ["--dir"],
     run: ["--dir"],
     doctor: ["--dir"],
+    config: ["--dir"],
   }[command];
   if (!allowed) return { command: null, options };
   for (let i = 0; i < rest.length; i++) {
@@ -1098,6 +1162,7 @@ async function main() {
   if (command === "uninstall") return uninstall(options);
   if (command === "run") return runForeground(options);
   if (command === "doctor") return doctor(options);
+  if (command === "config") return config(options);
   if (["status", "start", "stop", "restart"].includes(command)) {
     return control(command, options);
   }
@@ -1106,6 +1171,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "[sj-mail] Command failed.");
+  console.error(error instanceof Error ? error.message : "[mail] Command failed.");
   process.exitCode = 1;
 });

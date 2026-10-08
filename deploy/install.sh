@@ -1,5 +1,5 @@
 #!/bin/bash
-# macOS 자동 실행 등록: sj-mail setup이 호출한다.
+# macOS 자동 실행 등록: setup이 호출한다.
 #   bash deploy/install.sh <작업 폴더> <Bun 절대 경로>
 # 패키지는 이미 빌드되어 있으므로 여기서는 .env 확인 → launchd 등록 → 응답 확인만 한다.
 set -euo pipefail
@@ -37,7 +37,7 @@ env_value() {
 }
 
 [ "$(uname -s)" = "Darwin" ] || fail "이 파일은 macOS용입니다."
-[ "$#" -eq 2 ] || fail "사용법: bash deploy/install.sh <작업 폴더> <Bun 절대 경로> (sj-mail setup이 호출합니다)"
+[ "$#" -eq 2 ] || fail "사용법: bash deploy/install.sh <작업 폴더> <Bun 절대 경로> (setup이 호출합니다)"
 DIR="$(cd "$1" && pwd)" || fail "작업 폴더를 찾을 수 없습니다: $1"
 BUN="$2"
 [ -f "$DIR/.env" ] || fail ".env 파일이 없습니다: $DIR/.env"

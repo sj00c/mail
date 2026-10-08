@@ -83,7 +83,7 @@ function Get-MailRunPathFromTask([object]$Task) {
 }
 
 function Get-MailTaskRunPath {
-  # Used by sj-mail setup to find (and migrate) the installation that
+  # Used by setup to find (and migrate) the installation that
   # currently owns automatic startup.
   return Get-MailRunPathFromTask (Get-MailTask)
 }
@@ -111,7 +111,7 @@ function Assert-MailTaskOwnership {
     [Parameter(Mandatory = $true)][string[]]$RunPath
   )
   if (-not (Test-MailTaskOwnership -Task $Task -RunPath $RunPath)) {
-    throw "MailLocal points to another deploy/run.ps1. Run sj-mail setup so it can migrate that installation, or remove it first."
+    throw "MailLocal points to another deploy/run.ps1. Run the Mail installer so it can migrate that installation, or remove it first."
   }
 }
 

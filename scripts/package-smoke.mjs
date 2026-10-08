@@ -377,29 +377,35 @@ async function smoke(tarball) {
     const cli = (label, args, cwd = consumer) =>
       runChecked(label, process.execPath, [cliPath, ...args], { cwd, env });
 
-    // 1. New install: workspace + package + .env template, then a clear stop
-    //    for Google credentials (exit 0, nothing registered).
+    // 1. New install: workspace + package + .env. Without a bundled Google
+    //    client it stops clearly for credentials; with one (release packages
+    //    built with BUNDLED_GOOGLE_CLIENT_*) .env is filled for the user.
+    //    --no-autostart: never touch the runner's automatic startup.
     const workspace = join(root, "workspace");
-    const first = await cli("sj-mail setup (new)", ["setup", "--dir", workspace]);
-    assert(/credentials are still needed/i.test(first.output), "setup did not ask for credentials");
+    const first = await cli("setup (new)", ["setup", "--dir", workspace, "--no-autostart"]);
     const manifest = await readJson(join(workspace, "package.json"));
     assert(manifest.private === true, "workspace package is not private");
     assert(manifest.dependencies?.[PACKAGE_NAME] === `file:${tarball}`, "workspace dependency is not the package spec");
-    assert(manifest.scripts?.serve === "sj-mail run", "workspace has no serve script");
-    assert(manifest.scripts?.doctor === "sj-mail doctor", "workspace has no doctor script");
+    assert(manifest.scripts === undefined, "workspace still carries npm scripts (commands run through bunx)");
     const app = join(workspace, "node_modules", "@sj00c", "mail");
     for (const file of ["dist/index.html", "server/index.ts", "deploy/run.sh", "deploy/run.ps1", "deploy/install.ps1"]) {
       assert(await isFile(join(app, file)), `installed package is missing ${file}`);
     }
     const envPath = join(workspace, ".env");
-    const template = await readFile(envPath, "utf8");
-    assert(/your-client-id/.test(template), "setup did not create the .env template");
+    const createdEnv = await readFile(envPath, "utf8");
+    if (await isFile(join(app, "dist", "oauth-client.json"))) {
+      assert(/built-in Google sign-in client/.test(first.output), "setup did not use the bundled Google client");
+      assert(!/your-client-id/.test(createdEnv), "setup left placeholders despite a bundled Google client");
+    } else {
+      assert(/credentials are still needed/i.test(first.output), "setup did not ask for credentials");
+      assert(/your-client-id/.test(createdEnv), "setup did not create the .env template");
+    }
     const setupLog = await readFile(
       process.platform === "win32"
         ? join(home, "AppData", "Local", "MailLocal", "setup.log")
         : process.platform === "darwin"
-          ? join(home, "Library", "Logs", "sj-mail", "setup.log")
-          : join(home, ".local", "state", "sj-mail", "setup.log"),
+          ? join(home, "Library", "Logs", "MailLocal", "setup.log")
+          : join(home, ".local", "state", "mail-local", "setup.log"),
       "utf8",
     );
     assert(/\[RUN\] \[3\/5\] Package/.test(setupLog) && /\[OUT\] /.test(setupLog), "setup.log misses stages or install output");
@@ -438,7 +444,7 @@ async function smoke(tarball) {
 
     // 3. Update in place keeps settings and sign-in data.
     const envBefore = await readFile(envPath, "utf8");
-    await cli("sj-mail setup (update)", ["setup", "--dir", workspace, "--no-autostart"]);
+    await cli("setup (update)", ["setup", "--dir", workspace, "--no-autostart"]);
     assert((await readFile(envPath, "utf8")) === envBefore, "update changed .env");
     assert(
       (await readFile(join(workspace, ".data", "token.json"), "utf8")) === tokenContents,
@@ -455,7 +461,7 @@ async function smoke(tarball) {
     await writeFile(join(legacy, ".env"), legacyEnv);
     await writeFile(join(legacy, "server", ".data", "token.json"), tokenContents);
     const migrated = join(root, "migrated");
-    await cli("sj-mail setup --from", ["setup", "--dir", migrated, "--from", legacy, "--no-autostart"]);
+    await cli("setup --from", ["setup", "--dir", migrated, "--from", legacy, "--no-autostart"]);
     assert((await readFile(join(migrated, ".env"), "utf8")) === legacyEnv, "migration did not copy .env");
     assert(
       (await readFile(join(migrated, ".data", "token.json"), "utf8")) === tokenContents,
@@ -470,10 +476,10 @@ async function smoke(tarball) {
     await writeFile(join(unrelated, "package.json"), unrelatedPackage);
     await expectCliFailure("unrelated package protection", cliPath, consumer, ["setup", "--dir", unrelated], "belongs to another project", env);
     assert((await readFile(join(unrelated, "package.json"), "utf8")) === unrelatedPackage, "setup changed an unrelated package.json");
-    await expectCliFailure("unknown legacy folder", cliPath, consumer, ["setup", "--dir", migrated, "--from", unrelated], "neither an sj-mail workspace", env);
-    await expectCliFailure("run before setup", cliPath, consumer, ["run", "--dir", join(root, "empty")], "No installed app", env);
+    await expectCliFailure("unknown legacy folder", cliPath, consumer, ["setup", "--dir", migrated, "--from", unrelated], "neither a Mail workspace", env);
+    await expectCliFailure("run before setup", cliPath, consumer, ["run", "--dir", join(root, "empty")], "Mail is not installed", env);
     const missingEnv = join(root, "missing-env");
-    await cli("sj-mail setup (missing .env fixture)", ["setup", "--dir", missingEnv, "--no-autostart"]);
+    await cli("setup (missing .env fixture)", ["setup", "--dir", missingEnv, "--no-autostart"]);
     await rm(join(missingEnv, ".env"));
     await expectCliFailure("missing .env", cliPath, consumer, ["run", "--dir", missingEnv], "no \\.env", env);
     const index = join(app, "dist", "index.html");
