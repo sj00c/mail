@@ -7,7 +7,10 @@
 # This text runs inside the caller's session, so it never calls exit.
 $setupArgs = @($args)
 & {
-  $ErrorActionPreference = "Stop"
+  # Continue: when a caller redirects output (2>&1, *>&1), Windows PowerShell
+  # 5.1 turns Bun's ordinary stderr progress into errors. Native results are
+  # judged by exit code and files instead.
+  $ErrorActionPreference = "Continue"
   $ProgressPreference = "SilentlyContinue"
   # Windows PowerShell 5.1 may otherwise negotiate obsolete TLS versions.
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
