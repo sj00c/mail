@@ -18,7 +18,6 @@ import { createConnection } from "node:net";
 import { homedir, platform as osPlatform, release } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -378,14 +377,62 @@ function withClient(text, client) {
   return out;
 }
 
-function openEditor(path) {
-  const editor = IS_WINDOWS ? ["notepad.exe", [path], "Notepad"] : IS_MAC ? ["open", ["-e", path], "TextEdit"] : null;
-  if (!editor) return null;
-  try {
-    spawn(editor[0], editor[1], { detached: true, stdio: "ignore" }).unref();
-    return editor[2];
-  } catch {
-    return null;
+// Reads one line from the terminal; hidden input echoes "*". Raw mode keeps
+// the secret off the screen and out of every log. Ctrl+C aborts.
+function promptValue(question, { hidden = false } = {}) {
+  const stdin = process.stdin;
+  process.stdout.write(question);
+  return new Promise((done) => {
+    let value = "";
+    const finish = (result) => {
+      stdin.off("data", onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+      process.stdout.write("\n");
+      done(result);
+    };
+    const onData = (chunk) => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") return finish(value.trim());
+        if (ch === "\u0003") {
+          finish(null);
+          process.exit(130);
+        }
+        if (ch === "\u007f" || ch === "\b") {
+          if (value) {
+            value = value.slice(0, -1);
+            process.stdout.write("\b \b");
+          }
+          continue;
+        }
+        if (ch < " ") continue;
+        value += ch;
+        process.stdout.write(hidden ? "*" : ch);
+      }
+    };
+    stdin.setRawMode(true);
+    stdin.setEncoding("utf8");
+    stdin.on("data", onData);
+    stdin.resume();
+  });
+}
+
+// Asks for the Google OAuth Client ID and Secret until both are valid and
+// writes them to .env. Enter keeps the current value.
+async function askCredentials(envPath) {
+  console.log("  Paste your Google OAuth Client ID and Client Secret (Enter keeps the current value).");
+  for (;;) {
+    const text = await readFile(envPath, "utf8");
+    const current = parseEnv(text);
+    const clientId = (await promptValue("  Client ID: ")) || current.GOOGLE_CLIENT_ID?.trim() || "";
+    const clientSecret = (await promptValue("  Client Secret: ", { hidden: true })) || current.GOOGLE_CLIENT_SECRET?.trim() || "";
+    const problems = envProblems({ ...current, GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret })
+      .filter((problem) => /CLIENT|Client/.test(problem));
+    if (problems.length === 0) {
+      await writeFile(envPath, withClient(text, { clientId, clientSecret }));
+      return;
+    }
+    for (const problem of problems) console.log(`  ! ${problem}`);
   }
 }
 
@@ -680,15 +727,17 @@ async function setup(options) {
       log.info("Using the app's built-in Google sign-in client.");
     }
     let problems = envProblems(parseEnv(await readFile(envPath, "utf8")));
-    // A person at a terminal edits .env while setup waits; scripts and agents
-    // (no TTY) get the two-step flow: fill .env, run setup again.
+    // A person at a terminal is asked right here; scripts and agents (no
+    // TTY) get the two-step flow: run the config command, then setup again.
     if (problems.length > 0 && process.stdin.isTTY && process.stdout.isTTY) {
-      problems = await promptForCredentials(log, envPath, problems);
+      await askCredentials(envPath);
+      log.info("Saved the Google Client ID and Secret.");
+      problems = envProblems(parseEnv(await readFile(envPath, "utf8")));
     }
     if (problems.length > 0) {
       for (const problem of problems) log.warn(problem);
       log.done("Installed; Google credentials are still needed");
-      log.info(`1. Enter your Google Client ID and Secret: ${COMMAND} config`);
+      log.info(`1. In a terminal window, enter them: ${COMMAND} config`);
       log.info("2. Run the same installer command again.");
       return;
     }
@@ -738,28 +787,6 @@ async function setup(options) {
     if (IS_WINDOWS) log.info(`Autostart log: ${join(logDirectory(), "install.log")}`);
     process.exitCode = 1;
   }
-}
-
-// Opens .env in the platform editor and waits for Enter, re-checking after
-// each save. Notepad's process lifetime is no signal (Windows 11 opens tabs
-// in an existing window), so the person confirms explicitly.
-async function promptForCredentials(log, envPath, initialProblems) {
-  const editor = openEditor(envPath);
-  log.info(editor ? `Opened ${envPath} in ${editor}.` : `Open ${envPath} in a text editor.`);
-  let problems = initialProblems;
-  const input = createInterface({ input: process.stdin });
-  const lines = input[Symbol.asyncIterator]();
-  try {
-    while (problems.length > 0) {
-      for (const problem of problems) log.warn(problem);
-      log.info("Enter the values from Google Cloud, save the file, then press Enter here (Ctrl+C cancels).");
-      if ((await lines.next()).done) break;
-      problems = envProblems(parseEnv(await readFile(envPath, "utf8")));
-    }
-  } finally {
-    input.close();
-  }
-  return problems;
 }
 
 // ---------------------------------------------------------------------------
@@ -864,7 +891,9 @@ async function diagnose(workspace) {
   }
   if (values) {
     const problems = envProblems(values);
-    for (const problem of problems) add("fail", `${problem} (${envPath})`);
+    for (const problem of problems) {
+      add("fail", /Client/i.test(problem) ? `${problem} Fix: ${COMMAND} config` : `${problem} (${envPath})`);
+    }
     if (problems.length === 0) {
       const client = await bundledClient(app);
       const builtIn = client?.clientId === values.GOOGLE_CLIENT_ID?.trim();
@@ -949,11 +978,24 @@ async function config(options) {
   const workspace = await resolveManagedWorkspace(options.dir);
   const envPath = join(workspace, ".env");
   if (!(await isFile(envPath))) {
-    throw cliError(`Settings were not found. Run the installer from the README (or: ${COMMAND}@latest setup).`);
+    throw cliError(`Mail is not installed. Run the installer from the README (or: ${COMMAND}@latest setup).`);
   }
-  const editor = openEditor(envPath);
-  console.log(editor ? `Opened ${envPath} in ${editor}.` : `Settings: ${envPath}`);
-  console.log(`After saving, apply the change with: ${COMMAND} restart`);
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) {
+    throw cliError(`Run this in a terminal window: ${COMMAND} config`);
+  }
+  await askCredentials(envPath);
+  console.log("  Saved. Other settings (PORT) live in:", envPath);
+  // Restart only an automatic startup this installation owns; a server run
+  // by hand (or another installation) is left alone.
+  const app = installedRoot(workspace);
+  const auto = await autostartState().catch(() => ({}));
+  const own = await realpath(join(app, "deploy", IS_WINDOWS ? "run.ps1" : "run.sh")).catch(() => "");
+  const registered = auto.runPath ? await realpath(auto.runPath).catch(() => auto.runPath) : "";
+  if (!own || !auto.present || !samePath(registered, own)) {
+    console.log("  Restart Mail to apply the change.");
+    return;
+  }
+  await control("restart", options);
 }
 
 // launchd has one com.mail.local per user. Never stop or remove an entry
@@ -1122,7 +1164,7 @@ const USAGE = `Usage: ${COMMAND} <command> [--dir <workspace>]
         Remove automatic startup. Settings and sign-in are kept.
   run   Run the server in this terminal (Ctrl+C to stop).
   config
-        Open the settings file (.env) in a text editor.
+        Enter or change the Google Client ID and Secret, then restart.
   doctor
         Check Bun, the installed app, .env, automatic startup, the server
         and Google API access, with a fix for each problem.`;
