@@ -4,6 +4,8 @@ import { api, AuthError, parseAddr, type MailProfile, type MessageSummary } from
 type Options = {
   activeLabel: string;
   query: string;
+  // 받은편지함 안읽음 탭: the rows on screen are not the inbox head.
+  unreadOnly: boolean;
   composeOpen: boolean;
   onLogout: () => void;
   getCurrentMessages: () => MessageSummary[];
@@ -58,7 +60,8 @@ export function useInboxPoll(options: Options) {
         if (!accountChanged &&
           lastSeenIds.current === null &&
           optionsRef.current.activeLabel === "INBOX" &&
-          !optionsRef.current.query) {
+          !optionsRef.current.query &&
+          !optionsRef.current.unreadOnly) {
           const current = optionsRef.current.getCurrentMessages();
           lastSeenIds.current = current.slice(0, 5).map((message) => message.id);
           newestSeenDate.current = current.reduce(
@@ -66,7 +69,7 @@ export function useInboxPoll(options: Options) {
             newestSeenDate.current,
           );
         }
-        const res = await api.messages({ label: "INBOX", maxResults: 5 });
+        const res = await api.messages({ labels: ["INBOX"], maxResults: 5 });
         if (!mounted) return;
         const top = res.messages[0];
         const seenIds = lastSeenIds.current;

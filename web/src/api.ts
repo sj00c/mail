@@ -209,13 +209,13 @@ export const api = {
     ),
   messages: (params: {
     q?: string;
-    label?: string;
+    labels?: string[];
     pageToken?: string;
     maxResults?: number;
   }) => {
     const u = new URLSearchParams();
     if (params.q) u.set("q", params.q);
-    if (params.label) u.set("label", params.label);
+    for (const label of params.labels ?? []) u.append("label", label);
     if (params.pageToken) u.set("pageToken", params.pageToken);
     if (params.maxResults) u.set("maxResults", String(params.maxResults));
     return req<{
@@ -256,7 +256,7 @@ export const api = {
     ),
   prepareBulkAll: (body: {
     q?: string;
-    label?: string;
+    labels?: string[];
     action: "read" | "unread" | "trash";
   }) =>
     req<{ operationId: string; count: number; expiresAt: number }>(

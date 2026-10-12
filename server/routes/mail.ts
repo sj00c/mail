@@ -30,7 +30,7 @@ export function createMessageListApi(
 
   messages.get("/", async (c) => {
     const q = c.req.query("q") || undefined;
-    const label = c.req.query("label") || undefined;
+    const labels = c.req.queries("label")?.filter(Boolean) ?? [];
     const pageToken = c.req.query("pageToken") || undefined;
     const max = finiteOr(c.req.query("maxResults"), "maxResults");
     if (!max.ok) return c.json({ error: max.error }, 400);
@@ -46,7 +46,7 @@ export function createMessageListApi(
     return c.json(
       await listMessagesImpl({
         q,
-        labelIds: label ? [label] : undefined,
+        labelIds: labels.length ? labels : undefined,
         pageToken,
         maxResults: max.value,
       }),
@@ -140,7 +140,7 @@ export function createMailRoutes(): Hono {
   mail.post("/messages/bulkAll/prepare", async (c) => {
     const body = await c.req.json<{
       q?: string;
-      label?: string;
+      labels?: string[];
       action?: "read" | "unread" | "trash";
     }>();
     if (!body.action || !["read", "unread", "trash"].includes(body.action)) {
@@ -149,7 +149,7 @@ export function createMailRoutes(): Hono {
     return c.json(
       await prepareBulkAllMessages({
         q: body.q?.trim() || undefined,
-        labelIds: body.label ? [body.label] : undefined,
+        labelIds: body.labels?.length ? body.labels : undefined,
         action: body.action,
       }),
     );

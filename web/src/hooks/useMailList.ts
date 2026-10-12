@@ -6,6 +6,13 @@ export function shouldRemoveArchivedMessage(activeLabel: string, query: string) 
   return activeLabel === "INBOX" && query.length === 0;
 }
 
+// Gmail labelIds for a mailbox view. Search spans every mailbox; 전체메일 has
+// no label. unreadOnly narrows the view to its unread messages (안읽음 tab).
+export function viewLabelIds(label: string, query: string, unreadOnly: boolean) {
+  if (query || label === "ALL") return undefined;
+  return unreadOnly ? [label, "UNREAD"] : [label];
+}
+
 // Last loaded page per mailbox view. Returning to a label shows these rows at
 // once while the first page is refetched; the fetch then replaces them.
 type ListSnapshot = {
@@ -14,9 +21,15 @@ type ListSnapshot = {
   totalEstimate: number;
 };
 const MAX_VIEWS = 12;
-const viewKey = (label: string, query: string) => `${label}\u0000${query}`;
+const viewKey = (label: string, query: string, unreadOnly: boolean) =>
+  `${label}\u0000${query}\u0000${unreadOnly ? "unread" : "all"}`;
 
-export function useMailList(activeLabel: string, query: string, guard: Guard) {
+export function useMailList(
+  activeLabel: string,
+  query: string,
+  guard: Guard,
+  unreadOnly = false,
+) {
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [nextToken, setNextToken] = useState<string | undefined>();
   const [totalEstimate, setTotalEstimate] = useState(0);
@@ -24,6 +37,7 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
   const messagesRef = useRef(messages);
   const labelRef = useRef(activeLabel);
   const queryRef = useRef(query);
+  const unreadRef = useRef(unreadOnly);
   const nextTokenRef = useRef(nextToken);
   const loadSeq = useRef(0);
   const appendInFlight = useRef(new Map<string, number>());
@@ -32,11 +46,12 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
   // The view the rows in `messages` belong to. labelRef switches during the
   // render that changes labels, before reset() swaps the rows, so it cannot
   // be used to file a snapshot.
-  const ownerKey = useRef(viewKey(activeLabel, query));
+  const ownerKey = useRef(viewKey(activeLabel, query, unreadOnly));
 
   messagesRef.current = messages;
   labelRef.current = activeLabel;
   queryRef.current = query;
+  unreadRef.current = unreadOnly;
   nextTokenRef.current = nextToken;
   const getActiveLabel = useCallback(() => labelRef.current, []);
   const getQuery = useCallback(() => queryRef.current, []);
@@ -45,10 +60,12 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
     (reset: boolean) => {
       const label = labelRef.current;
       const query = queryRef.current;
+      const unread = unreadRef.current;
+      const key = viewKey(label, query, unread);
       const pageToken = reset ? undefined : nextTokenRef.current;
       if (!reset && resetInFlight.current !== null) return;
       if (!reset && pageToken === undefined) return;
-      const appendKey = reset ? null : `${label}\u0000${query}\u0000${pageToken}`;
+      const appendKey = reset ? null : `${key}\u0000${pageToken}`;
       if (appendKey !== null && appendInFlight.current.has(appendKey)) return;
 
       const seq = ++loadSeq.current;
@@ -63,12 +80,12 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
         try {
           try {
             const res = await api.messages({
-              label: query || label === "ALL" ? undefined : label,
+              labels: viewLabelIds(label, query, unread),
               q: query || undefined,
               pageToken,
             });
             if (seq !== loadSeq.current) return;
-            ownerKey.current = viewKey(label, query);
+            ownerKey.current = key;
             const nextMessages = reset
               ? res.messages
               : (() => {
@@ -105,7 +122,7 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
     ++loadSeq.current;
     resetInFlight.current = null;
     appendInFlight.current.clear();
-    ownerKey.current = viewKey(labelRef.current, queryRef.current);
+    ownerKey.current = viewKey(labelRef.current, queryRef.current, unreadRef.current);
     const hit = snapshots.current.get(ownerKey.current);
     messagesRef.current = hit?.messages ?? [];
     nextTokenRef.current = hit?.nextToken;
@@ -152,7 +169,9 @@ export function useMailList(activeLabel: string, query: string, guard: Guard) {
     if (labelRef.current !== "INBOX" || queryRef.current) return;
     setMessages((prev) => {
       const existing = new Set(prev.map((message) => message.id));
-      const added = incoming.filter((message) => !existing.has(message.id));
+      const added = incoming.filter(
+        (message) => !existing.has(message.id) && (!unreadRef.current || message.unread),
+      );
       return added.length ? [...added, ...prev] : prev;
     });
   }, []);

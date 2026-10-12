@@ -37,6 +37,7 @@ import {
   ArchiveIcon,
   BanIcon,
   CalendarIcon,
+  ChevronIcon,
   DraftIcon,
   DriveIcon,
   EditIcon,
@@ -60,11 +61,13 @@ import { Compose, type ComposeInit } from "./views/compose.tsx";
 import { MessageRow, Reader } from "./views/reader.tsx";
 import { SettingsModal } from "./views/settings.tsx";
 import { useInboxPoll } from "./hooks/useInboxPoll.ts";
+import { useAutoCollapse } from "./hooks/useAutoCollapse.ts";
 import { useMailboxCounts } from "./hooks/useMailboxCounts.ts";
 import { useCalendarCatalog } from "./hooks/useCalendarCatalog.ts";
 import {
   shouldRemoveArchivedMessage,
   useMailList,
+  viewLabelIds,
 } from "./hooks/useMailList.ts";
 import { useMediaQuery } from "./hooks/useMediaQuery.ts";
 import { useOutbox } from "./hooks/useOutbox.ts";
@@ -201,8 +204,9 @@ function formatLabelCountDetail(value: number | undefined): string {
 // 안정된 빈 배열 — 선택이 없을 때 checkedIds가 매번 새 []를 반환하지 않도록.
 const EMPTY_IDS: string[] = [];
 
-// 사이드바 접힘 상태 (localStorage): "0"이면 접힌 채로 뜬다.
+// 양옆 패널 접힘 선택 (localStorage, useAutoCollapse 형식).
 const NAV_OPEN_KEY = "mail.nav.open";
+const READER_OPEN_KEY = "mail.reader.open";
 
 export function userFacingError(message: string): string {
   if (/GMAIL_BATCH_PART_429_/.test(message))
@@ -283,6 +287,8 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     refresh: refreshCounts,
   } = useMailboxCounts();
   const [activeLabel, setActiveLabel] = useState("INBOX");
+  // 받은편지함 목록 위 탭: 전체 / 안읽음. 다른 라벨로 갔다 와도 유지된다.
+  const [inboxTab, setInboxTab] = useState<"all" | "unread">("all");
   // ?view=calendar / ?q=검색어 deep link: 화면을 URL로 바로 열 수 있다.
   const initialQuery = (() => {
     try {
@@ -326,32 +332,18 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const lastCheckedIdx = useRef<number | null>(null);
   const [allResultsSelected, setAllResultsSelected] = useState(false);
   const [bulkAllBusy, setBulkAllBusy] = useState(false);
-  // 사이드바 접기/펼치기 — 목록·읽기 영역을 넓게 쓰고 싶을 때. 선택은 남는다.
-  const [navOpen, setNavOpen] = useState(() => {
-    try {
-      return localStorage.getItem(NAV_OPEN_KEY) !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const toggleNav = useCallback(() => {
-    setNavOpen((v) => {
-      try {
-        localStorage.setItem(NAV_OPEN_KEY, v ? "0" : "1");
-      } catch {
-        // private mode: 이번 세션에만 적용
-      }
-      return !v;
-    });
-  }, []);
-
-  // 창이 좁으면 3분할을 유지할 수 없다 — 목록만 남기고 리더는 팝업으로
-  // 띄운다. 900px는 실측 기준(그 아래부터 리더 폭이 280px 밑으로 떨어진다).
-  const narrow = useMediaQuery("(max-width: 900px)");
-  // 사이드바까지 겹쳐 뜨는 폭에서는 기본으로 접어 둔다 — 좁은 화면에서
-  // 사이드바가 목록을 덮은 채로 열려 있으면 첫 화면이 메일 목록이 아니게 된다.
+  // 양옆 패널(사이드바 / 읽기 창) 접기 — 목록을 넓게 쓰고 싶을 때. 선택은 남는다.
+  // 기본값은 화면 폭을 따라 줌인/창 축소 시 저절로 접히고 줌아웃 시 다시 펴진다.
+  // 리더: 900px 아래에서는 리더 폭이 280px 밑으로 떨어져 팝업으로 읽는다.
+  // 사이드바: 700px 아래에서는 목록 위에 겹쳐 뜨므로 기본으로 접어 둔다.
+  const [navOpen, toggleNav] = useAutoCollapse("(max-width: 700px)", NAV_OPEN_KEY);
+  const [readerOpen, toggleReader] = useAutoCollapse(
+    "(max-width: 900px)",
+    READER_OPEN_KEY,
+  );
+  // 700px 아래에서는 3분할 자체가 성립하지 않는다 — 리더는 늘 팝업.
   const narrowNav = useMediaQuery("(max-width: 700px)");
-  const navEffectivelyOpen = navOpen && !narrowNav;
+  const readerPopup = !readerOpen || narrowNav;
 
   // ⌘\ / Ctrl+\ 로도 접었다 편다. 작성 중인 본문에 문자가 들어가지 않도록
   // 수식 키가 눌린 조합만 가로챈다.
@@ -376,6 +368,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     },
     [onLogout],
   );
+  const unreadOnly = !query && activeLabel === "INBOX" && inboxTab === "unread";
   const {
     messages,
     nextToken,
@@ -393,7 +386,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     removeMany,
     toggleLabelMany,
     prependInboxMessages,
-  } = useMailList(activeLabel, query, guard);
+  } = useMailList(activeLabel, query, guard, unreadOnly);
 
   // 백그라운드 갱신(캘린더 60s/포커스, 검색 일정)이 세션 만료를 만나도 작성창이
   // 열려 있으면 로그아웃을 보류한다 — 언마운트가 작성 중인 메일을 날리기 때문.
@@ -623,7 +616,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
     setAllResultsSelected(false);
     lastCheckedIdx.current = null;
     load(true);
-  }, [activeLabel, query, load]);
+  }, [activeLabel, query, unreadOnly, load]);
 
   const refreshLabels = useCallback(
     () => guard(() => refreshCounts()),
@@ -633,6 +626,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   useInboxPoll({
     activeLabel,
     query,
+    unreadOnly,
     composeOpen,
     onLogout: bgLogout,
     getCurrentMessages: getMessages,
@@ -674,10 +668,11 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
   const allChecked =
     messages.length > 0 && checkedIds.length === messages.length;
   const activeLabelName =
-    SYSTEM_LABEL_NAMES[activeLabel] ||
-    labels.find((l) => l.id === activeLabel)?.name ||
-    activeLabel;
+    (SYSTEM_LABEL_NAMES[activeLabel] ||
+      labels.find((l) => l.id === activeLabel)?.name ||
+      activeLabel) + (unreadOnly ? " 안읽음" : "");
   const bulkScope = query ? `“${query}” 검색 결과` : activeLabelName;
+  const inboxUnread = labels.find((l) => l.id === "INBOX")?.unread ?? 0;
 
   const runBulk = (fn: (ids: string[], set: Set<string>) => Promise<void>) =>
     guard(async () => {
@@ -702,7 +697,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         // confirmation is exact (resultSizeEstimate above is only approximate).
         const prepared = await api.prepareBulkAll({
           q: query || undefined,
-          label: query || activeLabel === "ALL" ? undefined : activeLabel,
+          labels: viewLabelIds(activeLabel, query, unreadOnly),
           action,
         });
         const prompt =
@@ -1144,12 +1139,12 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
       )}
 
       <div
-        className={`body ${navEffectivelyOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""} ${narrow ? "reader-overlay" : ""}`}
+        className={`body ${navOpen ? "" : "nav-collapsed"} ${view === "calendar" ? "calendar-mode" : ""} ${readerPopup ? "reader-overlay" : ""}`}
       >
         <nav
           className="sidebar"
           id="app-sidebar"
-          aria-hidden={!navEffectivelyOpen}
+          aria-hidden={!navOpen}
         >
           <div className="sidebar-inner">
             <div className="workspace-switcher" aria-label="서비스 전환">
@@ -1287,6 +1282,19 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
             )}
           </div>
         </nav>
+        {/* 사이드바 손잡이 — 사이드바 오른쪽 테두리(접히면 화면 왼쪽 끝)에 붙어
+           왼쪽으로 접고 편다. 사이드바가 겹쳐 뜨는 좁은 폭에서는 그 테두리를 따라간다. */}
+        <button
+          type="button"
+          className={`pane-handle pane-handle-nav ${navOpen ? "open" : ""}`}
+          title={`사이드바 ${navOpen ? "접기" : "펼치기"} (⌘\\)`}
+          aria-label={`왼쪽 패널 ${navOpen ? "접기" : "펼치기"}`}
+          aria-expanded={navOpen}
+          aria-controls="app-sidebar"
+          onClick={toggleNav}
+        >
+          <ChevronIcon />
+        </button>
 
         {view === "drive" ? (
           <DeferredView resetKey="drive">
@@ -1320,9 +1328,34 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
         ) : (
           <>
             <section className="list">
+              {isInboxView && (
+                <div className="list-tabs" role="tablist" aria-label="받은편지함 보기">
+                  <button
+                    role="tab"
+                    aria-selected={!unreadOnly}
+                    className={`list-tab ${unreadOnly ? "" : "active"}`}
+                    onClick={() => setInboxTab("all")}
+                  >
+                    전체
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={unreadOnly}
+                    className={`list-tab ${unreadOnly ? "active" : ""}`}
+                    onClick={() => setInboxTab("unread")}
+                  >
+                    안읽음
+                    {inboxUnread > 0 && (
+                      <span className="list-tab-count">
+                        {formatLabelCount(inboxUnread)}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              )}
               {messages.length > 0 && (
                 <MailSelectionToolbar
-                  key={`${activeLabel}/${query}`}
+                  key={`${activeLabel}/${query}/${unreadOnly}`}
                   checked={allChecked}
                   count={checkedIds.length}
                   summary={
@@ -1403,7 +1436,7 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               {messages.length === 0 && !loading && (
                 <div className="empty">
                   <EmptyArt kind="mail" />
-                  메일이 없습니다.
+                  {unreadOnly ? "안읽은 메일이 없습니다." : "메일이 없습니다."}
                 </div>
               )}
               {messages.map((m) => (
@@ -1428,14 +1461,28 @@ function Mailbox({ onLogout }: { onLogout: () => void }) {
               )}
             </section>
 
+            {/* 읽기 창 손잡이 — 목록 오른쪽 테두리에 붙어 오른쪽으로 접고 편다. */}
+            {!narrowNav && (
+              <button
+                type="button"
+                className={`pane-handle pane-handle-reader ${readerOpen ? "open" : ""}`}
+                title={`읽기 창 ${readerOpen ? "접기" : "펼치기"}`}
+                aria-label={`읽기 창 ${readerOpen ? "접기" : "펼치기"}`}
+                aria-expanded={readerOpen}
+                onClick={toggleReader}
+              >
+                <ChevronIcon />
+              </button>
+            )}
+
             {/* 리더 패널 — 선택이 없으면 비워 둔다(안내 문구·단축키 힌트는
-               목록 헤더의 ? 팝오버로 옮겼다). */}
-            {!narrow && <section className="reader">{readerEl}</section>}
+               목록 헤더의 ? 팝오버로 옮겼다). 접혀 있으면 팝업으로 읽는다. */}
+            {!readerPopup && <section className="reader">{readerEl}</section>}
           </>
         )}
       </div>
 
-      {view === "mail" && (query || narrow) && readerEl && (
+      {view === "mail" && (query || readerPopup) && readerEl && (
         <ReaderPopup onClose={() => setSelected(null)}>{readerEl}</ReaderPopup>
       )}
 

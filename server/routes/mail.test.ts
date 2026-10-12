@@ -41,6 +41,18 @@ describe("mounted mail HTTP contracts", () => {
     );
   });
 
+  it("intersects repeated label params for the inbox unread tab", async () => {
+    vi.mocked(gmail.listMessages).mockResolvedValue({
+      messages: [],
+      resultSizeEstimate: 0,
+    });
+    const list = await request("/messages?label=INBOX&label=UNREAD");
+    expect(list.status).toBe(200);
+    expect(gmail.listMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ labelIds: ["INBOX", "UNREAD"] }),
+    );
+  });
+
   it("rejects invalid list bounds through the mounted app without calling Google", async () => {
     const response = await request("/messages?maxResults=501");
     expect(response.status).toBe(400);

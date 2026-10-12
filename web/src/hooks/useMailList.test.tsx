@@ -216,4 +216,22 @@ describe("useMailList", () => {
     expect(messages.mock.calls[2][0]).toMatchObject({ pageToken: "new-page-2" });
     expect(result.current.messages.map((item) => item.id)).toEqual(["replacement", "next"]);
   });
+
+  it("lists only unread inbox mail and keeps polled read mail out of the unread tab", async () => {
+    messages.mockResolvedValueOnce(response([message("unread-1")]));
+    const guard = (task: () => Promise<void>) => void task();
+    const { result } = renderHook(() => useMailList("INBOX", "", guard, true));
+
+    await act(async () => result.current.load(true));
+    expect(messages.mock.calls[0][0]).toMatchObject({ labels: ["INBOX", "UNREAD"] });
+
+    act(() =>
+      result.current.prependInboxMessages([
+        { ...message("read-new"), unread: false },
+        message("unread-new"),
+        message("unread-1"),
+      ]),
+    );
+    expect(result.current.messages.map((item) => item.id)).toEqual(["unread-new", "unread-1"]);
+  });
 });

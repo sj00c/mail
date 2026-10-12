@@ -250,7 +250,7 @@ test("all-results cancellation never executes and failure restores controls", as
   expect(calls.filter((c) => c.path.endsWith("bulkAll/confirm"))).toHaveLength(
     0,
   );
-  expect(prepare()[0].body).toEqual({ label: "INBOX", action: "trash" });
+  expect(prepare()[0].body).toEqual({ labels: ["INBOX"], action: "trash" });
   page.once("dialog", (dialog) => void dialog.accept());
   await inline(page, "읽음").click();
   await expect(page.getByRole("alert")).toBeVisible();

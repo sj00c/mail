@@ -35,6 +35,7 @@ const mailboxProfile = (overrides: Partial<MailProfile> = {}): MailProfile => ({
 const options = (overrides = {}) => ({
   activeLabel: "INBOX",
   query: "",
+  unreadOnly: false,
   composeOpen: false,
   onLogout: vi.fn(),
   getCurrentMessages: () => [],
